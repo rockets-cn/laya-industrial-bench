@@ -14,6 +14,7 @@ import json
 import os
 import re
 import statistics
+import subprocess
 import sys
 import time
 import urllib.request
@@ -57,9 +58,10 @@ def normalize(text):
     for a, b in HOMOPHONE.items():
         text = text.replace(a, b)
     # strip negated mentions: 不要梨 / 梨不要
+    # 否定词与宾语之间限 0-3 字且不得跨另一个水果名 (无标点文本也安全)
     negated = set()
     for name in ("香蕉", "苹果", "梨"):
-        pat = re.compile(rf"(?:不要|别要?|不需要|不用)[^，。,]*?{name}|{name}(?:不要|不用)")
+        pat = re.compile(rf"(?:不要|别要?|不需要|不用)(?:(?!苹果|香蕉|梨).){{0,3}}{name}|{name}(?:不要|不用)")
         if pat.search(text):
             negated.add(name)
             text = pat.sub("", text)
@@ -166,19 +168,116 @@ CASES = [
 ]
 CASES[2] = ("只给我三个梨就行", {("pear", 3)})
 
-whisper = None
+def _fix_negation_punct(text):
+    """SenseVoice 常丢否定词前的逗号: "苹果不要梨" 实为 "苹果, 不要梨".
+    仅在否定词后还有宾语时补逗号 (句尾 "梨不要" 仍是否定前词, 不动)."""
+    return re.sub(r"(苹果|香蕉|梨)(?=(?:不要|别要?|不需要|不用)\s*[\u4e00-\u9fff0-9])", r"\1，", text)
+
+
+def _voxtype_asr_choice():
+    """ASR selection: SenseVoice small int8 (239MB, fast on CPU). Falls back to
+    the fp32 build when the int8 weights are missing."""
+    base = os.path.expanduser("~/.local/share/voxtype/models")
+    if os.path.exists(os.path.join(base, "sensevoice-small", "model.int8.onnx")):
+        return "sensevoice", "sensevoice-small"
+    return "sensevoice", "sensevoice-small-fp32"
+
+
+LAST_ASR_MODEL = "?"
+LAST_ASR_ENGINE = "?"
+
+
+def _ensure_voxtype_cfg():
+    """Pinned voxtype config for this deployment's ASR model. Rebuilt from the
+    user's global config when missing or drifted, so a TUI edit of the global
+    config cannot break the bench/UI pipeline."""
+    global LAST_ASR_MODEL, LAST_ASR_ENGINE
+    engine, want = _voxtype_asr_choice()
+    LAST_ASR_MODEL = want
+    LAST_ASR_ENGINE = engine
+    cfg = os.path.join(HERE, "voxtype_bench.toml")
+    try:
+        with open(cfg) as f:
+            text = f.read()
+    except FileNotFoundError:
+        src = os.path.expanduser("~/.config/voxtype/config.toml")
+        text = open(src).read() if os.path.exists(src) else '[sensevoice]\nlanguage = "auto"\n'
+    # Pin the model inside the [engine] section only (other sections may carry
+    # their own `model = ...` keys).
+    out, in_sec, found = [], False, False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            in_sec = s.lower().lstrip("[").rstrip("]").split(".")[0] == engine
+        elif in_sec and s.startswith("model") and "=" in s:
+            line, found = 'model = "%s"' % want, True
+        out.append(line)
+    text = "\n".join(out) + ("\n" if text.endswith("\n") or text == "" else "\n")
+    if not found:
+        text += '\n[%s]\nmodel = "%s"\n' % (engine, want)
+    with open(cfg, "w") as f:
+        f.write(text)
+    return cfg
+
+
+_REC = None
+
+
+def _resident_recognizer():
+    """In-process SenseVoice via sherpa-onnx: model loads ONCE (~0.7s) and stays
+    resident, so each transcription is ~100-250 ms instead of paying process +
+    model-load overhead (~750 ms) on every call, as the voxtype CLI does."""
+    global _REC
+    if _REC is None:
+        import sherpa_onnx
+        engine, model = _voxtype_asr_choice()
+        assert engine == "sensevoice", f"resident engine only supports sensevoice, got {engine}"
+        mdir = os.path.expanduser(f"~/.local/share/voxtype/models/{model}")
+        mf = "model.int8.onnx" if model.endswith("-small") else "model.onnx"
+        _REC = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            tokens=f"{mdir}/tokens.txt", model=f"{mdir}/{mf}",
+            num_threads=4, language="zh", use_itn=False)
+    global LAST_ASR_MODEL, LAST_ASR_ENGINE
+    LAST_ASR_ENGINE, LAST_ASR_MODEL = _voxtype_asr_choice()
+    return _REC
+
+
+def _asr_cli(wav):
+    """Fallback: voxtype CLI (cold process + model load per call)."""
+    cfg = _ensure_voxtype_cfg()
+    r = subprocess.run(["voxtype", "-q", "-c", cfg, "transcribe",
+                        "--engine", LAST_ASR_ENGINE, wav],
+                       capture_output=True, text=True, timeout=120)
+    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    return lines[-1].strip() if lines else ""
+
+
+def asr_warmup():
+    """Load the resident ASR model now (once, ~0.7s) instead of on the first
+    real utterance. Safe to call from server startup; no-op on failure."""
+    try:
+        _resident_recognizer()
+    except Exception:
+        pass
 
 
 def asr(wav):
-    global whisper
-    if whisper is None:
-        from faster_whisper import WhisperModel
-        whisper = WhisperModel(os.path.join(HERE, "models", "whisper-small"),
-                               device="cpu", compute_type="int8")
+    """ASR: resident SenseVoice (sherpa-onnx, in-process), CLI fallback.
+    Input must be 16 kHz mono WAV. Returns (seconds, text)."""
     t0 = time.perf_counter()
-    segs, _ = whisper.transcribe(wav, language="zh", beam_size=1, vad_filter=True)
-    text = "".join(s.text for s in segs).strip()  # consume lazily, then time
-    return time.perf_counter() - t0, text
+    try:
+        import wave, array
+        rec = _resident_recognizer()
+        with wave.open(wav, "rb") as w:
+            a = array.array("h")
+            a.frombytes(w.readframes(w.getnframes()))
+        st = rec.create_stream()
+        st.accept_waveform(16000, [x / 32768.0 for x in a])
+        rec.decode_stream(st)
+        text = st.result.text
+    except Exception:
+        text = _asr_cli(wav)
+    return time.perf_counter() - t0, _fix_negation_punct(text)
 
 
 def main():
