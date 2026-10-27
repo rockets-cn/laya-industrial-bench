@@ -3,7 +3,7 @@
     audio -> ASR -> rule normalization -> Laya (structured choice over the
     frozen 4-action whitelist) -> deterministic validator -> PLC dispatch
 
-LLM (qwen3.5, LLM_MODEL env, default qwen3.5:2b) is BYPASS-ONLY:
+LLM (qwen3.5, LLM_MODEL env, default qwen3.5:4b) is BYPASS-ONLY:
 called ONLY when the validator rejects; its output must pass the SAME
 validator; on any failure the safe default is PAUSE + HUMAN CONFIRM.
 
@@ -26,7 +26,7 @@ REPS = int(sys.argv[1]) if len(sys.argv) > 1 else 5
 MODE = sys.argv[2] if len(sys.argv) > 2 else "voice"
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_audio")
 HERE = os.path.dirname(os.path.abspath(__file__))
-LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3.5:2b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
 # ---- frozen action set (the PLC's whitelist of commands) ----
 ACTIONS = ["red_apple", "green_apple", "banana", "pear"]
@@ -136,10 +136,13 @@ BYPASS_PROMPT = """你是要货解析器。把这句话解析成 JSON, 只输出
 
 def llm_bypass(norm_text, rule_mentions):
     dt, parsed = llm_json(BYPASS_PROMPT.format(state=norm_text))
-    if not parsed or "items" not in parsed:
+    if parsed is None or not isinstance(parsed, dict):
+        return dt, None, ["LLM 输出无法解析"]
+    items = parsed.get("items", [])
+    if not isinstance(items, list):
         return dt, None, ["LLM 输出无法解析"]
     mentions, reasons = [], []
-    for it in parsed.get("items", []):
+    for it in items:
         name = it.get("name", "")
         if name not in NAME2ACTION:
             reasons.append(f"LLM 项 {name!r} 不在白名单")

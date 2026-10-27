@@ -91,7 +91,7 @@ def http_post(url, body, timeout=300):
 def llm_json(prompt, timeout=300):
     dt, d = http_post(OLLAMA, {"model": MODEL, "prompt": prompt, "stream": False,
                                 "think": False,
-                                "options": {"temperature": 0, "num_predict": 300}}, timeout)
+                                "options": {"temperature": 0, "num_predict": 300, "num_gpu": 99}}, timeout)
     txt = d.get("response", "")
     s, e = txt.find("{"), txt.rfind("}")
     return dt, json.loads(txt[s:e + 1]) if s >= 0 and e > s else None
