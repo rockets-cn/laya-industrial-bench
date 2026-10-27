@@ -97,3 +97,7 @@ models/
 _test_audio/
 test_audio/
 _patch1.py
+
+# local logs & runtime-generated pins
+*.log
+voxtype_bench.toml
