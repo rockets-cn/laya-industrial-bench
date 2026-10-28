@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Laya Loop UI Browser
+Comment=Open the Laya industrial loop UI in Chromium at session start
+Exec=/home/rockets/laya-industrial-bench/scripts/open_loop_ui.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true

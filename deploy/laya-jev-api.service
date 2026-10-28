@@ -1,0 +1,17 @@
+# Laya Jev-compatible inference API (jev_api.py, 0.0.0.0:8000)
+# 安装: cp deploy/laya-jev-api.service ~/.config/systemd/user/
+#       systemctl --user daemon-reload
+#       systemctl --user enable --now laya-jev-api
+# 日志: journalctl --user -u laya-jev-api -f
+[Unit]
+Description=Laya Jev-compatible inference API (port 8000)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/rockets/laya-industrial-bench
+ExecStart=/home/rockets/laya-industrial-bench/.venv/bin/python jev_api.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
