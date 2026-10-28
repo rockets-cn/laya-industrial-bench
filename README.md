@@ -26,6 +26,7 @@
 | 水果 | "来两个红苹果和一把香蕉" | `[{action: red_apple, qty: 2}, {action: banana, qty: 1}]` | `bench_industrial.py` |
 | 彩色方块 | "10个红色方块，5个绿色方块，7个黄色方块" | `[{color: red, qty: 10}, {color: green, qty: 5}, {color: yellow, qty: 7}]` | `bench_block.py` |
 | 混合 | "两个红苹果和10个红色方块" | 两条规则层并行、各抽各的，动作合并 | `loop_ui.py` `mixed` 模式 |
+| 料场分拣 | "给1号料场送两个红苹果，3号料场送10个蓝色方块" | `[{yard: 1, material: red_apple, qty: 2}, {yard: 3, material: blue_block, qty: 10}]` | `bench_yard.py` |
 
 领域可插拔：每条回路都是 `normalize()`（词表/正则）+ `laya_decide()` + `validate()` 三件套，
 换词表即新领域。视觉侧另有 `bench_colorblock.py`：Laya 看不到像素，颜色块识别由像素层
@@ -41,13 +42,14 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
 .venv/bin/python jev_api.py    # 或 systemctl --user start laya-jev-api
 ollama serve                   # 或 systemctl --user start ollama-serve
 
-# 3) Web 控制台（:8002）— 领域切换 水果/方块/混合、预设、麦克风唤醒词「优优」、全链路 trace
+# 3) Web 控制台（:8002）— 领域切换 水果/方块/混合/料场分拣、预设、麦克风唤醒词「优优」、全链路 trace
 .venv/bin/python loop_ui.py    # 或 systemctl --user start laya-loop-ui
 
 # 4) 基准
 .venv/bin/python bench_industrial.py 3       # 水果域, 语音全流程 (test_audio/tts_*.wav)
 .venv/bin/python bench_industrial.py 3 text  # 水果域, 文本模式
 .venv/bin/python bench_block.py 3            # 彩色方块域
+.venv/bin/python bench_yard.py 3 text        # 料场分拣域 (1/2/3 号料场 × 8 物料)
 .venv/bin/python bench_oob.py                # 超纲验收 (PAUSE+HUMAN)
 ```
 
@@ -85,12 +87,13 @@ journalctl --user -u laya-loop-ui -f
 |---|---|
 | `bench_industrial.py` | 水果域工业回路基准（语音/文本；含 LLM 旁路与 PAUSE+HUMAN 安全降级） |
 | `bench_block.py` | 彩色方块域回路（颜色×数量；简繁/同音/省略/后置数量/混水果） |
+| `bench_yard.py` | 料场分拣域回路（1/2/3 号料场 × 8 物料；料场号规则层决定+校验、物料 Laya 终审、倒序/同音/否定、超纲暂停） |
 | `bench_colorblock.py` | 颜色块像素层识别基准（HSV 阈值 + 可选 Laya 交叉校验；`--camera/--file`） |
 | `bench_fruit.py` | 纯 Laya 水果描述分类（延迟分位 + 分类准确率） |
 | `bench_pipeline.py` | LLM 意图整理 → Laya 终审 对比管线（`llm_json`/`http_post` 工具函数） |
 | `bench_jev.py` / `bench_split.py` / `bench_oob.py` / `bench_voice.py` | API 基准 / 单请求多问 vs 拆分 A/B / 超纲验收 / 全语音管线 |
 | `jev_api.py` | Jev 兼容 HTTP API（`:8000`，`POST /v1/systemone`；模型含 `jev-fruits` 微调模型） |
-| `loop_ui.py` | Web 控制台（`:8002`）：领域切换、预设、麦克风唤醒、全链路 trace；纯转发不载模型 |
+| `loop_ui.py` | Web 控制台（`:8002`）：领域切换（水果/方块/混合/料场分拣）、预设、麦克风唤醒、全链路 trace；纯转发不载模型 |
 | `teacher_offline.py` | 水果域离线教师：qwen4b 造语料 + 交叉标注 + Laya 微调 |
 | `teacher_blocks.py` | 方块域离线教师：生成 + 交叉标注 + 规则层审计 → `teacher/blocks_corpus.jsonl` |
 | `teacher/` | 语料与训练/评测数据（jsonl） |

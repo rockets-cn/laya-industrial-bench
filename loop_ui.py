@@ -26,6 +26,11 @@ spec_bb = importlib.util.spec_from_file_location("bb", os.path.join(HERE, "bench
 bb = importlib.util.module_from_spec(spec_bb)
 spec_bb.loader.exec_module(bb)
 
+# 料场分拣域 (bench_yard.py): 1/2/3 号料场 × 8 种物料, 语音指令分拣下发
+spec_by = importlib.util.spec_from_file_location("by", os.path.join(HERE, "bench_yard.py"))
+by = importlib.util.module_from_spec(spec_by)
+spec_by.loader.exec_module(by)
+
 import bench_pipeline  # noqa: E402  (already imported by bench_industrial)
 bench_pipeline.MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
@@ -45,12 +50,19 @@ PRESETS = [
     ("方块 否定", "8个黄色方块，不要绿色方块", "block"),
     ("方块 超纲", "就给我3个方块", "block"),
     ("混合 水果+方块", "两个红苹果和10个红色方块，再来3个蓝色方块", "mixed"),
+    ("料场 双场双料", "给1号料场送两个红苹果，3号料场送10个蓝色方块", "yard"),
+    ("料场 倒序", "两个红苹果送到3号料场，1号料场来五个香蕉", "yard"),
+    ("料场 否定", "1号料场送四个梨，不要绿色方块", "yard"),
+    ("料场 超纲 4号", "给4号料场送两个苹果", "yard"),
+    ("料场 超纲 缺场", "送两个红苹果", "yard"),
 ]
+
+SIDES = {"fruit": bi, "block": bb, "yard": by}
 
 
 def run_side(side, text):
-    """单领域跑一圈: 规则层 -> Laya -> 校验器 -> (LLM旁路). side: fruit|block."""
-    ns = bi if side == "fruit" else bb
+    """单领域跑一圈: 规则层 -> Laya -> 校验器 -> (LLM旁路). side: fruit|block|yard."""
+    ns = SIDES[side]
     norm, mentions, neg = ns.normalize(text)
     if not mentions and not neg:
         return {"side": side, "empty": True, "normalized": norm, "negated": neg,
@@ -92,9 +104,10 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
     order = {"FAST": 0, "BYPASS": 1, "PAUSE+HUMAN": 2}
     path = max((r["path"] for r in active), key=lambda p: order[p])
     merged_answers = {}
+    pfx = {"fruit": "f_", "block": "b_", "yard": "y_"}
     for r in results:
         for k, v in r["answers"].items():
-            merged_answers[("f_" if r["side"] == "fruit" else "b_") + k] = v
+            merged_answers[pfx[r["side"]] + k] = v
     merged_bypass = {k: v for r in results for k, v in
                      (r["bypass"].items() if r["bypass"] else [])} or None
     return {
@@ -130,7 +143,7 @@ async def run(request: Request):
     mic = body.get("mic")
     wake = bool(body.get("wake"))
     domain = body.get("domain") or "fruit"
-    if domain not in ("fruit", "block", "mixed"):
+    if domain not in ("fruit", "block", "mixed", "yard"):
         domain = "fruit"
     asr_dt, asr_text = 0.0, None
     last_wav = None
@@ -226,6 +239,7 @@ PAGE = """<!doctype html>
  <button class="primary" data-dom="fruit" onclick="setDomain('fruit')">🍎 水果回路</button>
  <button data-dom="block" onclick="setDomain('block')">🧊 彩色方块回路</button>
  <button data-dom="mixed" onclick="setDomain('mixed')">🍎+🧊 混合</button>
+ <button data-dom="yard" onclick="setDomain('yard')">🚚 料场分拣回路</button>
  <span id="domlabel" class="muted" style="align-self:center"></span>
 </div>
 <div class="row" id="presets"></div>
@@ -240,6 +254,7 @@ PAGE = """<!doctype html>
  <span id="wavnames"></span>
 </div>
 <div id="cards" class="cards"></div>
+<div id="yardcards" class="cards"></div>
 <div id="out"></div>
 <script>
 const $=id=>document.getElementById(id);
@@ -256,7 +271,7 @@ function pills(arr){return arr.length?arr.map(x=>`<span class="pill">${x}</span>
 let domain='fruit';
 function setDomain(d){ domain=d;
  document.querySelectorAll('#domainrow button').forEach(b=>b.classList.toggle('primary',b.dataset.dom===d));
- $('domlabel').textContent={fruit:'当前: 水果回路',block:'当前: 彩色方块回路 (红/绿/黄/蓝 × 数量)',mixed:'当前: 混合 (两个规则层并行, 各抽各的)'}[d];
+ $('domlabel').textContent={fruit:'当前: 水果回路',block:'当前: 彩色方块回路 (红/绿/黄/蓝 × 数量)',mixed:'当前: 混合 (两个规则层并行, 各抽各的)',yard:'当前: 料场分拣回路 (1/2/3 号料场 × 8 种物料, 按指令分拣下发)'}[d];
 }
 setDomain('fruit');
 async function runText(){
@@ -281,9 +296,19 @@ async function runWav(name){
 }
 function render(d){
  const pcls='path-'+d.path;
- $('cards').innerHTML=card('领域',{fruit:'水果',block:'方块',mixed:'混合'}[d.domain]||d.domain,'')+card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')
+ const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
+  red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
+ $('cards').innerHTML=card('领域',{fruit:'水果',block:'方块',mixed:'混合',yard:'料场分拣'}[d.domain]||d.domain,'')+card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')
   +card('ASR',d.asr_ms+' ms')+card('Laya',d.laya_ms+' ms')+(d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','未触发'));
  let h='';
+ if(d.domain==='yard'){
+  const lines=d.actions.map(a=>`${a.yard}号料场: ${MATCN[a.material]||a.material} × ${a.qty}`);
+  const yardTot={}; d.actions.forEach(a=>{yardTot[a.yard]=(yardTot[a.yard]||0)+a.qty});
+  let yc=''; [1,2,3].forEach(y=>{yc+=card(y+'号料场', yardTot[y]? yardTot[y]+' 件':'空', yardTot[y]?'':'muted')});
+  $('yardcards').innerHTML=yc;
+  h+=sec('🚚 料场分拣下发 <span class="chip" style="text-transform:none;letter-spacing:0">'+(d.path==='FAST'?'PLC 可执行':d.path)+'</span>')
+   +(lines.length?`<pre>${lines.join('\n')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>');
+ } else $('yardcards').innerHTML='';
  h+=sec('ASR / 输入 <span class="chip" style="text-transform:none;letter-spacing:0">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a class="muted" style="color:#60a5fa" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
  h+=sec('规则层')+`<pre>归一化: ${d.normalized}\n否定项: ${d.negated.join(', ')||'无'}\n提及: ${JSON.stringify(d.mentions)}</pre>`;
  if(Object.keys(d.laya_answers).length){
