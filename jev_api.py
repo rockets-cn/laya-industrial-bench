@@ -53,12 +53,15 @@ ROOT = Path(__file__).resolve().parent
 MODELS = {
     "multilingual": str(ROOT / "models/laya/multilingual"),
     "english": str(ROOT / "models/laya"),
+    # 离线教师微调产物 (teacher_offline.py train): 4 水果动作域, 留出集 100%.
+    "fruits-teacher": str(ROOT / "models/laya-fruits-teacher"),
 }
 # Jev `model` name -> (checkpoint to force, name to echo back in the response).
 MODEL_ALIASES = {
     "jev-latest": (None, "jev-latest"),       # None: let the Router pick by language
     "jev-multilingual": ("multilingual", "jev-multilingual"),
     "jev-english": ("english", "jev-english"),
+    "jev-fruits": ("fruits-teacher", "jev-fruits"),
 }
 API_KEY = os.environ.get("LAYA_JEV_API_KEY", "").strip()
 MAX_STATE_CHARS = 60_000
@@ -149,7 +152,7 @@ async def systemone(request: Request, authorization: Optional[str] = Header(defa
     # A checkpoint name given directly (english / multilingual) also works.
     if force is None and model in MODELS:
         force, echo = model, model
-    if force not in (None, "english", "multilingual") and force not in MODEL_ALIASES:
+    if force is not None and force not in MODELS:
         raise HTTPException(status_code=422, detail=f"unknown model {model!r}")
 
     _validate(body.get("state"), body.get("questions"))

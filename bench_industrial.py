@@ -22,7 +22,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bench_pipeline import LAYA, llm_json  # noqa: E402
 
-REPS = int(sys.argv[1]) if len(sys.argv) > 1 else 5
+REPS = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 5
 MODE = sys.argv[2] if len(sys.argv) > 2 else "voice"
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_audio")
 HERE = os.path.dirname(os.path.abspath(__file__))
