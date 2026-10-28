@@ -55,6 +55,7 @@ PRESETS = [
     ("料场 否定", "1号料场送四个梨，不要绿色方块", "yard"),
     ("料场 超纲 4号", "给4号料场送两个苹果", "yard"),
     ("料场 超纲 缺场", "送两个红苹果", "yard"),
+    ("料场 密集无标点", "一号仓库一个香蕉两个苹果二号仓库三个苹果四个香蕉三号仓库一个梨一个香蕉", "yard"),
 ]
 
 SIDES = {"fruit": bi, "block": bb, "yard": by}
@@ -203,7 +204,7 @@ def presets():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 工业决策回路 v8</title>
+<title>Laya 料场分拣回路 v9</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -252,7 +253,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路<span class="ver">v8 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v9 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -270,12 +271,6 @@ PAGE = """<!doctype html>
  <g id="fn7" class="n off"><rect x="794" y="14" width="104" height="36" rx="9"/><text x="846" y="29" text-anchor="middle">PLC 下发</text><text x="846" y="43" text-anchor="middle" class="sub">暂停 = 不发</text><text id="fn-e2e" x="846" y="66" text-anchor="middle" class="ms">—</text></g>
 </svg>
 <div class="row">
- <select id="domsel" onchange="setDomain(this.value)" title="领域">
-  <option value="fruit">🍎 水果</option>
-  <option value="block">🧊 方块</option>
-  <option value="mixed">🍎+🧊 混合</option>
-  <option value="yard">🚚 料场分拣</option>
- </select>
  <select id="preset" onchange="runPresetSel()" title="测试指令预设"><option value="" selected>预设指令…</option></select>
  <input id="txt">
  <button class="primary" onclick="runText()">▶ 运行</button>
@@ -283,7 +278,6 @@ PAGE = """<!doctype html>
 <div class="row">
  <button id="micbtn" class="primary" style="min-width:120px" onclick="authToggle()">🎤 授权麦克风</button>
  <button id="ptt" title="按住说话 (或按住 空格键)" style="min-width:120px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
- <button id="rec" style="min-width:120px" onclick="recToggle()" disabled>⏺ 录音识别</button>
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
@@ -291,13 +285,6 @@ PAGE = """<!doctype html>
 <div id="yardcards" class="cards"></div>
 <div id="out"></div>
 <details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
-<details class="fold"><summary>音频输入 (测试 WAV / 上传)</summary>
- <div class="row">
-  <label class="drop" id="drop">🎙 点击选择 WAV (16k mono)<br><span class="muted">选择后自动识别 → 跑全链路</span>
-  <input type="file" id="wavf" accept=".wav,audio/*" hidden></label>
-  <span id="wavnames"></span>
- </div>
-</details>
 <script>
 const $=id=>document.getElementById(id);
 window.addEventListener('error',e=>{const m=$('micstate');
@@ -309,8 +296,7 @@ async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content
  if(!r.ok)throw new Error((await r.text()).slice(0,300));return r.json()}
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
-let domain='fruit';
-function setDomain(d){domain=d;$('domsel').value=d}
+const domain='yard'; // 页面专属料场分拣 (后端 API 仍支持 fruit/block/mixed 基准域)
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
  if(d.path==='FAST'){['fn1','fn2','fn3','fn4','fn5','fn7'].forEach(i=>set(i,'on'));set('fn6','off')}
@@ -327,27 +313,12 @@ async function runText(){
  try{render(await jpost('/run',{text:t,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
-async function runWav(name){
- const f=$('wavf').files[0]; if(f){
-  const fr=new FileReader(); fr.onload=async()=>{
-   const b64=fr.result.split(',')[1];
-   $('out').innerHTML=sec('ASR 识别中…');
-   try{render(await jpost('/run',{wav:b64,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
-  }; fr.readAsDataURL(f);
- } else if(name){
-  const r=await fetch('/audio/file?file='+encodeURIComponent(name)); const buf=await r.arrayBuffer();
-  const b64=b64(buf);
-  $('out').innerHTML=sec('ASR 识别中…');
-  try{render(await jpost('/run',{wav:b64,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
- }
-}
 function render(d){
  drawFlow(d);
  const pcls='path-'+d.path;
  const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
   red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
- $('cards').innerHTML=card('领域',{fruit:'水果',block:'方块',mixed:'混合',yard:'料场'}[d.domain]||d.domain,'')
-  +card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')+card('ASR',d.asr_ms+' ms')
+ $('cards').innerHTML=card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')+card('ASR',d.asr_ms+' ms')
   +card('Laya',d.laya_ms+' ms')+(d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','—','muted'));
  let out='';
  if(d.domain==='yard'){
@@ -393,7 +364,7 @@ function refreshState(){
  const s=$('micstate');
  if(!armed){ s.textContent='未授权：先点「🎤 授权麦克风」'; }
  else if(flushing){ s.textContent='识别中…'; }
- else if(recActive){ s.textContent='🔴 录音中… '+(pttHeld?'松开(空格/手指)发送':'再点「⏹ 停止并识别」发送'); }
+ else if(recActive){ s.textContent='🔴 录音中… 松开(空格/手指)发送'; }
  else if(wakeOn&&wmode==='cmd'){ s.textContent='🔔 已唤醒, 请说指令… (30秒内有效)'; }
  else if(wakeOn){ s.textContent='唤醒中… 说「优优」唤醒, 然后说指令'; }
  else { s.textContent='就绪：按住「🗣 按住说话」或 空格键 录音 (采样率 '+ctxRate+'Hz)'; }
@@ -413,7 +384,7 @@ async function startListen(){
  if(wakeOn&&!tickTimer)tickTimer=setInterval(wakeTick,300);
  $('micbtn').textContent='⏹ 撤销授权';
  $('micbtn').classList.remove('primary');
- $('ptt').disabled=false; $('rec').disabled=false; $('wakesw').disabled=false;
+ $('ptt').disabled=false; $('wakesw').disabled=false;
  refreshState();
 }
 function stopListen(){
@@ -426,8 +397,7 @@ function stopListen(){
  proc=src=stream=ac=null;
  $('micbtn').textContent='🎤 授权麦克风';
  $('micbtn').classList.add('primary');
- $('ptt').disabled=true; $('rec').disabled=true; $('wakesw').disabled=true; $('wakesw').checked=false; wakeOn=false;
- $('rec').textContent='⏺ 录音识别';
+ $('ptt').disabled=true; $('wakesw').disabled=true; $('wakesw').checked=false; wakeOn=false;
  $('lv').style.width='0';
  refreshState();
 }
@@ -467,15 +437,9 @@ document.addEventListener('keyup',e=>{
  if(a&&a.tagName==='BUTTON')e.preventDefault(); // 取消按下 keydown 残留的按钮激活
  if(pttHeld){e.preventDefault();pttUp();}
 });
-function recToggle(){ // 录音识别: 点一下开始, 再点停止并识别
- if(!armed||flushing)return;
- if(recActive){ stopRec(); }
- else { recActive=true; recBufs=[]; $('rec').textContent='⏹ 停止并识别'; refreshState(); }
-}
 function stopRec(){
  if(!recActive)return;
  recActive=false;
- $('rec').textContent='⏺ 录音识别';
  const c=recBufs; recBufs=[];
  if(c.length<10){ // <~1.3s 太短, 不识别
   refreshState();
@@ -585,19 +549,12 @@ function runPresetSel(){
  const sel=$('preset'), i=+sel.value, p=PREDS[i];
  sel.selectedIndex=0;
  if(!p)return;
- setDomain(p.domain); $('txt').value=p.text; runText();
+ $('txt').value=p.text; runText();
 }
-fetch('/presets').then(r=>r.json()).then(ps=>{PREDS=ps;
- const g={}; ps.forEach((p,i)=>{(g[p.domain]=g[p.domain]||[]).push([i,p.name])});
- const DN={fruit:'水果',block:'彩色方块',mixed:'混合',yard:'料场分拣'};
- $('preset').innerHTML='<option value="" selected>预设指令…</option>'+Object.keys(g).map(d=>
-  `<optgroup label="${DN[d]||d}">${g[d].map(([i,n])=>`<option value="${i}">${n}</option>`).join('')}</optgroup>`).join('');
+fetch('/presets').then(r=>r.json()).then(ps=>{PREDS=ps.filter(p=>p.domain==='yard');
+ $('preset').innerHTML='<option value="" selected>预设指令…</option>'+PREDS.map((p,i)=>
+  `<option value="${i}">${p.name}</option>`).join('');
 });
-fetch('/audio').then(r=>r.json()).then(fs=>{$('wavnames').innerHTML=fs.map(f=>
- `<button style="margin:2px" onclick="runWav('${f}')">🎵 ${f}</button>`).join(' ')});
-$('drop').onclick=()=>$('wavf').click();
-$('wavf').onchange=e=>{if(e.target.files.length){$('drop').classList.add('on');
- $('drop').firstChild.textContent='🎙 '+e.target.files[0].name+' ';runWav()}};
 $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 refreshState();
 </script></div></body></html>"""
