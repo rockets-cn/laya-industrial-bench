@@ -76,6 +76,7 @@ journalctl --user -u laya-loop-ui -f
 | 水果域留出集准确率 | base 89.2% → 微调 `laya-fruits-teacher` **100%**（裸词"苹果"漂移 35/50 → 50/50） |
 | 方块域规则层交叉校验 | 95.9%（qwen4b 教师可信度 96.8%；修复盲区前 75.3%） |
 | 超纲句 | 一律 PAUSE+HUMAN（安全降级，不产出动作） |
+| 交互方式 | PTT（按住说话）对比 唤醒词+自动断句：每句省 ~1.2 s 句尾静音等待 + 唤醒词往返，实测响应快很多（论证见 `VOICE_DECISION_BENCH.md` §4「交互方式经验」） |
 
 完整数据与结论：[`VOICE_DECISION_BENCH.md`](VOICE_DECISION_BENCH.md)、[`TEACHER_REPORT.md`](TEACHER_REPORT.md)、
 [`BENCHMARKS.md`](BENCHMARKS.md)、[`DEPLOY_SENSEVOICE.md`](DEPLOY_SENSEVOICE.md)。
