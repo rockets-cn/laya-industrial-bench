@@ -49,7 +49,7 @@ CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
 # 在纲料场: 1号/2号/3号 + 汉字/幺号 (ASR 变体), 后接 料场/场地/库 可选
-YARD_RE = re.compile(r"(?<!\d)([123一三七幺壹])\s*号(?:\s*(?:料场|场地|库|位置|区))?")
+YARD_RE = re.compile(r"(?<!\d)([123一二三幺壹])\s*号(?:\s*(?:料场|场地|库|位置|区))?")
 
 # 物料词表 (同 bench_industrial / bench_block 的既有模式)
 FRUIT_RE = re.compile(r"(?:红|绿)?苹果|香蕉|梨")
@@ -63,7 +63,7 @@ BLOCK_NEG_RE = re.compile(r"(?:不要|别要?|不需要|不用)\s*"
 
 # 简繁/同音 -> 领域词 (ASR 噪声)
 T2S = str.maketrans({"紅": "红", "綠": "绿", "黃": "黄", "藍": "蓝",
-                     "塊": "块", "個": "个", "離": "离"})
+                     "塊": "块", "個": "个", "離": "离", "號": "号"})
 HOMOPHONE = (("离", "梨"), ("李", "梨"), ("禮", "梨"), ("方快", "方块"))
 
 
@@ -134,8 +134,9 @@ def _materials_in(seg):
 
 
 def _nearest_yard(matches, pos):
-    """提及归属最近的料场标记 (距离到标记 span); 等距时归后一个料场
-    ("两个红苹果送到3号，五个香蕉给1号" 类倒序句式)."""
+    """提及归属最近的料场标记 (距离到标记 span); 等距时归后一个料场.
+    现在仅作兜底: 子句内多标记 / 子句无标记 时使用 (主归属见 normalize 的
+    子句切分). '两个红苹果送到3号，五个香蕉给1号' 类倒序句式由子句切分处理."""
     best = None
     for m in matches:
         if m.start() <= pos <= m.end():
@@ -175,9 +176,25 @@ def normalize(text):
         if c:
             negated.add(c + "_block")
     clean = BLOCK_NEG_RE.sub(" ", clean)
+    # 剥离否定后重新扫超纲料场 (混合订单里混进 4号 也要整体暂停)
+    if OOB_YARD_RE.search(clean):
+        return text, [{"yard": 0, "material": None, "qty": 1}], sorted(negated)
+    # 按子句归属: 物料归本句的料场标记 (正序/倒序句式都成立; 全局最近距离
+    # 会把 "一号料场送1个梨，二号料场送2个香蕉" 的梨误归二号). 无标记的子句
+    # 退回全局最近料场. 标记在 clean 上重查 (剥否定改变了位置).
+    cms = list(YARD_RE.finditer(clean))
+    segs = [(m.start(), m.end())
+            for m in re.finditer(r"[^，,。；;！!？?]+", clean)]
     mentions = []
     for pos, mm in _materials_in(clean):
-        mm["yard"] = _nearest_yard(matches, pos)
+        seg = next(((s, e) for s, e in segs if s <= pos < e), None)
+        in_seg = [cm for cm in cms if seg and seg[0] <= cm.start() < seg[1]]
+        if len(in_seg) == 1:
+            mm["yard"] = YARD_NUM[in_seg[0].group(1)]
+        elif len(in_seg) > 1:
+            mm["yard"] = _nearest_yard(in_seg, pos)
+        else:
+            mm["yard"] = _nearest_yard(cms, pos)
         mentions.append(mm)
     return text, mentions, sorted(negated)
 
@@ -304,8 +321,16 @@ CASES = [
      [(1, "pear", 4)]),                               # 段内否定
     ("3号料场来8个绿色方块和一把香蕉",
      [(3, "green_block", 8), (3, "banana", 1)]),
+    # 汉字料场号变体 (ASR/口语常见): 二号 曾漏在 YARD_RE 里被误拒
+    ("给二号料场送3个香蕉",
+     [(2, "banana", 3)]),
+    ("两个红苹果放二号仓库",
+     [(2, "red_apple", 2)]),
+    ("一号料场送1个梨，二号料场送2个香蕉",
+     [(1, "pear", 1), (2, "banana", 2)]),
     # 超纲: 应走 暂停+人工 (expected=None 表示只检查路径)
     ("给4号料场送两个苹果", None),                     # 料场越纲
+    ("给七号料场送苹果", None),                        # 汉字越纲 (曾致 KeyError)
     ("送两个红苹果", None),                            # 未指定料场
     ("1号料场送3个方块", None),                       # 物料颜色未指定
 ]

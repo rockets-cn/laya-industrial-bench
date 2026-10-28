@@ -203,7 +203,7 @@ def presets():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 工业决策回路 v7</title>
+<title>Laya 工业决策回路 v8</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -229,6 +229,7 @@ PAGE = """<!doctype html>
  .sec{font-size:12px;color:#8a91a0;margin:14px 0 4px;text-transform:uppercase;letter-spacing:.05em}
  .chip{display:inline-block;background:#1e2430;border-radius:6px;padding:2px 8px;font-size:11px;
   color:#8a91a0;margin-left:6px;text-transform:none;letter-spacing:0}
+ .yd{font-size:12px;color:#8a91a0;margin-top:4px;line-height:1.7}
  .muted{color:#6b7280;font-size:12px}
  .bar{height:6px;background:#262b36;border-radius:3px;overflow:hidden;margin-top:6px}
  .bar i{display:block;height:100%;width:0;background:#4ade80;transition:width .08s}
@@ -251,7 +252,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路<span class="ver">v7 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路<span class="ver">v8 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -351,8 +352,14 @@ function render(d){
  let out='';
  if(d.domain==='yard'){
   const lines=d.actions.map(a=>`${a.yard}号料场: ${MATCN[a.material]||a.material} × ${a.qty}`);
-  const yardTot={}; d.actions.forEach(a=>{yardTot[a.yard]=(yardTot[a.yard]||0)+a.qty});
-  let yc=''; [1,2,3].forEach(y=>{yc+=card(y+'号料场', yardTot[y]? yardTot[y]+' 件':'空', yardTot[y]?'':'muted')});
+  let yc=''; [1,2,3].forEach(y=>{
+   const items=d.actions.filter(a=>a.yard===y);
+   const tot=items.reduce((s,a)=>s+a.qty,0);
+   const detail=items.length?items.map(a=>
+    `<div class="yd">${MATCN[a.material]||a.material} × ${a.qty}</div>`).join('')
+    :'<div class="yd">—</div>';
+   yc+=`<div class="card"><div class="k">${y}号料场</div><div class="v ${tot?'':'muted'}">${tot?tot+' 件':'空'}</div>${detail}</div>`;
+  });
   $('yardcards').innerHTML=yc;
   out+=sec('🚚 料场分拣下发 <span class="chip">'+(d.path==='FAST'?'PLC 可执行':d.path)+'</span>')
    +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>');
