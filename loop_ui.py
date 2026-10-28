@@ -203,61 +203,100 @@ def presets():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 工业决策回路 v4</title>
+<title>Laya 工业决策回路 v5</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
- .wrap{max-width:960px;margin:0 auto;padding:24px 16px 60px}
- h1{font-size:20px;font-weight:600} .sub{color:#8a91a0;font-size:13px;margin-bottom:20px}
- .cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
- .card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:14px;flex:1;min-width:180px}
- .card .k{font-size:11px;color:#8a91a0} .card .v{font-size:22px;font-weight:700;margin-top:4px}
+ .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+ h1{font-size:18px;font-weight:600;margin:0}
+ .ver{color:#6b7280;font-size:12px;font-weight:400;margin-left:8px}
+ .cards{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+ .card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:10px 14px;flex:1;min-width:110px}
+ .card .k{font-size:11px;color:#8a91a0} .card .v{font-size:19px;font-weight:700;margin-top:3px}
  .path-FAST{color:#4ade80}.path-BYPASS{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
- textarea{width:100%;box-sizing:border-box;background:#171a21;color:#e6e6e6;border:1px solid #262b36;
-  border-radius:10px;padding:12px;font-size:15px;min-height:70px;resize:vertical}
- .row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
- button{background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:8px;padding:7px 12px;
+ .row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center}
+ button{background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:8px;padding:8px 12px;
   cursor:pointer;font-size:13px} button:hover{background:#262d3d}
+ button:disabled{opacity:.45;cursor:default}
  button.primary{background:#2563eb;border-color:#2563eb;color:#fff;font-weight:600}
- .drop{border:1px dashed #3a4152;border-radius:10px;padding:14px;color:#8a91a0;font-size:13px;cursor:pointer}
+ input#txt{flex:1;min-width:240px;background:#171a21;color:#e6e6e6;border:1px solid #262b36;
+  border-radius:8px;padding:9px 12px;font-size:14px}
+ select{background:#171a21;color:#e6e6e6;border:1px solid #262b36;border-radius:8px;padding:8px 10px;font-size:13px}
+ .drop{border:1px dashed #3a4152;border-radius:10px;padding:12px;color:#8a91a0;font-size:13px;
+  cursor:pointer;display:inline-block}
  .drop.on{border-color:#4ade80;color:#4ade80}
  pre{background:#12141a;border:1px solid #262b36;border-radius:10px;padding:12px;font-size:12.5px;
   overflow:auto;margin:8px 0;white-space:pre-wrap}
  .sec{font-size:12px;color:#8a91a0;margin:14px 0 4px;text-transform:uppercase;letter-spacing:.05em}
- .pill{display:inline-block;background:#1e2430;border-radius:20px;padding:3px 10px;font-size:12px;margin:2px 4px 2px 0}
+ .chip{display:inline-block;background:#1e2430;border-radius:6px;padding:2px 8px;font-size:11px;
+  color:#8a91a0;margin-left:6px;text-transform:none;letter-spacing:0}
  .muted{color:#6b7280;font-size:12px}
  .bar{height:6px;background:#262b36;border-radius:3px;overflow:hidden;margin-top:6px}
  .bar i{display:block;height:100%;width:0;background:#4ade80;transition:width .08s}
- .chip{display:inline-block;background:#1e2430;border-radius:6px;padding:2px 8px;font-size:11px;color:#8a91a0;margin-left:6px}
+ details.fold{margin:10px 0}
+ details.fold>summary{cursor:pointer;color:#8a91a0;font-size:13px;user-select:none}
+ details.fold>summary:hover{color:#c3c8d4}
+ #flow{width:100%;height:auto;display:block;margin:12px 0 0}
+ #flow .n rect{fill:#12141a;stroke:#232836}
+ #flow .n text{fill:#565d6d;font-size:12.5px}
+ #flow .n .sub{fill:#4b5563;font-size:9px}
+ #flow .n .ms{fill:#6b7280;font-size:10.5px}
+ #flow .n.on rect{fill:#0b2417;stroke:#2f9e63}
+ #flow .n.on text{fill:#4ade80}
+ #flow .n.on .sub{fill:#2f9e63}
+ #flow .n.warn rect{fill:#2a2410;stroke:#c7a13a}
+ #flow .n.warn text{fill:#facc15}
+ #flow .n.warn .sub{fill:#c7a13a}
+ #flow .n.stop rect{fill:#2a1214;stroke:#b3454f}
+ #flow .n.stop text{fill:#f87171}
+ #flow .n.off rect{stroke-dasharray:4 3}
+ #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 <span class="muted">v4 · 语音/文本 → ASR(SenseVoice) → 规则归一化 → Laya → 校验器 → (LLM旁路)</span></h1>
-<div class="sub">实时路径不含 LLM；LLM 仅校验拒绝时旁路；任何失败安全降级为 暂停+人工。</div>
+<h1>🏭 Laya 工业决策回路<span class="ver">v5 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
+<svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
+ <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
+ <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="240" y1="32" x2="262" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="372" y1="32" x2="394" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="504" y1="32" x2="526" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="636" y1="32" x2="658" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="768" y1="32" x2="790" y2="32" marker-end="url(#arr)"/>
+ <g id="fn1" class="n off"><rect x="2" y="14" width="104" height="36" rx="9"/><text x="54" y="37" text-anchor="middle">语音/文本</text></g>
+ <g id="fn2" class="n off"><rect x="134" y="14" width="104" height="36" rx="9"/><text x="186" y="29" text-anchor="middle">ASR</text><text x="186" y="43" text-anchor="middle" class="sub">SenseVoice</text><text id="fn-asr" x="186" y="66" text-anchor="middle" class="ms">—</text></g>
+ <g id="fn3" class="n off"><rect x="266" y="14" width="104" height="36" rx="9"/><text x="318" y="29" text-anchor="middle">规则归一化</text><text x="318" y="43" text-anchor="middle" class="sub">抽取 · 归属</text></g>
+ <g id="fn4" class="n off"><rect x="398" y="14" width="104" height="36" rx="9"/><text x="450" y="29" text-anchor="middle">Laya 决策</text><text x="450" y="43" text-anchor="middle" class="sub">物料终审</text><text id="fn-laya" x="450" y="66" text-anchor="middle" class="ms">—</text></g>
+ <g id="fn5" class="n off"><rect x="530" y="14" width="104" height="36" rx="9"/><text x="582" y="29" text-anchor="middle">校验器</text><text x="582" y="43" text-anchor="middle" class="sub">白名单 · 去重</text></g>
+ <g id="fn6" class="n off"><rect x="662" y="14" width="104" height="36" rx="9"/><text x="714" y="29" text-anchor="middle">LLM 旁路</text><text x="714" y="43" text-anchor="middle" class="sub">仅校验拒绝时</text><text id="fn-bypass" x="714" y="66" text-anchor="middle" class="ms">未触发</text></g>
+ <g id="fn7" class="n off"><rect x="794" y="14" width="104" height="36" rx="9"/><text x="846" y="29" text-anchor="middle">PLC 下发</text><text x="846" y="43" text-anchor="middle" class="sub">暂停 = 不发</text><text id="fn-e2e" x="846" y="66" text-anchor="middle" class="ms">—</text></g>
+</svg>
 <div class="row">
- <input id="txt" style="flex:1;min-width:260px;background:#171a21;color:#e6e6e6;border:1px solid #262b36;border-radius:8px;padding:10px 12px;font-size:14px">
+ <select id="domsel" onchange="setDomain(this.value)" title="领域">
+  <option value="fruit">🍎 水果</option>
+  <option value="block">🧊 方块</option>
+  <option value="mixed">🍎+🧊 混合</option>
+  <option value="yard">🚚 料场分拣</option>
+ </select>
+ <select id="preset" onchange="runPresetSel()" title="测试指令预设"><option value="" selected>预设指令…</option></select>
+ <input id="txt">
  <button class="primary" onclick="runText()">▶ 运行</button>
 </div>
-<div class="row" id="domainrow">
- <button class="primary" data-dom="fruit" onclick="setDomain('fruit')">🍎 水果回路</button>
- <button data-dom="block" onclick="setDomain('block')">🧊 彩色方块回路</button>
- <button data-dom="mixed" onclick="setDomain('mixed')">🍎+🧊 混合</button>
- <button data-dom="yard" onclick="setDomain('yard')">🚚 料场分拣回路</button>
- <span id="domlabel" class="muted" style="align-self:center"></span>
-</div>
-<div class="row" id="presets"></div>
 <div class="row">
- <button id="micbtn" class="primary" style="min-width:140px" onclick="authToggle()">🎤 授权麦克风</button>
- <button id="ptt" style="min-width:130px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
- <button id="rec" style="min-width:130px" onclick="recToggle()" disabled>⏺ 录音识别</button>
+ <button id="micbtn" class="primary" style="min-width:120px" onclick="authToggle()">🎤 授权麦克风</button>
+ <button id="ptt" title="按住说话 (或按住 空格键)" style="min-width:120px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
+ <button id="rec" style="min-width:120px" onclick="recToggle()" disabled>⏺ 录音识别</button>
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
-</div>
-<div class="row">
- <label class="drop" id="drop">🎙 点击选择 WAV (16k mono) 或用下方测试音频<br><span class="muted">选择后自动识别 → 跑全链路</span>
- <input type="file" id="wavf" accept=".wav,audio/*" hidden></label>
- <span id="wavnames"></span>
 </div>
 <div id="cards" class="cards"></div>
 <div id="yardcards" class="cards"></div>
 <div id="out"></div>
+<details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
+<details class="fold"><summary>音频输入 (测试 WAV / 上传)</summary>
+ <div class="row">
+  <label class="drop" id="drop">🎙 点击选择 WAV (16k mono)<br><span class="muted">选择后自动识别 → 跑全链路</span>
+  <input type="file" id="wavf" accept=".wav,audio/*" hidden></label>
+  <span id="wavnames"></span>
+ </div>
+</details>
 <script>
 const $=id=>document.getElementById(id);
 window.addEventListener('error',e=>{const m=$('micstate');
@@ -269,13 +308,18 @@ async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content
  if(!r.ok)throw new Error((await r.text()).slice(0,300));return r.json()}
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
-function pills(arr){return arr.length?arr.map(x=>`<span class="pill">${x}</span>`).join(''):'<span class="muted">无</span>'}
 let domain='fruit';
-function setDomain(d){ domain=d;
- document.querySelectorAll('#domainrow button').forEach(b=>b.classList.toggle('primary',b.dataset.dom===d));
- $('domlabel').textContent={fruit:'当前: 水果回路',block:'当前: 彩色方块回路 (红/绿/黄/蓝 × 数量)',mixed:'当前: 混合 (两个规则层并行, 各抽各的)',yard:'当前: 料场分拣回路 (1/2/3 号料场 × 8 种物料, 按指令分拣下发)'}[d];
+function setDomain(d){domain=d;$('domsel').value=d}
+function drawFlow(d){
+ const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
+ if(d.path==='FAST'){['fn1','fn2','fn3','fn4','fn5','fn7'].forEach(i=>set(i,'on'));set('fn6','off')}
+ else if(d.path==='BYPASS'){['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6','warn');set('fn7','warn')}
+ else{['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6',d.bypass_ms?'warn':'off');set('fn7','stop')}
+ $('fn-asr').textContent=d.asr_ms!=null?d.asr_ms+' ms':'—';
+ $('fn-laya').textContent=d.laya_ms!=null?d.laya_ms+' ms':'—';
+ $('fn-bypass').textContent=d.bypass_ms?d.bypass_ms+' ms':'未触发';
+ $('fn-e2e').textContent='E2E '+d.e2e_ms+' ms';
 }
-setDomain('fruit');
 async function runText(){
  const t=$('txt').value.trim(); if(!t)return;
  $('out').innerHTML=sec('运行中…');
@@ -297,31 +341,36 @@ async function runWav(name){
  }
 }
 function render(d){
+ drawFlow(d);
  const pcls='path-'+d.path;
  const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
   red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
- $('cards').innerHTML=card('领域',{fruit:'水果',block:'方块',mixed:'混合',yard:'料场分拣'}[d.domain]||d.domain,'')+card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')
-  +card('ASR',d.asr_ms+' ms')+card('Laya',d.laya_ms+' ms')+(d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','未触发'));
- let h='';
+ $('cards').innerHTML=card('领域',{fruit:'水果',block:'方块',mixed:'混合',yard:'料场'}[d.domain]||d.domain,'')
+  +card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')+card('ASR',d.asr_ms+' ms')
+  +card('Laya',d.laya_ms+' ms')+(d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','—','muted'));
+ let out='';
  if(d.domain==='yard'){
   const lines=d.actions.map(a=>`${a.yard}号料场: ${MATCN[a.material]||a.material} × ${a.qty}`);
   const yardTot={}; d.actions.forEach(a=>{yardTot[a.yard]=(yardTot[a.yard]||0)+a.qty});
   let yc=''; [1,2,3].forEach(y=>{yc+=card(y+'号料场', yardTot[y]? yardTot[y]+' 件':'空', yardTot[y]?'':'muted')});
   $('yardcards').innerHTML=yc;
-  h+=sec('🚚 料场分拣下发 <span class="chip" style="text-transform:none;letter-spacing:0">'+(d.path==='FAST'?'PLC 可执行':d.path)+'</span>')
-   +(lines.length?`<pre>${lines.join('\\n')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>');
+  out+=sec('🚚 料场分拣下发 <span class="chip">'+(d.path==='FAST'?'PLC 可执行':d.path)+'</span>')
+   +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>');
  } else $('yardcards').innerHTML='';
- h+=sec('ASR / 输入 <span class="chip" style="text-transform:none;letter-spacing:0">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a class="muted" style="color:#60a5fa" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
- h+=sec('规则层')+`<pre>归一化: ${d.normalized}\n否定项: ${d.negated.join(', ')||'无'}\n提及: ${JSON.stringify(d.mentions)}</pre>`;
+ const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认');
+ out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${JSON.stringify(d.actions)}</pre>`;
+ $('out').innerHTML=out;
+ let h='';
+ h+=sec('ASR / 输入 <span class="chip">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a style="color:#60a5fa;font-size:12px" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
+ h+=sec('规则层')+`<pre>归一化: ${d.normalized}${String.fromCharCode(10)}否定项: ${d.negated.join(', ')||'无'}${String.fromCharCode(10)}提及: ${JSON.stringify(d.mentions)}</pre>`;
  if(Object.keys(d.laya_answers).length){
   h+=sec('Laya 决策 (每提及单独请求)')+'<pre>'+Object.entries(d.laya_answers).map(([k,v])=>
-   `${k}: choice=${v.choice} conf=${v.confidence}  p=${JSON.stringify(v.probabilities)}`).join('\\n')+'</pre>';
+   `${k}: choice=${v.choice} conf=${v.confidence}  p=${JSON.stringify(v.probabilities)}`).join('<br>')+'</pre>';
  }
  h+=sec('校验器')+`<pre>通过: ${d.validator_ok?'✅':'❌'}  动作: ${JSON.stringify(d.actions)}  拒绝原因: ${d.reject_reasons.join('; ')||'无'}</pre>`;
  if(d.bypass)h+=sec('LLM 旁路')+`<pre>输出提及: ${JSON.stringify(d.bypass.raw_mentions)}  原因: ${d.bypass.reasons.join('; ')||'无'}</pre>`;
- const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认');
- h+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}\n${JSON.stringify(d.actions)}</pre>`;
- $('out').innerHTML=h;
+ $('tracebody').innerHTML=h;
+ $('trace').open=d.path!=='FAST';
 }
 let ac=null,proc=null,src=null,stream=null,armed=false,flushing=false;
 let bufs=[],speechStart=0,speechUntil=0,ctxRate=48000;
@@ -337,10 +386,10 @@ function refreshState(){
  const s=$('micstate');
  if(!armed){ s.textContent='未授权：先点「🎤 授权麦克风」'; }
  else if(flushing){ s.textContent='识别中…'; }
- else if(recActive){ s.textContent='🔴 录音中… '+(pttHeld?'松开发送':'再点「⏹ 停止并识别」发送'); }
+ else if(recActive){ s.textContent='🔴 录音中… '+(pttHeld?'松开(空格/手指)发送':'再点「⏹ 停止并识别」发送'); }
  else if(wakeOn&&wmode==='cmd'){ s.textContent='🔔 已唤醒, 请说指令… (30秒内有效)'; }
  else if(wakeOn){ s.textContent='唤醒中… 说「优优」唤醒, 然后说指令'; }
- else { s.textContent='就绪：按住「🗣 按住说话」或点「⏺ 录音识别」(采样率 '+ctxRate+'Hz)'; }
+ else { s.textContent='就绪：按住「🗣 按住说话」或 空格键 录音 (采样率 '+ctxRate+'Hz)'; }
 }
 function authToggle(){ armed?stopListen():startListen() }
 async function startListen(){
@@ -383,7 +432,7 @@ function wakeToggle(){ // 唤醒词模式开关
  } else { if(tickTimer){clearInterval(tickTimer);tickTimer=0} wmode='off'; bufs=[]; }
  refreshState();
 }
-function pttDown(e){ // 按住说话: 按下开始录音
+function pttDown(e){ // 按住说话: 按下开始录音 (鼠标/触屏/空格)
  e.preventDefault();
  if(!armed||flushing||recActive)return;
  pttHeld=true; recActive=true; recBufs=[];
@@ -394,6 +443,20 @@ function pttUp(){ // 松开 -> 识别
  pttHeld=false;
  stopRec();
 }
+// 空格键 = 按住说话: keydown 开始录音, keyup 发送识别
+document.addEventListener('keydown',e=>{
+ if(e.code!=='Space'||e.repeat)return;
+ const a=document.activeElement;
+ if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.tagName==='SELECT'||a.tagName==='BUTTON'||a.isContentEditable))return;
+ if(!armed||flushing||recActive)return;
+ e.preventDefault();
+ pttDown();
+});
+document.addEventListener('keyup',e=>{
+ if(e.code!=='Space'||!pttHeld)return;
+ e.preventDefault();
+ pttUp();
+});
 function recToggle(){ // 录音识别: 点一下开始, 再点停止并识别
  if(!armed||flushing)return;
  if(recActive){ stopRec(); }
@@ -508,17 +571,27 @@ function flushWav(chunks, isWake){
  fr.readAsDataURL(new Blob([buf],{type:'audio/wav'}));
 }
 let PREDS=[];
-function runPreset(i){const p=PREDS[i]; if(!p)return;
- setDomain(p.domain); $('txt').value=p.text; runText();}
-fetch('/presets').then(r=>r.json()).then(ps=>{PREDS=ps;$('presets').innerHTML=ps.map((p,i)=>
- `<button onclick="runPreset(${i})">${p.name}</button>`).join('')});
+function runPresetSel(){
+ const sel=$('preset'), i=+sel.value, p=PREDS[i];
+ sel.selectedIndex=0;
+ if(!p)return;
+ setDomain(p.domain); $('txt').value=p.text; runText();
+}
+fetch('/presets').then(r=>r.json()).then(ps=>{PREDS=ps;
+ const g={}; ps.forEach((p,i)=>{(g[p.domain]=g[p.domain]||[]).push([i,p.name])});
+ const DN={fruit:'水果',block:'彩色方块',mixed:'混合',yard:'料场分拣'};
+ $('preset').innerHTML='<option value="" selected>预设指令…</option>'+Object.keys(g).map(d=>
+  `<optgroup label="${DN[d]||d}">${g[d].map(([i,n])=>`<option value="${i}">${n}</option>`).join('')}</optgroup>`).join('');
+});
 fetch('/audio').then(r=>r.json()).then(fs=>{$('wavnames').innerHTML=fs.map(f=>
  `<button style="margin:2px" onclick="runWav('${f}')">🎵 ${f}</button>`).join(' ')});
 $('drop').onclick=()=>$('wavf').click();
 $('wavf').onchange=e=>{if(e.target.files.length){$('drop').classList.add('on');
  $('drop').firstChild.textContent='🎙 '+e.target.files[0].name+' ';runWav()}};
+$('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 refreshState();
 </script></div></body></html>"""
+
 
 
 @app.get("/audio")
