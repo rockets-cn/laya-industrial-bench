@@ -244,9 +244,11 @@ PAGE = """<!doctype html>
 </div>
 <div class="row" id="presets"></div>
 <div class="row">
- <button id="micbtn" class="primary" style="min-width:230px" onclick="micToggle()">🎤 点一下授权，唤醒词「优优」</button>
- <button id="mflush" style="min-width:110px" onclick="manualFlush()" disabled>⚡ 手动识别</button>
- <div style="flex:1;min-width:180px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
+ <button id="micbtn" class="primary" style="min-width:140px" onclick="authToggle()">🎤 授权麦克风</button>
+ <button id="ptt" style="min-width:130px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
+ <button id="rec" style="min-width:130px" onclick="recToggle()" disabled>⏺ 录音识别</button>
+ <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
+ <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
 <div class="row">
  <label class="drop" id="drop">🎙 点击选择 WAV (16k mono) 或用下方测试音频<br><span class="muted">选择后自动识别 → 跑全链路</span>
@@ -307,7 +309,7 @@ function render(d){
   let yc=''; [1,2,3].forEach(y=>{yc+=card(y+'号料场', yardTot[y]? yardTot[y]+' 件':'空', yardTot[y]?'':'muted')});
   $('yardcards').innerHTML=yc;
   h+=sec('🚚 料场分拣下发 <span class="chip" style="text-transform:none;letter-spacing:0">'+(d.path==='FAST'?'PLC 可执行':d.path)+'</span>')
-   +(lines.length?`<pre>${lines.join('\n')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>');
+   +(lines.length?`<pre>${lines.join('\\n')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>');
  } else $('yardcards').innerHTML='';
  h+=sec('ASR / 输入 <span class="chip" style="text-transform:none;letter-spacing:0">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a class="muted" style="color:#60a5fa" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
  h+=sec('规则层')+`<pre>归一化: ${d.normalized}\n否定项: ${d.negated.join(', ')||'无'}\n提及: ${JSON.stringify(d.mentions)}</pre>`;
@@ -324,27 +326,23 @@ function render(d){
 let ac=null,proc=null,src=null,stream=null,armed=false,flushing=false;
 let bufs=[],speechStart=0,speechUntil=0,ctxRate=48000;
 let floorRms=0.001,floorN=0; // 噪声底自适应
-let wmode='idle',cmdStart=0,tickTimer=0; // idle=等唤醒词, cmd=已唤醒听指令
+let wakeOn=false;                     // 唤醒词模式 (可选开关, 默认关)
+let recActive=false,recBufs=[],pttHeld=false; // 按住说话 / 录音识别
+let wmode='off',cmdStart=0,tickTimer=0; // idle=等唤醒词, cmd=听指令, off=关
 const SILENCE=1200,MINLEN=1200,MAXLEN=30000; // 指令模式
 const W_SILENCE=600,W_MINLEN=350,W_MAXLEN=4000; // 唤醒模式 (短窗口, 只看最近 3s)
 const WAKE_RE=/优优|悠悠|由由|柚柚|优由|youyou|you you/i;
 function thr(){ return Math.max(0.0015, floorRms*3.5) } // 动态阈值
-function micToggle(){ armed?stopListen():startListen() }
-function manualFlush(){
- if(!armed||flushing)return;
- if(wmode==='cmd'){ if(bufs.length>20){ speechStart=speechStart||performance.now(); flushUtterance(false) } }
- else{ // 绕过唤醒词, 直接识别最近 ~5s
-  const n=Math.min(bufs.length,39);
-  if(n>10){ wmode='cmd'; flushUtterance(false,n) } }
+function refreshState(){
+ const s=$('micstate');
+ if(!armed){ s.textContent='未授权：先点「🎤 授权麦克风」'; }
+ else if(flushing){ s.textContent='识别中…'; }
+ else if(recActive){ s.textContent='🔴 录音中… '+(pttHeld?'松开发送':'再点「⏹ 停止并识别」发送'); }
+ else if(wakeOn&&wmode==='cmd'){ s.textContent='🔔 已唤醒, 请说指令… (30秒内有效)'; }
+ else if(wakeOn){ s.textContent='唤醒中… 说「优优」唤醒, 然后说指令'; }
+ else { s.textContent='就绪：按住「🗣 按住说话」或点「⏺ 录音识别」(采样率 '+ctxRate+'Hz)'; }
 }
-function setModeIdle(){
- wmode='idle'; speechStart=0; speechUntil=0;
- $('micstate').textContent='唤醒中… 说「优优」唤醒, 然后说指令';
-}
-function setModeCmd(){
- wmode='cmd'; cmdStart=performance.now(); speechStart=0; speechUntil=0; bufs=[];
- $('micstate').textContent='🔔 已唤醒, 请说指令… (30秒内有效)';
-}
+function authToggle(){ armed?stopListen():startListen() }
 async function startListen(){
  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:true}})}
  catch(e){$('micstate').textContent='麦克风不可用: '+e.message;return}
@@ -354,29 +352,73 @@ async function startListen(){
  proc=ac.createScriptProcessor(2048,1,1);
  proc.onaudioprocess=function(e){ onChunk(e.inputBuffer) };
  src.connect(proc); proc.connect(ac.destination);
- armed=true; speechStart=0; speechUntil=0; bufs=[]; floorRms=0.001; floorN=0;
- wmode='idle';
- $('micbtn').textContent='⏹ 停止'; $('mflush').disabled=false;
- $('micstate').textContent='唤醒中… 说「优优」唤醒, 然后说指令 (采样率 '+ctxRate+'Hz)';
- tickTimer=setInterval(wakeTick,300); // 唤醒/超时巡检
+ armed=true; speechStart=0; speechUntil=0; bufs=[]; recBufs=[]; floorRms=0.001; floorN=0;
+ wmode=wakeOn?'idle':'off';
+ if(wakeOn&&!tickTimer)tickTimer=setInterval(wakeTick,300);
+ $('micbtn').textContent='⏹ 撤销授权';
+ $('micbtn').classList.remove('primary');
+ $('ptt').disabled=false; $('rec').disabled=false; $('wakesw').disabled=false;
+ refreshState();
 }
 function stopListen(){
  armed=false;
  if(tickTimer){clearInterval(tickTimer);tickTimer=0}
+ recActive=false; recBufs=[]; pttHeld=false;
  try{proc.disconnect();src.disconnect()}catch(e){}
  try{ac.close()}catch(e){}
  if(stream)stream.getTracks().forEach(t=>t.stop());
  proc=src=stream=ac=null;
- $('micbtn').textContent='🎤 点一下授权，然后直接说话';
- $('mflush').disabled=true;
- $('micstate').textContent=''; $('lv').style.width='0';
+ $('micbtn').textContent='🎤 授权麦克风';
+ $('micbtn').classList.add('primary');
+ $('ptt').disabled=true; $('rec').disabled=true; $('wakesw').disabled=true; $('wakesw').checked=false; wakeOn=false;
+ $('rec').textContent='⏺ 录音识别';
+ $('lv').style.width='0';
+ refreshState();
+}
+function wakeToggle(){ // 唤醒词模式开关
+ if(!armed)return;
+ wakeOn=$('wakesw').checked;
+ if(wakeOn){ wmode='idle'; speechStart=0; speechUntil=0; bufs=[];
+  if(!tickTimer)tickTimer=setInterval(wakeTick,300);
+ } else { if(tickTimer){clearInterval(tickTimer);tickTimer=0} wmode='off'; bufs=[]; }
+ refreshState();
+}
+function pttDown(e){ // 按住说话: 按下开始录音
+ e.preventDefault();
+ if(!armed||flushing||recActive)return;
+ pttHeld=true; recActive=true; recBufs=[];
+ refreshState();
+}
+function pttUp(){ // 松开 -> 识别
+ if(!pttHeld)return;
+ pttHeld=false;
+ stopRec();
+}
+function recToggle(){ // 录音识别: 点一下开始, 再点停止并识别
+ if(!armed||flushing)return;
+ if(recActive){ stopRec(); }
+ else { recActive=true; recBufs=[]; $('rec').textContent='⏹ 停止并识别'; refreshState(); }
+}
+function stopRec(){
+ if(!recActive)return;
+ recActive=false;
+ $('rec').textContent='⏺ 录音识别';
+ const c=recBufs; recBufs=[];
+ if(c.length<10){ // <~1.3s 太短, 不识别
+  refreshState();
+  $('micstate').textContent='录音太短，请重试'; setTimeout(refreshState,1600);
+  return;
+ }
+ flushWav(c,false);
 }
 function wakeTick(){ // 指令模式 30s 无话自动回到等唤醒
- if(!armed||wmode!=='cmd'||flushing)return;
+ if(!armed||!wakeOn||wmode!=='cmd'||flushing)return;
  if(performance.now()-cmdStart>30000 && performance.now()>speechUntil+2000) setModeIdle();
 }
+function setModeIdle(){ wmode='idle'; speechStart=0; speechUntil=0; refreshState(); }
+function setModeCmd(){ wmode='cmd'; cmdStart=performance.now(); speechStart=0; speechUntil=0; bufs=[]; refreshState(); }
 function onChunk(ib){
- if(!armed||!ac||flushing)return; // 识别中不录音, 避免下一句混进上一句
+ if(!armed||!ac)return; // 识别中不进唤醒缓冲, 避免下一句混进上一句
  const L=ib.getChannelData(0);
  const R=ib.numberOfChannels>1?ib.getChannelData(1):null;
  const n=L.length, mono=new Float32Array(n);
@@ -387,15 +429,20 @@ function onChunk(ib){
  $('lv').style.width=Math.min(100,rms*3500)+'%';
  const now=performance.now();
  if(floorN<200||rms<floorRms){ if(rms<floorRms*2.5){ floorRms=(floorRms*floorN+rms)/(floorN+1); floorN++; } }
+ if(recActive){ // 按住说话/录音识别: 直接累积 (上限 30s)
+  if(!flushing){ recBufs.push(dec); if(recBufs.length>2344)recBufs.shift(); }
+  return;
+ }
+ if(!wakeOn||flushing)return; // 唤醒词关着且没在录音: 不处理
  if(rms>thr())speechUntil=now+SILENCE;
  if(speechStart===0&&rms>thr())speechStart=now;
  bufs.push(dec);
  if(wmode==='idle'&&bufs.length>24)bufs.shift(); // 唤醒模式只保留最近 ~3s
  else if(bufs.length>3000)bufs.shift();
- if(flushing||!speechStart)return;
+ if(!speechStart)return;
  if(wmode==='idle'){
-  if((now>speechUntil+ (W_SILENCE-SILENCE)&&now-speechStart>W_MINLEN)||now-speechStart>W_MAXLEN) flushUtterance(true);
- } else {
+  if((now>speechUntil+(W_SILENCE-SILENCE)&&now-speechStart>W_MINLEN)||now-speechStart>W_MAXLEN) flushUtterance(true);
+ } else if(wmode==='cmd'){
   if((now>speechUntil&&now-speechStart>MINLEN)||now-speechStart>MAXLEN) flushUtterance(false);
  }
 }
@@ -411,13 +458,18 @@ function to16k(mono,sr){
  }
  return lp;
 }
-function flushUtterance(isWake, tailN){
- flushing=true; speechStart=0;
- $('micstate').textContent='识别中…'; $('lv').style.width='0';
+function flushUtterance(isWake, tailN){ // 唤醒词/指令窗口 (来自 bufs)
  const chunks=tailN?bufs.slice(-tailN):bufs;
+ bufs=[]; // 不保留缓冲, 重新开始累计
+ speechStart=0;
+ flushWav(chunks, isWake);
+}
+function flushWav(chunks, isWake){
+ flushing=true;
+ refreshState();
  const total=chunks.reduce((a,b)=>a+b.length,0), data=new Float32Array(total); let off=0;
- for(const b of chunks){data.set(b,off);off+=b.length} bufs=[]; // 不保留缓冲, 重新开始累计
- if(!total){flushing=false;return}
+ for(const b of chunks){data.set(b,off);off+=b.length}
+ if(!total){flushing=false;refreshState();return}
  let peak=0; for(let i=0;i<data.length;i++){const a=Math.abs(data[i]); if(a>peak)peak=a}
  let g=peak>0.001?0.9/peak:1; if(g>4)g=4; if(g<0.3)g=0.3; // 峰值归一, 轻声也能被听清
  for(let i=0;i<data.length;i++) data[i]*=g;
@@ -444,13 +496,14 @@ function flushUtterance(isWake, tailN){
     }
     else if(armed) setModeIdle();
    }catch(e){ if(armed) setModeIdle() }
-   flushing=false; return;
+   flushing=false; refreshState(); return;
   }
   $('out').innerHTML=sec('ASR 识别中…');
-  try{render(await jpost('/run',{wav:fr.result.split(',')[1]}))}
+  try{render(await jpost('/run',{wav:fr.result.split(',')[1],domain:domain}))}
   catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
-  if(armed){speechStart=0;flushing=false;setModeIdle()}
+  if(armed){speechStart=0;flushing=false; if(wakeOn)setModeIdle()}
   else flushing=false;
+  refreshState();
  };
  fr.readAsDataURL(new Blob([buf],{type:'audio/wav'}));
 }
@@ -461,6 +514,7 @@ fetch('/audio').then(r=>r.json()).then(fs=>{$('wavnames').innerHTML=fs.map(f=>
 $('drop').onclick=()=>$('wavf').click();
 $('wavf').onchange=e=>{if(e.target.files.length){$('drop').classList.add('on');
  $('drop').firstChild.textContent='🎙 '+e.target.files[0].name+' ';runWav()}};
+refreshState();
 </script></div></body></html>"""
 
 

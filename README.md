@@ -42,7 +42,8 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
 .venv/bin/python jev_api.py    # 或 systemctl --user start laya-jev-api
 ollama serve                   # 或 systemctl --user start ollama-serve
 
-# 3) Web 控制台（:8002）— 领域切换 水果/方块/混合/料场分拣、预设、麦克风唤醒词「优优」、全链路 trace
+# 3) Web 控制台（:8002）— 领域切换 水果/方块/混合/料场分拣、预设、
+#    麦克风授权 + 按住说话/录音识别 (唤醒词「优优」可选开关)、全链路 trace
 .venv/bin/python loop_ui.py    # 或 systemctl --user start laya-loop-ui
 
 # 4) 基准
@@ -93,7 +94,7 @@ journalctl --user -u laya-loop-ui -f
 | `bench_pipeline.py` | LLM 意图整理 → Laya 终审 对比管线（`llm_json`/`http_post` 工具函数） |
 | `bench_jev.py` / `bench_split.py` / `bench_oob.py` / `bench_voice.py` | API 基准 / 单请求多问 vs 拆分 A/B / 超纲验收 / 全语音管线 |
 | `jev_api.py` | Jev 兼容 HTTP API（`:8000`，`POST /v1/systemone`；模型含 `jev-fruits` 微调模型） |
-| `loop_ui.py` | Web 控制台（`:8002`）：领域切换（水果/方块/混合/料场分拣）、预设、麦克风唤醒、全链路 trace；纯转发不载模型 |
+| `loop_ui.py` | Web 控制台（`:8002`）：领域切换（水果/方块/混合/料场分拣）、预设、麦克风授权+按住说话/录音识别（唤醒词可选开关）、全链路 trace；纯转发不载模型 |
 | `teacher_offline.py` | 水果域离线教师：qwen4b 造语料 + 交叉标注 + Laya 微调 |
 | `teacher_blocks.py` | 方块域离线教师：生成 + 交叉标注 + 规则层审计 → `teacher/blocks_corpus.jsonl` |
 | `teacher/` | 语料与训练/评测数据（jsonl） |
