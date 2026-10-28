@@ -203,7 +203,7 @@ def presets():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 工业决策回路 v6</title>
+<title>Laya 工业决策回路 v7</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -251,7 +251,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路<span class="ver">v6 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路<span class="ver">v7 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -432,8 +432,8 @@ function wakeToggle(){ // 唤醒词模式开关
  } else { if(tickTimer){clearInterval(tickTimer);tickTimer=0} wmode='off'; bufs=[]; }
  refreshState();
 }
-function pttDown(e){ // 按住说话: 按下开始录音 (鼠标/触屏/空格)
- e.preventDefault();
+function pttDown(e){ // 按住说话: 按下开始录音 (鼠标/触屏/空格; 空格路径不带事件对象)
+ if(e)e.preventDefault();
  if(!armed||flushing||recActive)return;
  pttHeld=true; recActive=true; recBufs=[];
  refreshState();
