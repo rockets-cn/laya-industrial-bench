@@ -62,17 +62,24 @@ SIDES = {"fruit": bi, "block": bb, "yard": by}
 
 
 def run_side(side, text):
-    """单领域跑一圈: 规则层 -> Laya -> 校验器 -> (LLM旁路). side: fruit|block|yard."""
+    """单领域跑一圈: 规则层 -> (分配展开) -> Laya -> 校验器 -> (LLM旁路). side: fruit|block|yard."""
     ns = SIDES[side]
     norm, mentions, neg = ns.normalize(text)
+    dist_ms = 0.0
+    if not mentions and not neg:
+        dexp = getattr(ns, "dist_expand_if_needed", None)
+        if dexp:
+            dm, dt_d, _dr = dexp(norm) or (None, 0.0, [])
+            if dm:
+                mentions, dist_ms = dm, dt_d
     if not mentions and not neg:
         return {"side": side, "empty": True, "normalized": norm, "negated": neg,
                 "mentions": [], "laya_ms": 0.0, "answers": {}, "ok": True,
                 "actions": [], "reasons": [], "path": "EMPTY", "bypass_ms": 0.0,
-                "bypass": None}
+                "dist_ms": 0.0, "bypass": None}
     dt_l, answers = ns.laya_decide(mentions) if mentions else (0.0, {})
     ok, actions, reasons = ns.validate(mentions, answers)
-    path, dt_b, bypass = "FAST", 0.0, None
+    path, dt_b, bypass = ("EXPAND" if dist_ms else "FAST"), 0.0, None
     if not ok:
         try:
             dt_b, b_mentions, b_reasons = ns.llm_bypass(norm, mentions)
@@ -86,7 +93,7 @@ def run_side(side, text):
     return {"side": side, "empty": False, "normalized": norm, "negated": neg,
             "mentions": mentions, "laya_ms": dt_l, "answers": answers, "ok": ok,
             "actions": actions, "reasons": reasons, "path": path,
-            "bypass_ms": dt_b, "bypass": bypass}
+            "bypass_ms": dt_b, "dist_ms": dist_ms, "bypass": bypass}
 
 
 def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit"):
@@ -102,7 +109,7 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
                     "actions": [], "reasons": ["空订单"], "path": "PAUSE+HUMAN",
                     "bypass_ms": 0.0, "bypass": None}]
         active = results
-    order = {"FAST": 0, "BYPASS": 1, "PAUSE+HUMAN": 2}
+    order = {"FAST": 0, "EXPAND": 1, "BYPASS": 1, "PAUSE+HUMAN": 2}
     path = max((r["path"] for r in active), key=lambda p: order[p])
     merged_answers = {}
     pfx = {"fruit": "f_", "block": "b_", "yard": "y_"}
@@ -132,6 +139,9 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
         "bypass_ms": round(max((r["bypass_ms"] for r in results), default=0.0) * 1000),
         "bypass": merged_bypass,
         "path": path,
+        "dist_total": next((m.get("dist_total") for r in results
+                            for m in r["mentions"] if m.get("dist_total")), None),
+        "dist_ms": round(max((r.get("dist_ms", 0.0) for r in results), default=0.0) * 1000),
         "e2e_ms": round((time.perf_counter() - t0) * 1000),
     }
 
@@ -204,7 +214,7 @@ def presets():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 料场分拣回路 v9</title>
+<title>Laya 料场分拣回路 v10</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -213,7 +223,7 @@ PAGE = """<!doctype html>
  .cards{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
  .card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:10px 14px;flex:1;min-width:110px}
  .card .k{font-size:11px;color:#8a91a0} .card .v{font-size:19px;font-weight:700;margin-top:3px}
- .path-FAST{color:#4ade80}.path-BYPASS{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
+ .path-FAST{color:#4ade80}.path-BYPASS{color:#facc15}.path-EXPAND{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
  .row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center}
  button{background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:8px;padding:8px 12px;
   cursor:pointer;font-size:13px} button:hover{background:#262d3d}
@@ -253,7 +263,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v9 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v10 · 分配指令: 规则层均分 / LLM 展开+对账 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -267,7 +277,7 @@ PAGE = """<!doctype html>
  <g id="fn3" class="n off"><rect x="266" y="14" width="104" height="36" rx="9"/><text x="318" y="29" text-anchor="middle">规则归一化</text><text x="318" y="43" text-anchor="middle" class="sub">抽取 · 归属</text></g>
  <g id="fn4" class="n off"><rect x="398" y="14" width="104" height="36" rx="9"/><text x="450" y="29" text-anchor="middle">Laya 决策</text><text x="450" y="43" text-anchor="middle" class="sub">物料终审</text><text id="fn-laya" x="450" y="66" text-anchor="middle" class="ms">—</text></g>
  <g id="fn5" class="n off"><rect x="530" y="14" width="104" height="36" rx="9"/><text x="582" y="29" text-anchor="middle">校验器</text><text x="582" y="43" text-anchor="middle" class="sub">白名单 · 去重</text></g>
- <g id="fn6" class="n off"><rect x="662" y="14" width="104" height="36" rx="9"/><text x="714" y="29" text-anchor="middle">LLM 旁路</text><text x="714" y="43" text-anchor="middle" class="sub">仅校验拒绝时</text><text id="fn-bypass" x="714" y="66" text-anchor="middle" class="ms">未触发</text></g>
+ <g id="fn6" class="n off"><rect x="662" y="14" width="104" height="36" rx="9"/><text x="714" y="29" text-anchor="middle">LLM 旁路</text><text x="714" y="43" text-anchor="middle" class="sub">校验拒绝 · 分配展开</text><text id="fn-bypass" x="714" y="66" text-anchor="middle" class="ms">未触发</text></g>
  <g id="fn7" class="n off"><rect x="794" y="14" width="104" height="36" rx="9"/><text x="846" y="29" text-anchor="middle">PLC 下发</text><text x="846" y="43" text-anchor="middle" class="sub">暂停 = 不发</text><text id="fn-e2e" x="846" y="66" text-anchor="middle" class="ms">—</text></g>
 </svg>
 <div class="row">
@@ -300,7 +310,7 @@ const domain='yard'; // 页面专属料场分拣 (后端 API 仍支持 fruit/blo
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
  if(d.path==='FAST'){['fn1','fn2','fn3','fn4','fn5','fn7'].forEach(i=>set(i,'on'));set('fn6','off')}
- else if(d.path==='BYPASS'){['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6','warn');set('fn7','warn')}
+ else if(d.path==='BYPASS'||d.path==='EXPAND'){['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6','warn');set('fn7',d.path==='EXPAND'?'on':'warn')}
  else{['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6',d.bypass_ms?'warn':'off');set('fn7','stop')}
  $('fn-asr').textContent=d.asr_ms!=null?d.asr_ms+' ms':'—';
  $('fn-laya').textContent=d.laya_ms!=null?d.laya_ms+' ms':'—';
@@ -319,7 +329,7 @@ function render(d){
  const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
   red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
  $('cards').innerHTML=card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')+card('ASR',d.asr_ms+' ms')
-  +card('Laya',d.laya_ms+' ms')+(d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','—','muted'));
+   +card('Laya',d.laya_ms+' ms')+(d.dist_ms?card('LLM 分配',d.dist_ms+' ms'):d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','—','muted'));
  let out='';
  if(d.domain==='yard'){
   const lines=d.actions.map(a=>`${a.yard}号料场: ${MATCN[a.material]||a.material} × ${a.qty}`);
@@ -332,10 +342,11 @@ function render(d){
    yc+=`<div class="card"><div class="k">${y}号料场</div><div class="v ${tot?'':'muted'}">${tot?tot+' 件':'空'}</div>${detail}</div>`;
   });
   $('yardcards').innerHTML=yc;
-  out+=sec('🚚 料场分拣下发 <span class="chip">'+(d.path==='FAST'?'PLC 可执行':d.path)+'</span>')
-   +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>');
+  out+=sec('🚚 料场分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND')?'PLC 可执行':d.path)+'</span>')
+   +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
+   +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
  } else $('yardcards').innerHTML='';
- const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认');
+ const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'));
  out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;
  let h='';

@@ -1,0 +1,596 @@
+"""MQTT 分拣控制网关 (laya 分类结果 -> MQTT 命令 -> 3 分拣器 + 1 传送带).
+
+链路:
+  语音回路 (loop_ui /run) --HTTP POST /dispatch--> 本网关 --MQTT--> 控制器 (3 分拣器 + 1 传送带)
+  视觉传感器 (vision_input.py 或外部设备) --MQTT sort/inbound/vision--> 本网关 --> 同上
+  其他系统 (SCADA/手工) --MQTT sort/inbound/command--> 本网关 --> 同上
+
+设备侧 MQTT 约定 (详见 docs/sort-mqtt.md, 模拟设备见 sim_devices.py):
+  下行命令 (QoS1):
+    sort/line1/conveyor/cmd      {"job_id","action":"start|stop|pause|resume","speed_mps"}
+    sort/sorter{n}/cmd           {"job_id","action":"divert|reset","material","qty"}
+  上行应答 (QoS1, 每个 job 一条, 网关按 job_id 关联):
+    sort/line1/conveyor/ack/{job_id}   {"action","result":"ok|busy|fault","note"}
+    sort/sorter{n}/ack 协议同形: 收到命令 -> 状态机推进 -> 发 ack + 周期遥测 (2Hz).
+
+统计 (统计分发):
+  内存计数 + JSONL 台账 (stats/sort_ledger.jsonl, 每 job 一行)
+ + sort/stats/summary (retain, 每 5s 刷新: 批次/物料/分拣器/命令延迟/吞吐/故障)
+
+安全降级 (对齐语音回路哲学): 命令超时重试后仍无应答 -> 故障锁存 -> 暂停传送带,
+需人工清除 (HTTP POST /fault/clear 或 MQTT sort/human/fault_clear) 才继续下发.
+
+Run: .venv/bin/python sort_mqtt.py          # broker tcp://127.0.0.1:1883, HTTP :8123
+     SORT_MQTT_BROKER=tcp://10.0.0.5:1883 .venv/bin/python sort_mqtt.py
+"""
+
+import json
+import os
+import re
+import threading
+import time
+import urllib.parse
+from collections import deque
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import paho.mqtt.client as mqtt
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+import importlib.util  # noqa: E402
+
+spec = importlib.util.spec_from_file_location("by", os.path.join(HERE, "bench_yard.py"))
+by = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(by)
+
+MATERIALS = by.MATERIALS
+MAT_CN = by.MAT_CN
+YARDS = by.YARDS  # [1, 2, 与分拣器编号 1:1 对应 (1号料场 = 1号分拣器)
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+class GatewayStats:
+    """内存计数 + JSONL 台账. 所有更新在 _lock 内 (HTTP 读 / MQTT 写 并发)."""
+
+    def __init__(self, ledger_path):
+        self._lock = threading.Lock()
+        self.
+        self.ledger_path = ledger_path
+        self.started = time.time()
+        self.batches = {"total": 0, "done": 0, "fault": 0, "reject": 0, "queue_dropped": 0}
+        self.items = {"dispatched": 0, "by_sorter": {}, "by_material": {}}
+        self.cmd = {"sent": 0, "ack_ok": 0, "ack_timeout": 0, "retries": 0}
+        self.vision = {"events": 0, "dispatched": 0, "unknown": 0, "low_conf": 0}
+        self.lat_cmd_ack = deque(maxlen=500)   # 命令->应答 延迟 s
+        self.lat_batch = deque(maxlen=500)     # 批次 E2E 延迟 s
+        self._items_ts = deque()               # (ts, qty) 滚动 5min 吞吐窗口
+
+    # ---- 更新 ----
+    def job_finished(self, job):
+        with self._lock:
+            self.batches["total"] += 1
+            self.batches[job["outcome"]] += 1
+            self.lat_batch.append(job.get("e2e_s", 0.0))
+            line = {
+                "ts": _now(), "job_id": job["job_id"], "source": job.get("source"),
+                "path": job.get("path"), "outcome": job["outcome"],
+                "actions": job.get("actions"), "fault": job.get("fault"),
+                "e2e_ms": round(job.get("e2e_s", 0.0) * 1000, 1),
+            }
+            os.makedirs(os.path.dirname(self.ledger_path), exist_ok=True)
+            with open(self.ledger_path, "a") as f:
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+    def cmd_sent(self):
+        with self._lock:
+            self.cmd["sent"] += 1
+
+    def cmd_ack(self, ok, latency_s, retried):
+        with self._lock:
+            if ok:
+                self.cmd["ack_ok"] += 1
+            else:
+                self.cmd["ack_timeout"] += 1
+            if retried:
+                self.cmd["retries"] += 1
+            self.lat_cmd_ack.append(latency_s)
+
+    def item_dispatched(self, sorter, material, qty):
+        with self._lock:
+            self.items["dispatched"] += qty
+            self.items["by_sorter"][str(sorter)] = \
+                self.items["by_sorter"].get(str(sorter), 0) + qty
+            self.items["by_material"][material] = \
+                self.items["by_material"].get(material, 0) + qty
+            now = time.time()
+            self._items_ts.append((now, qty))
+            while self._items_ts and now - self._items_ts[0][0] > 300:
+                self._items_ts.popleft()
+
+    def vision_event(self, kind):
+        with self._lock:
+            self.vision["events"] += 1
+            self.vision[kind] += 1
+
+    # ---- 读取 ----
+    def _pct(self, vals, p):
+        if not vals:
+            return 0.0
+        v = sorted(vals)
+        return v[min(len(v) - 1, int(p * len(v)))] * 1000
+
+    def summary(self):
+        with self._lock:
+            now = time.time()
+            window = [q for ts, q in self._items_ts if now - ts <= 300]
+            span = max(1.0, min(300.0, now - self.started))
+            thr = sum(window) / span * 60 if window else 0.0
+            return {
+                "ts": _now(),
+                "uptime_s": round(now - self.started, 1),
+                "batches": dict(self.batches),
+                "items": {
+                    "dispatched": self.items["dispatched"],
+                    "by_sorter": dict(self.items["by_sorter"]),
+                    "by_material": dict(self.items["by_material"]),
+                },
+                "cmd": dict(self.cmd),
+                "vision": dict(self.vision),
+                "latency_ms": {
+                    "cmd_to_ack": {"mean": round(self._mean(self.lat_cmd_ack)),
+                                   "p95": round(self._pct(self.lat_cmd_ack, .95)),
+                                   "max": round(max(self.lat_cmd_ack) * 1000, 1) if self.lat_cmd_ack else 0},
+                    "batch_e2e": {"mean": round(self._mean(self.lat_batch)),
+                                    "max": round(max(self.lat_batch) * 1000, 1) if self.lat_batch else 0},
+                },
+                "throughput_items_per_min": round(thr, 1),
+            }
+
+    @staticmethod
+    def _mean(vals):
+        return (sum(vals) / len(vals)) * 1000 if vals else 0.0
+
+
+class SortGateway:
+    """MQTT 网关主体: 订阅设备遥测/应答 + 入站指令, 顺序执行批次, 维护统计."""
+
+    def __init__(self, cfg=None):
+        self.cfg = dict(DEFAULT_CFG)
+        if cfg:
+            self.cfg.update(cfg)
+        self.http_port = int(os.environ.get("SORT_GATEWAY_PORT", self.cfg["http_port"]))
+        broker = os.environ.get("SORT_MQTT_BROKER", self.cfg["broker"])
+        host, _, port = re.match(r"tcp://([^:/]+):(\d+)$", broker).groups() if "://" in broker else \
+            (self.cfg["broker"].split(":")[0], None, 1883)
+        self.broker_host, self.broker_port = host, int(port or 1883)
+
+        map_path = self.cfg["material_map"]
+        if not os.path.isabs(map_path):
+            map_path = os.path.join(HERE, map_path)
+        self.mat_map = _load_json(map_path, {"mode": "fixed", "fixed": {}, "confidence_min": 0.5})
+
+        self.stats = GatewayStats(self.cfg["ledger_path"])
+        self.client_id = self.cfg["client_id"] + "-" + os.getpid()
+        self.fault = None                      # 故障锁存 dict
+        self.fault_lock = threading.Lock()
+        self.job_queue = deque(maxlen=int(self.cfg["queue_max"]))
+        self.queue_lock = threading.Lock()
+        self.active_job = None
+        self.active_lock = threading.Lock()
+        self.dev_state = {}                    # {"conveyor": state, "sorter1": state, ...}
+        self.telemetry_ts = {}
+        self._pending = {}                     # (kind, name, job_id) -> {"event","result","note"}
+        self._pending_lock = threading.Lock()
+        self._rr_counter = {}                  # round_robin 每物料轮转计数
+        self._rr_lock = threading.Lock()
+        self._job_seq = 0
+        self._seq_lock = threading.Lock()
+        self._stop = threading.Event()
+
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                                  client_id=self.client_id)
+        self.client.reconnect_delay_set(min_delay=1, max_delay=30)
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
+        self._connected = threading.Event()
+
+    # ---------- MQTT ----------
+    def _topics(self):
+        c = self.cfg["conveyor_id"]
+        n = self.cfg["sorter_count"]
+        return [
+            f"sort/{c}/conveyor/telemetry", f"sort/{c}/conveyor/ack/+",
+            "sort/sorter+/telemetry", "sort/sorter+/ack/+",
+            "sort/inbound/command", "sort/inbound/vision",
+            "sort/human/fault_clear",
+        ]
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties):
+        if reason_code.is_failure:
+            print(f"[gateway] 连接失败 rc={reason_code}", flush=True)
+            return
+        self._connected.set()
+        for t in self._topics():
+            client.subscribe(t, qos=1)
+        print(f"[gateway] 已连接 {self.broker_host}:{self.broker_port}, len(self._topics())): 订阅 {len(self._topics())} 个主题", flush=True)
+
+    def _on_disconnect(self, client, userdata, flags, reason_code, properties):
+        self._connected.clear()
+        print(f"[gateway] 断开 rc={getattr(reason_code, 'value', reason_code)} (自动重连中)", flush=True)
+
+    def _on_message(self, client, userdata, msg):
+        t = msg.topic
+        try:
+            payload = json.loads(msg.payload.decode() or "{}")
+        except Exception:
+            return
+        m = re.match(r"sort/([^/]+)/conveyor/(telemetry|ack)/(.*)", t)
+        if m:
+            if m.group(2) == "telemetry":
+                self.dev_state["conveyor"] = payload.get("state", "unknown")
+                self.telemetry_ts["conveyor"] = time.time()
+            else:
+                self._set_ack("conveyor", self.cfg["conveyor_id"], m.group(3), payload)
+            return
+        m = re.match(r"sort/(sorter\d+)/(telemetry|ack)/(.*)", t)
+        if m:
+            if m.group(2) == "telemetry":
+                self.dev_state[m.group(1)] = payload.get("state", "unknown")
+                self.telemetry_ts[m.group(1)] = time.time()
+            else:
+                self._set_ack("sorter", m.group(1), m.group(3), payload)
+            return
+        if t == "sort/inbound/command":
+            actions = payload.get("actions") or []
+            self.enqueue_job(actions, source=payload.get("source", "mqtt"),
+                              path=payload.get("path"))
+            return
+        if t == "sort/inbound/vision":
+            self._on_vision(payload)
+            return
+        if t == "sort/human/fault_clear":
+            self.clear_fault("mqtt")
+
+    def _set_ack(self, kind, name, job_id, payload):
+        with self._pending_lock:
+            p = self._pending.get((kind, name, job_id))
+        if p:
+            p["result"] = payload.get("result", "fault")
+            p["note"] = payload.get("note", "")
+            p["event"].set()
+
+    # ---------- 视觉入站 ----------
+    def _on_vision(self, payload):
+        self.stats.vision_event("dispatched" if False else "events")
+        material = payload.get("material")
+        conf = float(payload.get("confidence", 0.0))
+        if material not in MATERIALS:
+            self.stats.vision_event("unknown")
+            print(f"[gateway] 视觉未知物料 {material!r} (frame {payload.get('frame_id')})",
+                  flush=True)
+            return
+        if conf < float(self.mat_map.get("confidence_min", 0.5)):
+            self.stats.vision_event("low_conf")
+            return
+        sorter = self._map_to_sorter(material)
+        if sorter is None:
+            self.stats.vision_event("unknown")
+            return
+        job = self.enqueue_job([{"yard": sorter, "material": material, "qty": 1}],
+                                source="vision", path="VISION")
+        if job:
+            self.stats.vision_event("dispatched")
+
+    def _map_to_sorter(self, material):
+        mode = self.mat_map.get("mode", "fixed")
+        n = int(self.cfg["sorter_count"])
+        if mode == "round_robin":
+            with self._rr_lock:
+                i = self._rr_counter.get(material, 0)
+                self._rr_counter[material] = i + 1
+            return (i % n) + 1
+        fixed = self.mat_map.get("fixed", {})
+        s = fixed.get(material)
+        return s if isinstance(s, int) and s in YARDS[:n] else None
+
+    # ---------- 作业队列 ----------
+    def _new_job_id(self):
+        with self._seq_lock:
+            self._job_seq += 1
+            return "j%d-%d" % (int(time.time() * 1000) % 10**8, self._job_seq)
+
+    def enqueue_job(self, actions, source="http", path=None):
+        """校验 + 入队. 返回 job dict (入队成功) 或 None (故障锁存/拒绝)."""
+        with self.fault_lock:
+            if self.fault:
+                return None
+        if not actions or not isinstance(actions, list):
+            self.stats.batches["queue_dropped"] += 1
+            return None
+        for a in actions:
+            if (not isinstance(a, dict) or a.get("yard") not in YARDS
+                    or a.get("material") not in MATERIALS
+                    or not (isinstance(a.get("qty"), int) and 1 <= a["qty"] <= 99)):
+                self.stats.batches["queue_dropped"] += 1
+                return None
+        job = {"job_id": self._new_job_id(), "actions": actions,
+               "source": source, "path": path or "HTTP", "t0": time.time()}
+        with self.queue_lock:
+            if len(self.job_queue) >= self.cfg["queue_max"]:
+                self.stats.batches["queue_dropped"] += 1
+                return None
+            self.job_queue.append(job)
+        return job
+
+    # ---------- 执行 ----------
+    def worker(self):
+        while not self._stop.is_set():
+            try:
+                job = self.job_queue.pop_left()
+            except IndexError:
+                time.sleep(0.05)
+                continue
+            with self.active_lock:
+                self.active_job = job
+            try:
+                self._run_job(job)
+            except Exception as e:
+                job["outcome"] = "fault"
+                job["fault"] = {"device": "gateway", "error": f"{e.__class__.__name__}: {e}"}
+                self._latch_fault(job)
+                self.stats.job_finished(job)
+            finally:
+                with self.active_lock:
+                    self.active_job = None
+
+    def _run_job(self, job):
+        t0 = time.time()
+        job["outcome"] = "done"
+        c = self.cfg["conveyor_id"]
+        self._batch_event(job, "accepted")
+        # 1. 传送带: 未知/停止 -> start (有遥测显示 running 则跳过)
+        if self.dev_state.get("conveyor") != "running":
+            if not self._conveyor_cmd(job, "start"):
+                return self._fail(job, "conveyor", "start 无应答/失败")
+        # 2. 分拣下发 (保序, 每条 action 一个 divert 命令)
+        for a in job["actions"]:
+            ok, note = self._divert_cmd(job, a["yard"], a)
+            if not ok:
+                return self._fail(job, f"sorter{a['yard']}",
+                                   f"divert 无应答/失败: {note}")
+            self.stats.item_dispatched(a["yard"], a["material"], a["qty"])
+            self._publish("sort/event/dispatch",
+                          {"ts": _now(), "job_id": job["job_id"], "sorter": a["yard"],
+                           "material": a["material"], "qty": a["qty"]})
+        # 3. 完成: 批间停带 (配置), 失败不阻塞 done
+        if self.cfg["stop_conveyor_after_batch"]:
+            self._conveyor_cmd(job, "stop", required=False)
+        job["e2e_s"] = time.time() - t0
+        self.stats.job_finished(job)
+        self._batch_event(job, "done")
+
+    def _fail(self, job, device, error):
+        job["outcome"] = "fault"
+        job["fault"] = {"device": device, "error": error, "ts": _now()}
+        job["e2e_s"] = time.time() - job["t0"]
+        self._latch_fault(job)
+        self.stats.job_finished(job)
+        self._batch_event(job, "fault")
+        # 故障安全: 尽力停带 (无应答也继续)
+        self._conveyor_cmd(job, "pause", required=False)
+        return False
+
+    def _latch_fault(self, job):
+        with self.fault_lock:
+            self.fault = job.get("fault") or {"device": "unknown", "error": "unknown"}
+            self.fault["job_id"] = job["job_id"]
+        self._publish("sort/event/fault", self.fault, retain=True)
+        print(f"[gateway] 故障锁存: {self.fault} — 需人工清除 (/fault/clear 或 sort/human/fault_clear)",
+              flush=True)
+
+    def clear_fault(self, via):
+        with self.fault_lock:
+            had = self.fault
+            self.fault = None
+        self._publish("sort/event/cleared", {"ts": _now(), "via": via, "had": had},
+                      retain=True)
+        print(f"[gateway] 故障已清除 (via={via})", flush=True)
+        return had
+
+    # ---------- 命令 + 应答 ----------
+    def _cmd_topic(self, kind, name):
+        return (f"sort/{self.cfg['conveyor_id']}/conveyor/cmd" if kind == "conveyor"
+                else f"sort/{name}/cmd")
+
+    def _wait_ack(self, kind, name, job_id, timeout, retries):
+        """发一次命令并等应答. 返回 (ok, note, retried). 调用方负责发布."""
+        with self._pending_lock:
+            p = {"event": threading.Event(), "result": None, "note": ""}
+            self._pending[(kind, name, job_id)] = p
+        try:
+            p["event"].wait(timeout)
+            return p["result"] == "ok", p["note"], False
+        finally:
+            with self._pending_lock:
+                self._pending.pop((kind, name, job_id), None)
+
+    def _send_with_retry(self, kind, name, job_id, payload):
+        """发布命令 + 等待应答, 超时重试. 返回 (ok, note). 统计在此记."""
+        to = float(self.cfg["ack_timeout_s"])
+        for attempt in range(int(self.cfg["ack_retries"]) + 1):
+            info = self.client.publish(self._cmd_topic(kind, name),
+                                        json.dumps(payload), qos=1)
+            self.stats.cmd_sent()
+            t0 = time.time()
+            ok, note = self._wait_ack(kind, name, job_id, to, attempt)
+            self.stats.cmd_ack(ok, time.time() - t0, attempt > 0)
+            if ok:
+                return True, note
+        return False, note or "ack_timeout"
+
+    def _conveyor_cmd(self, job, action, required=True):
+        payload = {"job_id": job["job_id"], "action": action, "ts": _now()}
+        if action in ("start", "resume"):
+            payload["speed_mps"] = float(self.cfg.get("conveyor_speed_mps", 1.0))
+        ok, note = self._send_with_retry("conveyor", self.cfg["conveyor_id"],
+                                           job["job_id"], payload)
+        if not ok and required:
+            return False, note
+        return True, note
+
+    def _divert_cmd(self, job, sorter, action):
+        payload = {"job_id": job["job_id"], "action": "divert", "ts": _now(),
+                   "material": action["material"], "qty": action["qty"]}
+        ok, note = self._send_with_retry("sorter", f"sorter{sorter}",
+                                           job["job_id"], payload)
+        return ok, note
+
+    def _batch_event(self, job, phase):
+        self._publish("sort/event/batch",
+                       {"ts": _now(), "job_id": job["job_id"], "phase": phase,
+                        "source": job.get("source"), "actions": job.get("actions"),
+                        "fault": job.get("fault")},
+                       retain=(phase in ("fault", "done")))
+
+    def _publish(self, topic, payload, retain=False):
+        try:
+            self.client.publish(topic, json.dumps(payload, ensure_ascii=False),
+                                qos=1 if retain else 0, retain=retain)
+        except Exception as e:
+            print(f"[gateway] 发布失败 {topic}: {e}", flush=True)
+
+    # ---------- 统计周期 ----------
+    def stats_loop(self):
+        while not self._stop.is_set():
+            time.sleep(float(self.cfg["stats_period_s"]))
+            s = self.stats.summary()
+            s["fault"] = self.fault
+            self._publish("sort/stats/summary", s, retain=True)
+
+    # ---------- HTTP ----------
+    def make_http_handler(self):
+        gw = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, obj):
+                body = json.dumps(obj, ensure_ascii=False).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/health":
+                    self._send(200, {"status": "ok", "broker_connected": gw._connected.is_set(),
+                                     "active_job": (gw.active_job or {}).get("job_id"),
+                                     "queue": len(gw.job_queue), "fault": gw.fault})
+                elif self.path == "/stats":
+                    s = gw.stats.summary()
+                    s["fault"] = gw.fault
+                    self._send(200, s)
+                else:
+                    self._send(404, {"error": "not found"})
+
+            def do_POST(self):
+                try:
+                    n = int(self.headers.get("Content-Length")
+                    body = json.loads(self.rfile.read(n).decode() or "{}")
+                except Exception:
+                    self._send(422, {"error": "bad json"})
+                    return
+                if self.path == "/dispatch":
+                    if gw.fault:
+                        self._send(409, {"error": "fault latched, clear first", "fault": gw.fault})
+                        return
+                    job = gw.enqueue_job(body.get("actions"),
+                                         source=body.get("source", "http"),
+                                         path=body.get("path"))
+                    if not job:
+                        self._send(422, {"error": "invalid or rejected actions",
+                                         "fault": gw.fault})
+                        return
+                    self._send(202, {"job_id": job["job_id"], "queued": len(gw.job_queue)})
+                elif self.path == "/fault/clear":
+                    had = gw.clear_fault("http")
+                    self._send(200, {"cleared": had is not None, "had": had})
+                else:
+                    self._send(404, {"error": "not found"})
+
+        }
+
+        return H
+
+    def http_loop(self):
+        srv = ThreadingHTTPServer(("127.0.0.1", self.http_port), self.make_http_handler())
+        srv.serve_forever()
+
+    # ---------- 生命周期 ----------
+    def start(self):
+        self.client.connect(self.broker_host, self.broker_port)
+        self.client.loop_start()
+        if not self._connected.wait(10):
+            raise RuntimeError("MQTT 连接超时")
+        threading.Thread(target=self.worker, daemon=True).start()
+        threading.Thread(target=self.stats_loop, daemon=True).start()
+        threading.Thread(target=self.http_loop, daemon=True).start()
+        print(f"[gateway] 就绪: broker {self.broker_host}:{self.broker_port}  "
+              f"HTTP 127.0.0.1:{self.http_port}  分拣器 x{self.cfg['sorter_count']} + 传送带 {self.cfg['conveyor_id']}",
+              }
+        return self
+
+    def stop(self):
+        self._stop.set()
+        try:
+            self.client.loop_stop()
+            self.client.disconnect()
+        except Exception:
+] 停止", flush=True)
+    }
+
+
+DEFAULT_CFG = {
+    "broker": "tcp://127.0.0.1:1883",
+    "client_id": "sort-gateway",
+    "http_port": 8123,
+    "sorter_count": 3,
+    "conveyor_id": "line1",
+    "conveyor_speed_mps": 1.0,
+    "ack_timeout_s": 3.0,
+    "ack_retries": 2,
+    "stats_period_s": 5.0,
+    "stop_conveyor_after_batch": True,
+    "queue_max": 16,
+    "ledger_path": os.path.join(HERE, "stats", "sort_ledger.jsonl"),
+    "material_map": os.path.join("config", "material_map.json"),
+}
+
+
+def main():
+    cfg_file = _load_json(os.path.join(HERE, "config", "sort_gateway.json"), {})
+    gw = SortGateway(cfg_file or None)
+    gw.start()
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        gw.stop()
+
+
+if __name__ == "__main":
+    main()

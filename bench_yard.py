@@ -69,11 +69,15 @@ HOMOPHONE = (("离", "梨"), ("李", "梨"), ("禮", "梨"), ("方快", "方块"
 
 
 def _cn_num(tok):
-    """10/十/二十三 -> int. 无法解析返回 1 (规则层保守默认)."""
+    """10/十/二十三/一百二十三 -> int. 无法解析返回 1 (规则层保守默认)."""
     if tok.isdigit():
         return int(tok)
     if tok in CN_NUM:
         return CN_NUM[tok]
+    if "百" in tok:
+        pre, _, rest = tok.partition("百")
+        hundreds = (CN_NUM.get(pre, 1) * 100) if pre else 100
+        return hundreds + _cn_num(rest) if rest else hundreds
     if "十" in tok:
         pre, _, post = tok.partition("十")
         tens = (CN_NUM.get(pre, 1) * 10) if pre else 10
@@ -194,6 +198,10 @@ def normalize(text):
     text = text.translate(T2S)
     for a, b in HOMOPHONE:
         text = text.replace(a, b)
+    dist = expand_distribution(text)
+    if dist:
+        dm, _total, _yards = dist
+        return text, dm, []
     matches = list(YARD_RE.finditer(text))
     if not matches:
         if OOB_YARD_RE.search(text):
@@ -291,6 +299,13 @@ def validate(mentions, answers):
         final.append({"yard": y, "material": mat, "qty": qty})
     if not final and not reasons:
         reasons.append("空订单")
+    # 分配指令对账: 展开后的总量必须与指令说的总数精确一致 (容差 0)
+    dist_total = next((m.get("dist_total") for m in mentions
+                       if m.get("dist_total")), None)
+    if dist_total and final:
+        s = sum(a["qty"] for a in final)
+        if s != dist_total:
+            reasons.append(f"分配对账失败: 展开总量 {s} != 指令 {dist_total}")
     return (not reasons), final, reasons
 
 
@@ -336,6 +351,129 @@ def llm_bypass(norm_text, rule_mentions):
     return dt, mentions, reasons
 
 
+# ---- 分配指令 ("99个香蕉平均分到三个仓库") ----
+# 第一层: 确定性展开 (毫秒级, 无 LLM): 平均/平分 N 个 X 到 M 个仓库, 余数给小号
+# 第二层: 规则层拿不到完整结构的分配句 -> LLM 展开 + 校验器总量对账 (路径 EXPAND)
+DIST_KW_RE = re.compile(r"平均|平分|均分|均匀分")
+# 总量+物料: "九十九个香蕉" / "100个香蕉" / "十个梨" / "20个红色方块"
+DIST_TOT_RE = re.compile(
+    r"([0-9]+|[一二两三四五六七八九十百]+)\s*(?:个|把|条|块|根|只|颗)?\s*"
+    r"((?:红|绿)?苹果|香蕉|梨|(?:红|绿|黄|蓝)\s*色?\s*(?:的\s*)?(?:方块|块))")
+# 目标 "M 个仓库/料场" (M=1..3 -> 前 M 个料场)
+DIST_M_RE = re.compile(r"([一二两三123])\s*(?:个|座|间)?\s*(?:仓库|料场|场地)")
+# 点名 "1号和3号" / "一号 与 三号"
+DIST_EXPL_RE = re.compile(r"([123一二两])\s*号\s*(?:和|、|与|,|，)\s*([123一二两])\s*号")
+
+
+def _dist_material(raw):
+    if "方块" in raw or "块" in raw:
+        c = _color_of(raw)
+        return (c + "_block") if c else None
+    return _fruit_action(raw)
+
+
+def expand_distribution(text):
+    """Tier-1 确定性分配展开. 返回 ([mentions], total, yards) 或 None
+    (结构不全 -> 上层可走 LLM 展开). 每个 mention 带 dist_total 供校验器对账."""
+    if not DIST_KW_RE.search(text):
+        return None
+    m = DIST_TOT_RE.search(text)
+    if not m:
+        return None
+    total = _cn_num(m.group(1))
+    material = _dist_material(m.group(2))
+    if not material or not (1 <= total <= 99 * len(YARDS)):
+        return None
+    exp = DIST_EXPL_RE.search(text)
+    if exp:
+        a, b = YARD_NUM[exp.group(1)], YARD_NUM[exp.group(2)]
+        yards = [a, b]
+    else:
+        mm = DIST_M_RE.search(text)
+        if mm and _cn_num(mm.group(1)) in (1, 2, 3):
+            yards = list(range(1, _cn_num(mm.group(1)) + 1))
+        elif re.search(r"所有|全部", text):
+            yards = list(YARDS)
+        else:
+            return None  # 目标不明 -> LLM 层
+    base, r = divmod(total, len(yards))
+    mentions = []
+    for i, y in enumerate(sorted(set(yards))):
+        q = base + (1 if i < r else 0)  # 余数给小号料场
+        if q >= 1:
+            mentions.append({"material": material, "qty": q, "yard": y})
+    if not mentions:
+        return None
+    for mm in mentions:
+        mm["dist_total"] = total
+    return mentions, total, yards
+
+
+DIST_EXPAND_PROMPT = """你是分拣解析器。把这条"分配"指令展开成每个料场的 JSON, 只输出 JSON:
+{{"items":[{{"yard":1,"material":"banana","qty":33}}]}}
+规则:
+- yard 只能是 1/2/3 (对应 1号/2号/3号 料场); 指令没指明具体哪几个料场时, 按 1/2/3 号全部料场处理;
+- material 只能从这些里选: red_apple=红苹果, green_apple=绿苹果, banana=香蕉, pear=梨,
+  red_block=红色方块, green_block=绿色方块, yellow_block=黄色方块, blue_block=蓝色方块;
+  没说明颜色的"苹果"按 red_apple, 没说明颜色的"方块"不列入;
+- 指令说把 N 件物料平均/分给若干料场时, 各料场 qty 之和必须等于 N; 除不尽时余数给小号料场;
+  分到 0 的料场不列入;
+- 分配对象确实无法确定时 yard 填 0 (会被拒绝并转人工).
+指令: {state}"""
+
+
+def llm_dist_expand(text):
+    """Tier-2: LLM 把模糊分配句展开成 JSON. 返回 (dt, mentions, reasons)."""
+    dt, parsed = llm_json(DIST_EXPAND_PROMPT.format(state=text))
+    if parsed is None or not isinstance(parsed, dict):
+        return dt, None, ["LLM 分配输出无法解析"]
+    items = parsed.get("items", [])
+    if not isinstance(items, list):
+        return dt, None, ["LLM 分配输出无法解析"]
+    mentions, reasons = [], []
+    for it in items:
+        yard = it.get("yard")
+        if not isinstance(yard, int) or yard not in YARDS:
+            reasons.append(f"LLM 分配项 yard={yard!r} 非法 (需 1/2/3)")
+            continue
+        material = it.get("material", "")
+        if material not in MATERIALS:
+            reasons.append(f"LLM 分配项 {material!r} 不在物料白名单")
+            continue
+        qty = it.get("qty", 1)
+        if not isinstance(qty, int) or not (1 <= qty <= 99):
+            reasons.append(f"LLM 分配数量 {qty!r} 非法")
+            continue
+        mentions.append({"yard": yard, "material": material, "qty": qty,
+                         "dist_total": 0})
+    return dt, mentions, reasons
+
+
+def dist_expand_if_needed(text):
+    """规则层空结果 + 分配指令可识别为分配句 -> LLM 展开 (指令). 返回 (mentions|None, dt, reasons).
+    防幻觉: 物料必须与规则层在句子里听到的物料一致; 总量由规则层给出, 校验器对账."""
+    if not DIST_KW_RE.search(text):
+        return None
+    m = DIST_TOT_RE.search(text)
+    if not m:
+        return None
+    raw, total = m.group(2), _cn_num(m.group(1))
+    material = _dist_material(raw)
+    if not material or not (1 <= total <= 99 * len(YARDS)):
+        return None
+    dt, lmentions, reasons = llm_dist_expand(text)
+    if not lmentions:
+        return None, dt, reasons or ["LLM 无输出"]
+    bad = [x for x in lmentions if x["material"] != material]
+    reasons += [f"LLM 分配物料与指令不符 ({x['material']} vs {material})" for x in bad]
+    lmentions = [x for x in lmentions if x["material"] == material]
+    if not lmentions:
+        return None, dt, reasons
+    for x in lmentions:
+        x["dist_total"] = total  # 对账锚点, 校验器强制 总量 == total
+    return lmentions, dt, reasons
+
+
 CASES = [
     ("给1号料场送两个红苹果，3号料场送10个蓝色方块",
      [(1, "red_apple", 2), (3, "blue_block", 10)]),   # 双料场双物料
@@ -362,6 +500,18 @@ CASES = [
     # 口语 '两号' (ASR 常转成 两号 而非 二号)
     ("一号仓库放两个香蕉两号仓库放三个香蕉三号仓库放四个苹果",
      [(1, "banana", 2), (2, "banana", 3), (3, "red_apple", 4)]),
+    # 分配指令: Tier-1 确定性展开 (余数给小号料场)
+    ("九十九个香蕉平均分到三个仓库里去",
+     [(1, "banana", 33), (2, "banana", 33), (3, "banana", 33)]),
+    ("100个香蕉平均分到三个仓库",
+     [(1, "banana", 34), (2, "banana", 33), (3, "banana", 33)]),
+    ("把40个梨平均分到1号和3号仓库",
+     [(1, "pear", 20), (3, "pear", 20)]),
+    ("两个红苹果平均分到1号和3号",
+     [(1, "red_apple", 1), (3, "red_apple", 1)]),
+    ("两个香蕉平均分到三个仓库",
+     [(1, "banana", 1), (2, "banana", 1)]),
+    ("把香蕉平均分到仓库里", None),                      # 无数量 -> 暂停等人工
     # 超纲: 应走 暂停+人工 (expected=None 表示只检查路径)
     ("给4号料场送两个苹果", None),                     # 料场越纲
     ("给七号料场送苹果", None),                        # 汉字越纲 (曾致 KeyError)
@@ -386,15 +536,20 @@ def main():
         cases = [(t, e, "oob" if e is None else "scored") for t, e in CASES]
 
     t_laya, t_bypass, t_e2e = [], [], []
-    n_fast = n_bypass = n_pause = n_correct = n_total = 0
+    n_fast = n_expand = n_bypass = n_pause = n_correct = n_total = 0
     for rep in range(REPS):
         for ci, (state_text, expected, kind) in enumerate(cases):
             t0 = time.perf_counter()
             norm, mentions, neg = normalize(state_text)
+            dist_ms = 0.0
+            if not mentions and not neg:
+                dm, dt_d, _dr = dist_expand_if_needed(norm) or (None, 0.0, [])
+                if dm:
+                    mentions, dist_ms = dm, dt_d
             dt_l, answers = laya_decide(mentions, norm) if mentions else (0.0, {})
             t_laya.append(dt_l)
             ok, actions, reasons = validate(mentions, answers)
-            path, dt_b = "FAST", 0.0
+            path, dt_b = ("EXPAND" if dist_ms else "FAST"), 0.0
             if not ok:
                 try:
                     dt_b, b_mentions, b_reasons = llm_bypass(norm, mentions)
@@ -419,6 +574,8 @@ def main():
                 n_correct += correct
                 if path == "FAST":
                     n_fast += 1
+                elif path == "EXPAND":
+                    n_expand += 1
                 elif path == "BYPASS":
                     n_bypass += 1
                 else:
@@ -432,7 +589,7 @@ def main():
 
     n = len(t_e2e)
     print(f"\n===== 料场分拣回路汇总 ({MODE}, {REPS} 轮 x {len(cases)} 句) =====")
-    print(f"路径: 快路径 {n_fast}   LLM旁路 {n_bypass}   暂停+人工 {n_pause}   (超纲句计入暂停)")
+    print(f"路径: 快路径 {n_fast}   LLM分配 {n_expand}   LLM旁路 {n_bypass}   暂停+人工 {n_pause}   (超纲句计入暂停)")
     print(f"正确: {n_correct}/{n_total}")
     if t_laya:
         print(f"Laya:   mean {statistics.mean(t_laya)*1000:.0f} ms  max {max(t_laya)*1000:.0f} ms  (每提及 1 次请求: 物料终审)")
