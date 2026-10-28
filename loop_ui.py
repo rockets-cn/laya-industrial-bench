@@ -21,62 +21,102 @@ spec = importlib.util.spec_from_file_location("bi", os.path.join(HERE, "bench_in
 bi = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bi)
 
+# 彩色方块域 (bench_block.py): 同架构, 词表换成 红/绿/黄/蓝 方块
+spec_bb = importlib.util.spec_from_file_location("bb", os.path.join(HERE, "bench_block.py"))
+bb = importlib.util.module_from_spec(spec_bb)
+spec_bb.loader.exec_module(bb)
+
 import bench_pipeline  # noqa: E402  (already imported by bench_industrial)
 bench_pipeline.MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
 app = FastAPI(title="Laya 工业决策回路")
 
 AUDIO_DIR = os.path.join(HERE, "test_audio")
+# (名称, 文本, 领域 fruit|block|mixed)
 PRESETS = [
-    ("c1 多意图", "我要那个苹果，我要那个梨，给我十个香蕉"),
-    ("c2 数量", "来两个红苹果和一把香蕉"),
-    ("c3 单意图", "只给我三个梨就行"),
-    ("c4 否定", "一个苹果，不要梨，五个香蕉谢谢"),
-    ("超纲① 关窗", "把三号口的窗户关上"),
-    ("超纲② 纯否定", "不要香蕉"),
-    ("快路径 十个", "给我来十个苹果"),
+    ("c1 多意图", "我要那个苹果，我要那个梨，给我十个香蕉", "fruit"),
+    ("c2 数量", "来两个红苹果和一把香蕉", "fruit"),
+    ("c3 单意图", "只给我三个梨就行", "fruit"),
+    ("c4 否定", "一个苹果，不要梨，五个香蕉谢谢", "fruit"),
+    ("超纲① 关窗", "把三号口的窗户关上", "fruit"),
+    ("超纲② 纯否定", "不要香蕉", "fruit"),
+    ("快路径 十个", "给我来十个苹果", "fruit"),
+    ("方块 例", "10个红色方块，5个绿色方块，7个黄色方块", "block"),
+    ("方块 否定", "8个黄色方块，不要绿色方块", "block"),
+    ("方块 超纲", "就给我3个方块", "block"),
+    ("混合 水果+方块", "两个红苹果和10个红色方块，再来3个蓝色方块", "mixed"),
 ]
 
 
-def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None):
-    """Text/normalized -> Laya -> validator -> (LLM bypass). Returns full trace dict."""
-    t0 = time.perf_counter()
-    norm, mentions, neg = bi.normalize(text)
-    dt_l, answers = bi.laya_decide(mentions)
-    ok, actions, reasons = bi.validate(mentions, answers)
+def run_side(side, text):
+    """单领域跑一圈: 规则层 -> Laya -> 校验器 -> (LLM旁路). side: fruit|block."""
+    ns = bi if side == "fruit" else bb
+    norm, mentions, neg = ns.normalize(text)
+    if not mentions and not neg:
+        return {"side": side, "empty": True, "normalized": norm, "negated": neg,
+                "mentions": [], "laya_ms": 0.0, "answers": {}, "ok": True,
+                "actions": [], "reasons": [], "path": "EMPTY", "bypass_ms": 0.0,
+                "bypass": None}
+    dt_l, answers = ns.laya_decide(mentions) if mentions else (0.0, {})
+    ok, actions, reasons = ns.validate(mentions, answers)
     path, dt_b, bypass = "FAST", 0.0, None
     if not ok:
         try:
-            dt_b, b_mentions, b_reasons = bi.llm_bypass(norm, mentions)
-            bypass = {
-                "raw_mentions": [{"name": m["name"], "qty": m["qty"]} for m in (b_mentions or [])],
-                "reasons": b_reasons,
-            }
+            dt_b, b_mentions, b_reasons = ns.llm_bypass(norm, mentions)
             if b_mentions:
-                ok_b, actions, reasons = bi.validate(b_mentions, None)
+                ok_b, actions, reasons = ns.validate(b_mentions, None)
             else:
                 ok_b, actions, reasons = False, [], b_reasons or ["LLM 无输出"]
             path = "BYPASS" if ok_b else "PAUSE+HUMAN"
         except Exception as e:
             path, actions, reasons = "PAUSE+HUMAN", [], [f"LLM 不可用: {e}"]
+    return {"side": side, "empty": False, "normalized": norm, "negated": neg,
+            "mentions": mentions, "laya_ms": dt_l, "answers": answers, "ok": ok,
+            "actions": actions, "reasons": reasons, "path": path,
+            "bypass_ms": dt_b, "bypass": bypass}
+
+
+def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit"):
+    """Text/normalized -> (规则层 -> Laya -> 校验器 -> LLM旁路). Returns full trace dict.
+    domain: fruit | block | mixed (两个规则层并行, 各抽各的, 动作合并)."""
+    t0 = time.perf_counter()
+    sides = ["fruit", "block"] if domain == "mixed" else [domain]
+    results = [run_side(s, text) for s in sides]
+    active = [r for r in results if not r["empty"]]
+    if not active:
+        results = [{"side": sides[0], "empty": False, "normalized": text, "negated": [],
+                    "mentions": [], "laya_ms": 0.0, "answers": {}, "ok": False,
+                    "actions": [], "reasons": ["空订单"], "path": "PAUSE+HUMAN",
+                    "bypass_ms": 0.0, "bypass": None}]
+        active = results
+    order = {"FAST": 0, "BYPASS": 1, "PAUSE+HUMAN": 2}
+    path = max((r["path"] for r in active), key=lambda p: order[p])
+    merged_answers = {}
+    for r in results:
+        for k, v in r["answers"].items():
+            merged_answers[("f_" if r["side"] == "fruit" else "b_") + k] = v
+    merged_bypass = {k: v for r in results for k, v in
+                     (r["bypass"].items() if r["bypass"] else [])} or None
     return {
+        "domain": domain,
         "asr_text": asr_text if asr_text is not None else text,
         "asr_model": getattr(bi, "LAST_ASR_MODEL", "?"),
         "last_wav": last_wav,
         "asr_ms": round(asr_dt * 1000),
-        "normalized": norm,
-        "negated": neg,
-        "mentions": [{"name": m["name"], "qty": m["qty"]} for m in mentions],
-        "laya_ms": round(dt_l * 1000),
+        "normalized": " | ".join(f"[{r['side']}] {r['normalized']}" for r in results)
+                      if domain == "mixed" else results[0]["normalized"],
+        "negated": [n for r in results for n in r["negated"]],
+        "mentions": [dict(m, side=r["side"]) for r in results for m in r["mentions"]],
+        "laya_ms": round(sum(r["laya_ms"] for r in results) * 1000),
         "laya_answers": {k: {"choice": v.get("choice"),
                              "probabilities": {n: round(p, 3) for n, p in v.get("probabilities", {}).items()},
                              "confidence": round(v.get("confidence") or 0, 3)}
-                         for k, v in (answers or {}).items()},
-        "validator_ok": bool(ok),
-        "actions": actions,
-        "reject_reasons": reasons,
-        "bypass_ms": round(dt_b * 1000),
-        "bypass": bypass,
+                         for k, v in merged_answers.items()},
+        "validator_ok": all(r["ok"] for r in active),
+        "actions": [a for r in results for a in r["actions"]],
+        "reject_reasons": [f"[{r['side']}]" + rr for r in results for rr in r["reasons"]],
+        "bypass_ms": round(max((r["bypass_ms"] for r in results), default=0.0) * 1000),
+        "bypass": merged_bypass,
         "path": path,
         "e2e_ms": round((time.perf_counter() - t0) * 1000),
     }
@@ -89,6 +129,9 @@ async def run(request: Request):
     wav = body.get("wav")
     mic = body.get("mic")
     wake = bool(body.get("wake"))
+    domain = body.get("domain") or "fruit"
+    if domain not in ("fruit", "block", "mixed"):
+        domain = "fruit"
     asr_dt, asr_text = 0.0, None
     last_wav = None
     if wav:
@@ -136,12 +179,12 @@ async def run(request: Request):
         # 唤醒词检测: 只做 ASR, 不跑 Laya/LLM 管线
         return {"wake": True, "asr_text": text, "asr_ms": round(asr_dt * 1000),
                 "asr_model": getattr(bi, "LAST_ASR_MODEL", "?")}
-    return run_pipeline(text, asr_dt, None, last_wav)
+    return run_pipeline(text, asr_dt, None, last_wav, domain=domain)
 
 
 @app.get("/presets")
 def presets():
-    return [{"name": n, "text": t} for n, t in PRESETS]
+    return [{"name": n, "text": t, "domain": d} for n, t, d in PRESETS]
 
 
 PAGE = """<!doctype html>
@@ -179,6 +222,12 @@ PAGE = """<!doctype html>
  <input id="txt" style="flex:1;min-width:260px;background:#171a21;color:#e6e6e6;border:1px solid #262b36;border-radius:8px;padding:10px 12px;font-size:14px">
  <button class="primary" onclick="runText()">▶ 运行</button>
 </div>
+<div class="row" id="domainrow">
+ <button class="primary" data-dom="fruit" onclick="setDomain('fruit')">🍎 水果回路</button>
+ <button data-dom="block" onclick="setDomain('block')">🧊 彩色方块回路</button>
+ <button data-dom="mixed" onclick="setDomain('mixed')">🍎+🧊 混合</button>
+ <span id="domlabel" class="muted" style="align-self:center"></span>
+</div>
 <div class="row" id="presets"></div>
 <div class="row">
  <button id="micbtn" class="primary" style="min-width:230px" onclick="micToggle()">🎤 点一下授权，唤醒词「优优」</button>
@@ -204,10 +253,16 @@ async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
 function pills(arr){return arr.length?arr.map(x=>`<span class="pill">${x}</span>`).join(''):'<span class="muted">无</span>'}
+let domain='fruit';
+function setDomain(d){ domain=d;
+ document.querySelectorAll('#domainrow button').forEach(b=>b.classList.toggle('primary',b.dataset.dom===d));
+ $('domlabel').textContent={fruit:'当前: 水果回路',block:'当前: 彩色方块回路 (红/绿/黄/蓝 × 数量)',mixed:'当前: 混合 (两个规则层并行, 各抽各的)'}[d];
+}
+setDomain('fruit');
 async function runText(){
  const t=$('txt').value.trim(); if(!t)return;
  $('out').innerHTML=sec('运行中…');
- try{render(await jpost('/run',{text:t}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+ try{render(await jpost('/run',{text:t,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 async function runWav(name){
@@ -215,18 +270,18 @@ async function runWav(name){
   const fr=new FileReader(); fr.onload=async()=>{
    const b64=fr.result.split(',')[1];
    $('out').innerHTML=sec('ASR 识别中…');
-   try{render(await jpost('/run',{wav:b64}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+   try{render(await jpost('/run',{wav:b64,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
   }; fr.readAsDataURL(f);
  } else if(name){
   const r=await fetch('/audio/file?file='+encodeURIComponent(name)); const buf=await r.arrayBuffer();
   const b64=b64(buf);
   $('out').innerHTML=sec('ASR 识别中…');
-  try{render(await jpost('/run',{wav:b64}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+  try{render(await jpost('/run',{wav:b64,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
  }
 }
 function render(d){
  const pcls='path-'+d.path;
- $('cards').innerHTML=card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')
+ $('cards').innerHTML=card('领域',{fruit:'水果',block:'方块',mixed:'混合'}[d.domain]||d.domain,'')+card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')
   +card('ASR',d.asr_ms+' ms')+card('Laya',d.laya_ms+' ms')+(d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','未触发'));
  let h='';
  h+=sec('ASR / 输入 <span class="chip" style="text-transform:none;letter-spacing:0">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a class="muted" style="color:#60a5fa" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
@@ -356,10 +411,10 @@ function flushUtterance(isWake, tailN){
     if(armed&&d.asr_text&&WAKE_RE.test(d.asr_text)){
      const rest=(d.asr_text.replace(WAKE_RE,'').replace(/[，。,.]/g,'')).trim();
      if(rest.length>=2){
-      // 唤醒词后紧跟了指令 ("优优给我两个苹果"), 直接跑管线, 不用重新说
-      $('out').innerHTML=sec('ASR 识别中…');
-      try{render(await jpost('/run',{text:rest}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
-      setModeIdle();
+     // 唤醒词后紧跟了指令 ("优优给我两个苹果"), 直接跑管线, 不用重新说
+     $('out').innerHTML=sec('ASR 识别中…');
+     try{render(await jpost('/run',{text:rest,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+     setModeIdle();
      } else setModeCmd(); // 只说了唤醒词, 等指令
     }
     else if(armed) setModeIdle();
@@ -375,7 +430,7 @@ function flushUtterance(isWake, tailN){
  fr.readAsDataURL(new Blob([buf],{type:'audio/wav'}));
 }
 fetch('/presets').then(r=>r.json()).then(ps=>{$('presets').innerHTML=ps.map((p,i)=>
- `<button onclick="document.getElementById('txt').value=${JSON.stringify(p.text)};runText()">${p.name}</button>`).join('')});
+ `<button onclick="setDomain(${JSON.stringify(p.domain)});document.getElementById('txt').value=${JSON.stringify(p.text)};runText()">${p.name}</button>`).join('')});
 fetch('/audio').then(r=>r.json()).then(fs=>{$('wavnames').innerHTML=fs.map(f=>
  `<button style="margin:2px" onclick="runWav('${f}')">🎵 ${f}</button>`).join(' ')});
 $('drop').onclick=()=>$('wavf').click();
