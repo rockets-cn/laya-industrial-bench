@@ -1,0 +1,871 @@
+{
+  "model": "qwen3.5:4b",
+  "seed": 20261027,
+  "think": false,
+  "sentences_total": 380,
+  "sentences_kept": 343,
+  "single_intent_kept": 276,
+  "multi_intent_kept": 67,
+  "llm_label_batches": 0,
+  "llm_label_batch_size": 4,
+  "llm_label_batches_recovered": 0,
+  "llm_thinking_sentences": 0,
+  "llm_plain_sentences": 380,
+  "llm_thinking_mean_ms": null,
+  "llm_plain_mean_ms": 1248,
+  "llm_agree": 343,
+  "llm_mismatch": 13,
+  "llm_unparseable": 24,
+  "agreement_rate": 0.9026,
+  "train_rows": 551,
+  "eval_rows": 139,
+  "by_action": {
+    "red_apple": 153,
+    "green_apple": 70,
+    "banana": 70,
+    "pear": 50
+  },
+  "dropped_gen_samples": [
+    [
+      "苹果",
+      10,
+      [
+        "rule_reject",
+        "离十个苹果"
+      ]
+    ],
+    [
+      "苹果",
+      10,
+      [
+        "rule_reject",
+        "十个个苹果"
+      ]
+    ],
+    [
+      "苹果",
+      10,
+      [
+        "rule_reject",
+        "李，十个苹果"
+      ]
+    ],
+    [
+      "苹果",
+      10,
+      [
+        "guard",
+        "要十苹果就好, 不要别的"
+      ]
+    ],
+    [
+      "苹果",
+      1,
+      [
+        "rule_reject",
+        "离一个苹果可以啊，"
+      ]
+    ],
+    [
+      "苹果",
+      2,
+      [
+        "rule_reject",
+        "苹果，两个就行"
+      ]
+    ],
+    [
+      "苹果",
+      2,
+      [
+        "rule_reject",
+        "离两个苹果"
+      ]
+    ],
+    [
+      "苹果",
+      2,
+      [
+        "rule_reject",
+        "苹果两个"
+      ]
+    ],
+    [
+      "苹果",
+      2,
+      [
+        "rule_reject",
+        "来个俩苹果"
+      ]
+    ],
+    [
+      "苹果",
+      2,
+      [
+        "rule_reject",
+        "离两个苹果行不"
+      ]
+    ],
+    [
+      "苹果",
+      2,
+      [
+        "rule_reject",
+        "苹果两个给俺"
+      ]
+    ],
+    [
+      "红苹果",
+      2,
+      [
+        "rule_reject",
+        "要俩红苹果"
+      ]
+    ],
+    [
+      "红苹果",
+      2,
+      [
+        "rule_reject",
+        "红苹果离两个"
+      ]
+    ],
+    [
+      "红苹果",
+      2,
+      [
+        "rule_reject",
+        "拿红个两"
+      ]
+    ],
+    [
+      "红苹果",
+      2,
+      [
+        "rule_reject",
+        "红苹果要李个"
+      ]
+    ],
+    [
+      "红苹果",
+      2,
+      [
+        "rule_reject",
+        "离两个红苹果就行，"
+      ]
+    ],
+    [
+      "红苹果",
+      2,
+      [
+        "rule_reject",
+        "两个红个儿，"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "离我五个红苹果行不"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "拿五个个红苹果过来"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "请给红苹果五个"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "我要红苹果五斤啊"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "红苹果, 要五个"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "要离五个红苹果，"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "给个個红苹果吧，"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "离红蘋果给我五個，"
+      ]
+    ],
+    [
+      "红苹果",
+      5,
+      [
+        "rule_reject",
+        "红苹果給我五个，"
+      ]
+    ],
+    [
+      "红苹果",
+      1,
+      [
+        "rule_reject",
+        "来个离个红苹果，"
+      ]
+    ],
+    [
+      "绿苹果",
+      2,
+      [
+        "rule_reject",
+        "离两个绿苹果"
+      ]
+    ],
+    [
+      "绿苹果",
+      2,
+      [
+        "rule_reject",
+        "拿两个绿蘋果过来吧"
+      ]
+    ],
+    [
+      "绿苹果",
+      2,
+      [
+        "rule_reject",
+        "要俩绿苹果"
+      ]
+    ],
+    [
+      "绿苹果",
+      10,
+      [
+        "rule_reject",
+        "离（里）面有十个绿苹果吗"
+      ]
+    ],
+    [
+      "绿苹果",
+      10,
+      [
+        "rule_reject",
+        "再补十个个绿苹果"
+      ]
+    ],
+    [
+      "绿苹果",
+      10,
+      [
+        "guard",
+        "别拿别的，只要十个绿苹果"
+      ]
+    ],
+    [
+      "绿苹果",
+      5,
+      [
+        "rule_reject",
+        "离五个绿苹果就行"
+      ]
+    ],
+    [
+      "香蕉",
+      2,
+      [
+        "rule_reject",
+        "两跟香蕉"
+      ]
+    ],
+    [
+      "香蕉",
+      2,
+      [
+        "rule_reject",
+        "离两根香蕉"
+      ]
+    ],
+    [
+      "香蕉",
+      2,
+      [
+        "rule_reject",
+        "需两枝香蕉"
+      ]
+    ],
+    [
+      "香蕉",
+      2,
+      [
+        "rule_reject",
+        "求两棵香蕉"
+      ]
+    ],
+    [
+      "香蕉",
+      2,
+      [
+        "rule_reject",
+        "得两串香蕉"
+      ]
+    ],
+    [
+      "香蕉",
+      2,
+      [
+        "rule_reject",
+        "离我两根香蕉"
+      ]
+    ]
+  ],
+  "mismatches": [
+    {
+      "utt": "来10个苹果",
+      "gold": [
+        [
+          "red_apple",
+          10
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ]
+      ]
+    },
+    {
+      "utt": "给我一个离",
+      "gold": [
+        [
+          "pear",
+          1
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "给我两个离",
+      "gold": [
+        [
+          "pear",
+          2
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "给我3个离",
+      "gold": [
+        [
+          "pear",
+          3
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "给我五个离",
+      "gold": [
+        [
+          "pear",
+          5
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "给我10个离",
+      "gold": [
+        [
+          "pear",
+          10
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "来一个李",
+      "gold": [
+        [
+          "pear",
+          1
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "来2个李",
+      "gold": [
+        [
+          "pear",
+          2
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "来三个李",
+      "gold": [
+        [
+          "pear",
+          3
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "来五个李",
+      "gold": [
+        [
+          "pear",
+          5
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "来十个李",
+      "gold": [
+        [
+          "pear",
+          10
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "我要一个离吧",
+      "gold": [
+        [
+          "pear",
+          1
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "来一苹果和三红苹果",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "red_apple",
+          3
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          4
+        ]
+      ]
+    },
+    {
+      "utt": "我要一苹果, 再给三红苹果",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "red_apple",
+          3
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          4
+        ]
+      ]
+    },
+    {
+      "utt": "给我一苹果, 还要三红苹果",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "red_apple",
+          3
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          4
+        ]
+      ]
+    },
+    {
+      "utt": "我要一苹果, 再给三绿苹果",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "green_apple",
+          3
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "green_apple",
+          4
+        ]
+      ]
+    },
+    {
+      "utt": "我要一苹果, 不要红苹果",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "我要一苹果, 不要梨",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "green_apple",
+          1
+        ],
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "banana",
+          1
+        ]
+      ]
+    },
+    {
+      "utt": "我要一红苹果, 不要香蕉",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "green_apple",
+          1
+        ],
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "pear",
+          1
+        ]
+      ]
+    },
+    {
+      "utt": "我要一红苹果, 不要梨",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "green_apple",
+          1
+        ],
+        [
+          "banana",
+          1
+        ]
+      ]
+    },
+    {
+      "utt": "我要一香蕉, 不要绿苹果",
+      "gold": [
+        [
+          "banana",
+          1
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "我要一梨, 不要绿苹果",
+      "gold": [
+        [
+          "pear",
+          1
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "十苹果行不？",
+      "gold": [
+        [
+          "red_apple",
+          10
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ]
+      ]
+    },
+    {
+      "utt": "送个五红苹果咋样",
+      "gold": [
+        [
+          "red_apple",
+          5
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ]
+      ]
+    },
+    {
+      "utt": "来十离呗",
+      "gold": [
+        [
+          "pear",
+          10
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "green_apple",
+          1
+        ],
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "banana",
+          1
+        ],
+        [
+          "pear",
+          1
+        ]
+      ]
+    },
+    {
+      "utt": "送十颗李过来",
+      "gold": [
+        [
+          "pear",
+          10
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "十离，快点",
+      "gold": [
+        [
+          "pear",
+          10
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "给我来三离，要新鲜的",
+      "gold": [
+        [
+          "pear",
+          3
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "需拿三个李去仓库",
+      "gold": [
+        [
+          "pear",
+          3
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "要三离，行吗？",
+      "gold": [
+        [
+          "pear",
+          3
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "给仓库送五個李吧",
+      "gold": [
+        [
+          "pear",
+          5
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "麻烦发五根离",
+      "gold": [
+        [
+          "pear",
+          5
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "要五个李，",
+      "gold": [
+        [
+          "pear",
+          5
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "我要五个离",
+      "gold": [
+        [
+          "pear",
+          5
+        ]
+      ],
+      "llm": "unparseable"
+    },
+    {
+      "utt": "一个红苹果加三个红苹果，",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "red_apple",
+          3
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          4
+        ]
+      ]
+    },
+    {
+      "utt": "三个红苹果和一个红苹果都给我",
+      "gold": [
+        [
+          "red_apple",
+          1
+        ],
+        [
+          "red_apple",
+          3
+        ]
+      ],
+      "llm": [
+        [
+          "red_apple",
+          4
+        ]
+      ]
+    },
+    {
+      "utt": "来一绿苹果，两香蕉，再加一个梨行不？",
+      "gold": [
+        [
+          "banana",
+          2
+        ],
+        [
+          "green_apple",
+          1
+        ],
+        [
+          "pear",
+          1
+        ]
+      ],
+      "llm": "unparseable"
+    }
+  ]
+}

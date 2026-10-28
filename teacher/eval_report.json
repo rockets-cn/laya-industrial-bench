@@ -1,0 +1,28 @@
+{
+  "base": {
+    "n": 139,
+    "correct": 124,
+    "acc": 0.8921,
+    "mean_ms": 115,
+    "max_ms": 243,
+    "per_action": {
+      "green_apple": "32/32",
+      "banana": "30/30",
+      "red_apple": "35/50",
+      "pear": "27/27"
+    }
+  },
+  "fine-tuned": {
+    "n": 139,
+    "correct": 139,
+    "acc": 1.0,
+    "mean_ms": 122,
+    "max_ms": 527,
+    "per_action": {
+      "green_apple": "32/32",
+      "banana": "30/30",
+      "red_apple": "50/50",
+      "pear": "27/27"
+    }
+  }
+}

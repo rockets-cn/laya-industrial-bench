@@ -1,0 +1,380 @@
+{"utt": "给我一个苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 2004, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "给我2个苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1126, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "给我三个苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1122, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "给我五个苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1120, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "给我十个苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1165, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "来一个苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1128, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "来两个苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1123, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "来三个苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1125, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "来5个苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1122, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "来10个苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1128, "llm_agree": false, "llm_items": [["red_apple", 1]]}
+{"utt": "我要1个苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1125, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要两个苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1111, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "我要三个苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1142, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "我要5个苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1136, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "我要10个苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1171, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "麻烦给一个苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1140, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "麻烦给2个苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1136, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "麻烦给三个苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 2305, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "麻烦给5个苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1131, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "麻烦给十个苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1181, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "有苹果吗, 来一个", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1148, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "有苹果吗, 来2个", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1159, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "有苹果吗, 来三个", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1127, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "有苹果吗, 来五个", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1164, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "有苹果吗, 来10个", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1204, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "给我一個苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1166, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "给我2個苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1140, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "给我三個苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1136, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "给我五個苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1127, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "给我十個苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1184, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "我要一個苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1183, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要两個苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1132, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "我要三個苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1147, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "我要五個苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1147, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "我要十個苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1167, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "来一个红苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1176, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "来2个红苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1173, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "来3个红苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1165, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "来五个红苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1168, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "来十个红苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1195, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "我要1个红苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1194, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要两个红苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1181, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "我要三个红苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1170, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "我要五个红苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1174, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "我要10个红苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1206, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "给我一个红苹果吧", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1173, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "给我两个红苹果吧", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1173, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "给我3个红苹果吧", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1167, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "给我五个红苹果吧", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1169, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "给我十个红苹果吧", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1212, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "红苹果, 来1个", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1160, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "红苹果, 来2个", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1161, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "红苹果, 来三个", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1158, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "红苹果, 来五个", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1159, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "红苹果, 来10个", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1214, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "来一个紅苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1208, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "来两个紅苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1166, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "来三个紅苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1171, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "来五个紅苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1164, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "来10个紅苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1201, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "我要1个紅苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1224, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要2个紅苹果", "gold": [["red_apple", 2]], "source": "rule", "llm_ms": 1190, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "我要三个紅苹果", "gold": [["red_apple", 3]], "source": "rule", "llm_ms": 1195, "llm_agree": true, "llm_items": [["red_apple", 3]]}
+{"utt": "我要五个紅苹果", "gold": [["red_apple", 5]], "source": "rule", "llm_ms": 1191, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "我要10个紅苹果", "gold": [["red_apple", 10]], "source": "rule", "llm_ms": 1226, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "我要一个绿苹果", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1171, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "我要两个绿苹果", "gold": [["green_apple", 2]], "source": "rule", "llm_ms": 1190, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "我要三个绿苹果", "gold": [["green_apple", 3]], "source": "rule", "llm_ms": 1189, "llm_agree": true, "llm_items": [["green_apple", 3]]}
+{"utt": "我要5个绿苹果", "gold": [["green_apple", 5]], "source": "rule", "llm_ms": 1187, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "我要10个绿苹果", "gold": [["green_apple", 10]], "source": "rule", "llm_ms": 1235, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "来1个绿苹果", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1197, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "来两个绿苹果", "gold": [["green_apple", 2]], "source": "rule", "llm_ms": 1189, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "来3个绿苹果", "gold": [["green_apple", 3]], "source": "rule", "llm_ms": 1215, "llm_agree": true, "llm_items": [["green_apple", 3]]}
+{"utt": "来五个绿苹果", "gold": [["green_apple", 5]], "source": "rule", "llm_ms": 1173, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "来10个绿苹果", "gold": [["green_apple", 10]], "source": "rule", "llm_ms": 1208, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "给我1个绿苹果谢谢", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1180, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "给我两个绿苹果谢谢", "gold": [["green_apple", 2]], "source": "rule", "llm_ms": 1169, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "给我三个绿苹果谢谢", "gold": [["green_apple", 3]], "source": "rule", "llm_ms": 1194, "llm_agree": true, "llm_items": [["green_apple", 3]]}
+{"utt": "给我五个绿苹果谢谢", "gold": [["green_apple", 5]], "source": "rule", "llm_ms": 1151, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "给我十个绿苹果谢谢", "gold": [["green_apple", 10]], "source": "rule", "llm_ms": 1826, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "绿苹果来一个", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1176, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "绿苹果来两个", "gold": [["green_apple", 2]], "source": "rule", "llm_ms": 1170, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "绿苹果来3个", "gold": [["green_apple", 3]], "source": "rule", "llm_ms": 1164, "llm_agree": true, "llm_items": [["green_apple", 3]]}
+{"utt": "绿苹果来五个", "gold": [["green_apple", 5]], "source": "rule", "llm_ms": 1165, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "绿苹果来十个", "gold": [["green_apple", 10]], "source": "rule", "llm_ms": 1210, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "给我一个绿苹果吧", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1170, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "给我两个绿苹果吧", "gold": [["green_apple", 2]], "source": "rule", "llm_ms": 1169, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "给我三个绿苹果吧", "gold": [["green_apple", 3]], "source": "rule", "llm_ms": 1166, "llm_agree": true, "llm_items": [["green_apple", 3]]}
+{"utt": "给我五个绿苹果吧", "gold": [["green_apple", 5]], "source": "rule", "llm_ms": 1166, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "给我十个绿苹果吧", "gold": [["green_apple", 10]], "source": "rule", "llm_ms": 1195, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "来一个绿苹果谢谢", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1168, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "来2个绿苹果谢谢", "gold": [["green_apple", 2]], "source": "rule", "llm_ms": 1159, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "来三个绿苹果谢谢", "gold": [["green_apple", 3]], "source": "rule", "llm_ms": 1163, "llm_agree": true, "llm_items": [["green_apple", 3]]}
+{"utt": "来五个绿苹果谢谢", "gold": [["green_apple", 5]], "source": "rule", "llm_ms": 1173, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "来十个绿苹果谢谢", "gold": [["green_apple", 10]], "source": "rule", "llm_ms": 1206, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "给我一根香蕉", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1145, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "给我两根香蕉", "gold": [["banana", 2]], "source": "rule", "llm_ms": 1133, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "给我三根香蕉", "gold": [["banana", 3]], "source": "rule", "llm_ms": 1130, "llm_agree": true, "llm_items": [["banana", 3]]}
+{"utt": "给我5根香蕉", "gold": [["banana", 5]], "source": "rule", "llm_ms": 1126, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "给我10根香蕉", "gold": [["banana", 10]], "source": "rule", "llm_ms": 1171, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "来一把香蕉", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1130, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "来两把香蕉", "gold": [["banana", 2]], "source": "rule", "llm_ms": 1128, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "来三把香蕉", "gold": [["banana", 3]], "source": "rule", "llm_ms": 1135, "llm_agree": true, "llm_items": [["banana", 3]]}
+{"utt": "来五把香蕉", "gold": [["banana", 5]], "source": "rule", "llm_ms": 1127, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "来10把香蕉", "gold": [["banana", 10]], "source": "rule", "llm_ms": 1168, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "我要1根香蕉", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1139, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "我要两根香蕉", "gold": [["banana", 2]], "source": "rule", "llm_ms": 1126, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "我要3根香蕉", "gold": [["banana", 3]], "source": "rule", "llm_ms": 1134, "llm_agree": true, "llm_items": [["banana", 3]]}
+{"utt": "我要五根香蕉", "gold": [["banana", 5]], "source": "rule", "llm_ms": 1123, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "我要十根香蕉", "gold": [["banana", 10]], "source": "rule", "llm_ms": 1168, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "香蕉来一根", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1129, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "香蕉来两根", "gold": [["banana", 2]], "source": "rule", "llm_ms": 1135, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "香蕉来三根", "gold": [["banana", 3]], "source": "rule", "llm_ms": 1129, "llm_agree": true, "llm_items": [["banana", 3]]}
+{"utt": "香蕉来五根", "gold": [["banana", 5]], "source": "rule", "llm_ms": 1127, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "香蕉来10根", "gold": [["banana", 10]], "source": "rule", "llm_ms": 1181, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "给我一个香蕉", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1154, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "给我两个香蕉", "gold": [["banana", 2]], "source": "rule", "llm_ms": 1124, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "给我三个香蕉", "gold": [["banana", 3]], "source": "rule", "llm_ms": 1132, "llm_agree": true, "llm_items": [["banana", 3]]}
+{"utt": "给我五个香蕉", "gold": [["banana", 5]], "source": "rule", "llm_ms": 1139, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "给我10个香蕉", "gold": [["banana", 10]], "source": "rule", "llm_ms": 1163, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "来一根香蕉吧", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1125, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "来两根香蕉吧", "gold": [["banana", 2]], "source": "rule", "llm_ms": 1138, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "来三根香蕉吧", "gold": [["banana", 3]], "source": "rule", "llm_ms": 1129, "llm_agree": true, "llm_items": [["banana", 3]]}
+{"utt": "来五根香蕉吧", "gold": [["banana", 5]], "source": "rule", "llm_ms": 1121, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "来十根香蕉吧", "gold": [["banana", 10]], "source": "rule", "llm_ms": 1162, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "给我1根香蕉谢谢", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1134, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "给我两根香蕉谢谢", "gold": [["banana", 2]], "source": "rule", "llm_ms": 1139, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "给我三根香蕉谢谢", "gold": [["banana", 3]], "source": "rule", "llm_ms": 1133, "llm_agree": true, "llm_items": [["banana", 3]]}
+{"utt": "给我五根香蕉谢谢", "gold": [["banana", 5]], "source": "rule", "llm_ms": 1143, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "给我10根香蕉谢谢", "gold": [["banana", 10]], "source": "rule", "llm_ms": 1198, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "来一个梨", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1133, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "来两个梨", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1128, "llm_agree": true, "llm_items": [["pear", 2]]}
+{"utt": "来三个梨", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1127, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "来五个梨", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1129, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "来10个梨", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1167, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "给我一个梨", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1123, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "给我两个梨", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1130, "llm_agree": true, "llm_items": [["pear", 2]]}
+{"utt": "给我3个梨", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1129, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "给我五个梨", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1127, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "给我十个梨", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1161, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "我要一个梨", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1147, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "我要两个梨", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1133, "llm_agree": true, "llm_items": [["pear", 2]]}
+{"utt": "我要三个梨", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1138, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "我要五个梨", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1147, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "我要十个梨", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1159, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "麻烦来1个梨", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1162, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "麻烦来2个梨", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1136, "llm_agree": true, "llm_items": [["pear", 2]]}
+{"utt": "麻烦来3个梨", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1148, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "麻烦来五个梨", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1140, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "麻烦来十个梨", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1184, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "梨来一个", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1134, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "梨来两个", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1120, "llm_agree": true, "llm_items": [["pear", 2]]}
+{"utt": "梨来三个", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1145, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "梨来五个", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1161, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "梨来10个", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1163, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "给我一个离", "gold": [["pear", 1]], "source": "rule", "llm_ms": 848, "llm_agree": false, "llm_items": null}
+{"utt": "给我两个离", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1158, "llm_agree": false, "llm_items": null}
+{"utt": "给我3个离", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1148, "llm_agree": false, "llm_items": null}
+{"utt": "给我五个离", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1158, "llm_agree": false, "llm_items": null}
+{"utt": "给我10个离", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1120, "llm_agree": false, "llm_items": null}
+{"utt": "来一个李", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1164, "llm_agree": false, "llm_items": null}
+{"utt": "来2个李", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1140, "llm_agree": false, "llm_items": null}
+{"utt": "来三个李", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1135, "llm_agree": false, "llm_items": null}
+{"utt": "来五个李", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1131, "llm_agree": false, "llm_items": null}
+{"utt": "来十个李", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1173, "llm_agree": false, "llm_items": null}
+{"utt": "我要一个离吧", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1165, "llm_agree": false, "llm_items": null}
+{"utt": "我要两个离吧", "gold": [["pear", 2]], "source": "rule", "llm_ms": 1126, "llm_agree": true, "llm_items": [["pear", 2]]}
+{"utt": "我要三个离吧", "gold": [["pear", 3]], "source": "rule", "llm_ms": 1131, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "我要5个离吧", "gold": [["pear", 5]], "source": "rule", "llm_ms": 1125, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "我要十个离吧", "gold": [["pear", 10]], "source": "rule", "llm_ms": 1169, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "来一苹果和三红苹果", "gold": [["red_apple", 1], ["red_apple", 3]], "source": "rule", "llm_ms": 1129, "llm_agree": false, "llm_items": [["red_apple", 4]]}
+{"utt": "我要一苹果, 再给三红苹果", "gold": [["red_apple", 1], ["red_apple", 3]], "source": "rule", "llm_ms": 1157, "llm_agree": false, "llm_items": [["red_apple", 4]]}
+{"utt": "给我一苹果, 还要三红苹果", "gold": [["red_apple", 1], ["red_apple", 3]], "source": "rule", "llm_ms": 1139, "llm_agree": false, "llm_items": [["red_apple", 4]]}
+{"utt": "来两苹果和五红苹果", "gold": [["red_apple", 2], ["red_apple", 5]], "source": "rule", "llm_ms": 1492, "llm_agree": true, "llm_items": [["red_apple", 2], ["red_apple", 5]]}
+{"utt": "我要两苹果, 再给五红苹果", "gold": [["red_apple", 2], ["red_apple", 5]], "source": "rule", "llm_ms": 1488, "llm_agree": true, "llm_items": [["red_apple", 2], ["red_apple", 5]]}
+{"utt": "给我两苹果, 还要五红苹果", "gold": [["red_apple", 2], ["red_apple", 5]], "source": "rule", "llm_ms": 1476, "llm_agree": true, "llm_items": [["red_apple", 2], ["red_apple", 5]]}
+{"utt": "来一苹果和三绿苹果", "gold": [["red_apple", 1], ["green_apple", 3]], "source": "rule", "llm_ms": 1496, "llm_agree": true, "llm_items": [["red_apple", 1], ["green_apple", 3]]}
+{"utt": "我要一苹果, 再给三绿苹果", "gold": [["red_apple", 1], ["green_apple", 3]], "source": "rule", "llm_ms": 1519, "llm_agree": false, "llm_items": [["red_apple", 1], ["green_apple", 4]]}
+{"utt": "给我一苹果, 还要三绿苹果", "gold": [["red_apple", 1], ["green_apple", 3]], "source": "rule", "llm_ms": 1488, "llm_agree": true, "llm_items": [["red_apple", 1], ["green_apple", 3]]}
+{"utt": "来两苹果和五绿苹果", "gold": [["red_apple", 2], ["green_apple", 5]], "source": "rule", "llm_ms": 1472, "llm_agree": true, "llm_items": [["red_apple", 2], ["green_apple", 5]]}
+{"utt": "我要两苹果, 再给五绿苹果", "gold": [["red_apple", 2], ["green_apple", 5]], "source": "rule", "llm_ms": 1480, "llm_agree": true, "llm_items": [["red_apple", 2], ["green_apple", 5]]}
+{"utt": "给我两苹果, 还要五绿苹果", "gold": [["red_apple", 2], ["green_apple", 5]], "source": "rule", "llm_ms": 1476, "llm_agree": true, "llm_items": [["red_apple", 2], ["green_apple", 5]]}
+{"utt": "来一苹果和三香蕉", "gold": [["red_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1445, "llm_agree": true, "llm_items": [["red_apple", 1], ["banana", 3]]}
+{"utt": "我要一苹果, 再给三香蕉", "gold": [["red_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1437, "llm_agree": true, "llm_items": [["red_apple", 1], ["banana", 3]]}
+{"utt": "给我一苹果, 还要三香蕉", "gold": [["red_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1429, "llm_agree": true, "llm_items": [["red_apple", 1], ["banana", 3]]}
+{"utt": "来两苹果和五香蕉", "gold": [["red_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1443, "llm_agree": true, "llm_items": [["red_apple", 2], ["banana", 5]]}
+{"utt": "我要两苹果, 再给五香蕉", "gold": [["red_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1416, "llm_agree": true, "llm_items": [["red_apple", 2], ["banana", 5]]}
+{"utt": "给我两苹果, 还要五香蕉", "gold": [["red_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1442, "llm_agree": true, "llm_items": [["red_apple", 2], ["banana", 5]]}
+{"utt": "来一苹果和三梨", "gold": [["red_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1439, "llm_agree": true, "llm_items": [["red_apple", 1], ["pear", 3]]}
+{"utt": "我要一苹果, 再给三梨", "gold": [["red_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1459, "llm_agree": true, "llm_items": [["red_apple", 1], ["pear", 3]]}
+{"utt": "给我一苹果, 还要三梨", "gold": [["red_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1444, "llm_agree": true, "llm_items": [["red_apple", 1], ["pear", 3]]}
+{"utt": "来两苹果和五梨", "gold": [["red_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1435, "llm_agree": true, "llm_items": [["red_apple", 2], ["pear", 5]]}
+{"utt": "我要两苹果, 再给五梨", "gold": [["red_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1440, "llm_agree": true, "llm_items": [["red_apple", 2], ["pear", 5]]}
+{"utt": "给我两苹果, 还要五梨", "gold": [["red_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1440, "llm_agree": true, "llm_items": [["red_apple", 2], ["pear", 5]]}
+{"utt": "来一红苹果和三绿苹果", "gold": [["red_apple", 1], ["green_apple", 3]], "source": "rule", "llm_ms": 1523, "llm_agree": true, "llm_items": [["red_apple", 1], ["green_apple", 3]]}
+{"utt": "我要一红苹果, 再给三绿苹果", "gold": [["red_apple", 1], ["green_apple", 3]], "source": "rule", "llm_ms": 1513, "llm_agree": true, "llm_items": [["red_apple", 1], ["green_apple", 3]]}
+{"utt": "给我一红苹果, 还要三绿苹果", "gold": [["red_apple", 1], ["green_apple", 3]], "source": "rule", "llm_ms": 1525, "llm_agree": true, "llm_items": [["red_apple", 1], ["green_apple", 3]]}
+{"utt": "来两红苹果和五绿苹果", "gold": [["red_apple", 2], ["green_apple", 5]], "source": "rule", "llm_ms": 1531, "llm_agree": true, "llm_items": [["red_apple", 2], ["green_apple", 5]]}
+{"utt": "我要两红苹果, 再给五绿苹果", "gold": [["red_apple", 2], ["green_apple", 5]], "source": "rule", "llm_ms": 1516, "llm_agree": true, "llm_items": [["red_apple", 2], ["green_apple", 5]]}
+{"utt": "给我两红苹果, 还要五绿苹果", "gold": [["red_apple", 2], ["green_apple", 5]], "source": "rule", "llm_ms": 1516, "llm_agree": true, "llm_items": [["red_apple", 2], ["green_apple", 5]]}
+{"utt": "来一红苹果和三香蕉", "gold": [["red_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1475, "llm_agree": true, "llm_items": [["red_apple", 1], ["banana", 3]]}
+{"utt": "我要一红苹果, 再给三香蕉", "gold": [["red_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1476, "llm_agree": true, "llm_items": [["red_apple", 1], ["banana", 3]]}
+{"utt": "给我一红苹果, 还要三香蕉", "gold": [["red_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1467, "llm_agree": true, "llm_items": [["red_apple", 1], ["banana", 3]]}
+{"utt": "来两红苹果和五香蕉", "gold": [["red_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1478, "llm_agree": true, "llm_items": [["red_apple", 2], ["banana", 5]]}
+{"utt": "我要两红苹果, 再给五香蕉", "gold": [["red_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1477, "llm_agree": true, "llm_items": [["red_apple", 2], ["banana", 5]]}
+{"utt": "给我两红苹果, 还要五香蕉", "gold": [["red_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1475, "llm_agree": true, "llm_items": [["red_apple", 2], ["banana", 5]]}
+{"utt": "来一红苹果和三梨", "gold": [["red_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1468, "llm_agree": true, "llm_items": [["red_apple", 1], ["pear", 3]]}
+{"utt": "我要一红苹果, 再给三梨", "gold": [["red_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1487, "llm_agree": true, "llm_items": [["red_apple", 1], ["pear", 3]]}
+{"utt": "给我一红苹果, 还要三梨", "gold": [["red_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1475, "llm_agree": true, "llm_items": [["red_apple", 1], ["pear", 3]]}
+{"utt": "来两红苹果和五梨", "gold": [["red_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1478, "llm_agree": true, "llm_items": [["red_apple", 2], ["pear", 5]]}
+{"utt": "我要两红苹果, 再给五梨", "gold": [["red_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1471, "llm_agree": true, "llm_items": [["red_apple", 2], ["pear", 5]]}
+{"utt": "给我两红苹果, 还要五梨", "gold": [["red_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1481, "llm_agree": true, "llm_items": [["red_apple", 2], ["pear", 5]]}
+{"utt": "来一绿苹果和三香蕉", "gold": [["green_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1484, "llm_agree": true, "llm_items": [["green_apple", 1], ["banana", 3]]}
+{"utt": "我要一绿苹果, 再给三香蕉", "gold": [["green_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1466, "llm_agree": true, "llm_items": [["green_apple", 1], ["banana", 3]]}
+{"utt": "给我一绿苹果, 还要三香蕉", "gold": [["green_apple", 1], ["banana", 3]], "source": "rule", "llm_ms": 1467, "llm_agree": true, "llm_items": [["green_apple", 1], ["banana", 3]]}
+{"utt": "来两绿苹果和五香蕉", "gold": [["green_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1469, "llm_agree": true, "llm_items": [["green_apple", 2], ["banana", 5]]}
+{"utt": "我要两绿苹果, 再给五香蕉", "gold": [["green_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1468, "llm_agree": true, "llm_items": [["green_apple", 2], ["banana", 5]]}
+{"utt": "给我两绿苹果, 还要五香蕉", "gold": [["green_apple", 2], ["banana", 5]], "source": "rule", "llm_ms": 1466, "llm_agree": true, "llm_items": [["green_apple", 2], ["banana", 5]]}
+{"utt": "来一绿苹果和三梨", "gold": [["green_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1468, "llm_agree": true, "llm_items": [["green_apple", 1], ["pear", 3]]}
+{"utt": "我要一绿苹果, 再给三梨", "gold": [["green_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1476, "llm_agree": true, "llm_items": [["green_apple", 1], ["pear", 3]]}
+{"utt": "给我一绿苹果, 还要三梨", "gold": [["green_apple", 1], ["pear", 3]], "source": "rule", "llm_ms": 1466, "llm_agree": true, "llm_items": [["green_apple", 1], ["pear", 3]]}
+{"utt": "来两绿苹果和五梨", "gold": [["green_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1472, "llm_agree": true, "llm_items": [["green_apple", 2], ["pear", 5]]}
+{"utt": "我要两绿苹果, 再给五梨", "gold": [["green_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1498, "llm_agree": true, "llm_items": [["green_apple", 2], ["pear", 5]]}
+{"utt": "给我两绿苹果, 还要五梨", "gold": [["green_apple", 2], ["pear", 5]], "source": "rule", "llm_ms": 1482, "llm_agree": true, "llm_items": [["green_apple", 2], ["pear", 5]]}
+{"utt": "来一香蕉和三梨", "gold": [["banana", 1], ["pear", 3]], "source": "rule", "llm_ms": 1451, "llm_agree": true, "llm_items": [["banana", 1], ["pear", 3]]}
+{"utt": "我要一香蕉, 再给三梨", "gold": [["banana", 1], ["pear", 3]], "source": "rule", "llm_ms": 1443, "llm_agree": true, "llm_items": [["banana", 1], ["pear", 3]]}
+{"utt": "给我一香蕉, 还要三梨", "gold": [["banana", 1], ["pear", 3]], "source": "rule", "llm_ms": 1436, "llm_agree": true, "llm_items": [["banana", 1], ["pear", 3]]}
+{"utt": "来两香蕉和五梨", "gold": [["banana", 2], ["pear", 5]], "source": "rule", "llm_ms": 1450, "llm_agree": true, "llm_items": [["banana", 2], ["pear", 5]]}
+{"utt": "我要两香蕉, 再给五梨", "gold": [["banana", 2], ["pear", 5]], "source": "rule", "llm_ms": 1451, "llm_agree": true, "llm_items": [["banana", 2], ["pear", 5]]}
+{"utt": "给我两香蕉, 还要五梨", "gold": [["banana", 2], ["pear", 5]], "source": "rule", "llm_ms": 1443, "llm_agree": true, "llm_items": [["banana", 2], ["pear", 5]]}
+{"utt": "我要一苹果, 不要红苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1321, "llm_agree": false, "llm_items": null}
+{"utt": "我要一苹果, 不要绿苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1166, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要一苹果, 不要香蕉", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1128, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要一苹果, 不要梨", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 2445, "llm_agree": false, "llm_items": [["red_apple", 1], ["green_apple", 1], ["red_apple", 1], ["banana", 1]]}
+{"utt": "我要一红苹果, 不要苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1152, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要一红苹果, 不要绿苹果", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 1159, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "我要一红苹果, 不要香蕉", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 2099, "llm_agree": false, "llm_items": [["red_apple", 1], ["green_apple", 1], ["red_apple", 1], ["pear", 1]]}
+{"utt": "我要一红苹果, 不要梨", "gold": [["red_apple", 1]], "source": "rule", "llm_ms": 2128, "llm_agree": false, "llm_items": [["red_apple", 1], ["green_apple", 1], ["banana", 1]]}
+{"utt": "我要一绿苹果, 不要苹果", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1167, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "我要一绿苹果, 不要红苹果", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1176, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "我要一绿苹果, 不要香蕉", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1165, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "我要一绿苹果, 不要梨", "gold": [["green_apple", 1]], "source": "rule", "llm_ms": 1163, "llm_agree": true, "llm_items": [["green_apple", 1]]}
+{"utt": "我要一香蕉, 不要苹果", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1123, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "我要一香蕉, 不要红苹果", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1122, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "我要一香蕉, 不要绿苹果", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1312, "llm_agree": false, "llm_items": null}
+{"utt": "我要一香蕉, 不要梨", "gold": [["banana", 1]], "source": "rule", "llm_ms": 1133, "llm_agree": true, "llm_items": [["banana", 1]]}
+{"utt": "我要一梨, 不要苹果", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1124, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "我要一梨, 不要红苹果", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1119, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "我要一梨, 不要绿苹果", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1309, "llm_agree": false, "llm_items": null}
+{"utt": "我要一梨, 不要香蕉", "gold": [["pear", 1]], "source": "rule", "llm_ms": 1136, "llm_agree": true, "llm_items": [["pear", 1]]}
+{"utt": "要十苹果", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1161, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "给我拿十个苹果来", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1161, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "十苹果行不？", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1118, "llm_agree": false, "llm_items": [["red_apple", 1]]}
+{"utt": "能不能送十苹果过来", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1168, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "要十个苹果", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1166, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "给十个苹果", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1154, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "弄十个苹果来", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1158, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "来个十个苹果", "gold": [["red_apple", 10]], "source": "llm_gen", "llm_ms": 1160, "llm_agree": true, "llm_items": [["red_apple", 10]]}
+{"utt": "给我来一个苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1122, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "要一个苹果就行，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1119, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "给个苹果吧，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1123, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "拿个苹果过来，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1125, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "需要一个苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1125, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "送我一个苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1128, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "来个苹果就好。", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1130, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "要一个苹果", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1137, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "来个两个苹果", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1124, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "要两个苹果啊", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1128, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "给两个苹果个", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1133, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "再要两个苹果", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1128, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "两个苹果来一下", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1128, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "需两个苹果个", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1135, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "要两苹果", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1129, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "拿两个苹果过来呗", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1129, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "给我两红苹果", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1169, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "给俺两个红苹果", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1168, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "我要二红苹果", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1166, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "来个两红苹果", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1163, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "要两红苹果啊，", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1174, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "两红苹果给俺送过来，", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1164, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "两红苹果就齐了，", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1165, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "需两个红苹果哈，", "gold": [["red_apple", 2]], "source": "llm_gen", "llm_ms": 1192, "llm_agree": true, "llm_items": [["red_apple", 2]]}
+{"utt": "要五红苹果", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1182, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "给我五个红苹果哈", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1178, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "送五个红苹果过来", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1190, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "来个五红苹果，", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1192, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "发我五个紅苹果行吗，", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1190, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "拿五红苹果过来，", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1174, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "送个五红苹果咋样", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1177, "llm_agree": false, "llm_items": [["red_apple", 1]]}
+{"utt": "要五个红苹果", "gold": [["red_apple", 5]], "source": "llm_gen", "llm_ms": 1167, "llm_agree": true, "llm_items": [["red_apple", 5]]}
+{"utt": "要一个红苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1167, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "拿一红苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1168, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "给俺一个红苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1167, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "发一个红苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1173, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "送一个红苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1149, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "提一个红苹果，", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1179, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "需一个红苹果", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1176, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "要一个红苹果", "gold": [["red_apple", 1]], "source": "llm_gen", "llm_ms": 1190, "llm_agree": true, "llm_items": [["red_apple", 1]]}
+{"utt": "要两个绿苹果", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1180, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "给我两个绿苹果行不", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1157, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "给两个绿苹果, 谢啦", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1151, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "能发两个绿苹果吗", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1178, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "需两个绿苹果", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1165, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "给两绿苹果，", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1166, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "来两绿苹果，", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1189, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "要两个绿苹果，", "gold": [["green_apple", 2]], "source": "llm_gen", "llm_ms": 1192, "llm_agree": true, "llm_items": [["green_apple", 2]]}
+{"utt": "要十个绿苹果", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1225, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "给我送十个绿苹果过来", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1199, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "十个绿苹果，能发下来不", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1241, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "给仓库留十个绿苹果", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1197, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "这十个绿苹果先拿去", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1223, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "来个十个绿苹果", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1217, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "拿十个绿苹果过来", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1220, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "要十个绿苹果行不", "gold": [["green_apple", 10]], "source": "llm_gen", "llm_ms": 1223, "llm_agree": true, "llm_items": [["green_apple", 10]]}
+{"utt": "要五个绿苹果行吗", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1184, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "拿五个绿苹果过来哈", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1179, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "麻烦给我五个绿苹果", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1178, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "我要五个绿苹果啊", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1194, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "帮我把五个绿苹果拿来", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1174, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "送我五个绿苹果呗", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1182, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "需要五个绿苹果个", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1185, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "要五个绿苹果啊", "gold": [["green_apple", 5]], "source": "llm_gen", "llm_ms": 1181, "llm_agree": true, "llm_items": [["green_apple", 5]]}
+{"utt": "要两根香蕉", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1150, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "给两把香蕉", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1142, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "拿两个香蕉", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1132, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "来两根香蕉", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1163, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "要两个香蕉行吗", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1152, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "拿两个香蕉过来吧", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1129, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "整两根香蕉给我", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1139, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "需两根香蕉", "gold": [["banana", 2]], "source": "llm_gen", "llm_ms": 1129, "llm_agree": true, "llm_items": [["banana", 2]]}
+{"utt": "五根香蕉", "gold": [["banana", 5]], "source": "llm_gen", "llm_ms": 1133, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "来五个香蕉行吗", "gold": [["banana", 5]], "source": "llm_gen", "llm_ms": 1131, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "给我来个五个香蕉", "gold": [["banana", 5]], "source": "llm_gen", "llm_ms": 1139, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "五個香蕉给一下", "gold": [["banana", 5]], "source": "llm_gen", "llm_ms": 1155, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "这五根香蕉拿去吧", "gold": [["banana", 5]], "source": "llm_gen", "llm_ms": 1138, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "再送五根香蕉呗", "gold": [["banana", 5]], "source": "llm_gen", "llm_ms": 1133, "llm_agree": true, "llm_items": [["banana", 5]]}
+{"utt": "十根香蕉", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1168, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "拿十個香蕉", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1167, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "要十根香蕉吧", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1171, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "给俺十根香蕉", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1167, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "要十根香蕉", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1144, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "给我来十个香蕉", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1181, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "给十根香蕉", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1177, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "需十香蕉就行", "gold": [["banana", 10]], "source": "llm_gen", "llm_ms": 1209, "llm_agree": true, "llm_items": [["banana", 10]]}
+{"utt": "来十离呗", "gold": [["pear", 10]], "source": "llm_gen", "llm_ms": 2410, "llm_agree": false, "llm_items": [["red_apple", 1], ["green_apple", 1], ["red_apple", 1], ["banana", 1], ["pear", 1]]}
+{"utt": "要十个梨啊", "gold": [["pear", 10]], "source": "llm_gen", "llm_ms": 1185, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "给我拿十個梨", "gold": [["pear", 10]], "source": "llm_gen", "llm_ms": 1183, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "送十颗李过来", "gold": [["pear", 10]], "source": "llm_gen", "llm_ms": 1192, "llm_agree": false, "llm_items": null}
+{"utt": "要十梨子急用", "gold": [["pear", 10]], "source": "llm_gen", "llm_ms": 1173, "llm_agree": true, "llm_items": [["pear", 10]]}
+{"utt": "十离，快点", "gold": [["pear", 10]], "source": "llm_gen", "llm_ms": 818, "llm_agree": false, "llm_items": null}
+{"utt": "给我来三离，要新鲜的", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1144, "llm_agree": false, "llm_items": null}
+{"utt": "三梨，麻烦送一下", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1111, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "需拿三个李去仓库", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1156, "llm_agree": false, "llm_items": null}
+{"utt": "拿三颗梨过来哈", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1130, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "要三离，行吗？", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1176, "llm_agree": false, "llm_items": null}
+{"utt": "给我三個梨哈", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1130, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "需三个梨子", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1153, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "拿三个梨过来呗", "gold": [["pear", 3]], "source": "llm_gen", "llm_ms": 1149, "llm_agree": true, "llm_items": [["pear", 3]]}
+{"utt": "要五個梨", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 1173, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "给仓库送五個李吧", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 1102, "llm_agree": false, "llm_items": null}
+{"utt": "麻烦发五根离", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 1149, "llm_agree": false, "llm_items": null}
+{"utt": "我要五個梨子哈", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 1722, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "搞五個梨过来行不", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 1162, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "那五個梨先拿去吧", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 1207, "llm_agree": true, "llm_items": [["pear", 5]]}
+{"utt": "要五个李，", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 1149, "llm_agree": false, "llm_items": null}
+{"utt": "我要五个离", "gold": [["pear", 5]], "source": "llm_gen", "llm_ms": 2441, "llm_agree": false, "llm_items": null}
+{"utt": "一个红苹果加三个红苹果，", "gold": [["red_apple", 1], ["red_apple", 3]], "source": "llm_gen", "llm_ms": 1542, "llm_agree": false, "llm_items": [["red_apple", 4]]}
+{"utt": "先拿三个红苹果，再给一个红苹果。", "gold": [["red_apple", 1], ["red_apple", 3]], "source": "llm_gen", "llm_ms": 1579, "llm_agree": true, "llm_items": [["red_apple", 3], ["red_apple", 1]]}
+{"utt": "三个红苹果和一个红苹果都给我", "gold": [["red_apple", 1], ["red_apple", 3]], "source": "llm_gen", "llm_ms": 1196, "llm_agree": false, "llm_items": [["red_apple", 4]]}
+{"utt": "要两个梨和五个红苹果！", "gold": [["pear", 2], ["red_apple", 5]], "source": "llm_gen", "llm_ms": 1486, "llm_agree": true, "llm_items": [["pear", 2], ["red_apple", 5]]}
+{"utt": "麻烦发两个梨配五个红苹果过来吧，", "gold": [["pear", 2], ["red_apple", 5]], "source": "llm_gen", "llm_ms": 1491, "llm_agree": true, "llm_items": [["pear", 2], ["red_apple", 5]]}
+{"utt": "来两梨子加五红苹果，", "gold": [["pear", 2], ["red_apple", 5]], "source": "llm_gen", "llm_ms": 1509, "llm_agree": true, "llm_items": [["pear", 2], ["red_apple", 5]]}
+{"utt": "需五个红苹果同两个梨，", "gold": [["pear", 2], ["red_apple", 5]], "source": "llm_gen", "llm_ms": 1510, "llm_agree": true, "llm_items": [["red_apple", 5], ["pear", 2]]}
+{"utt": "请提供两个梨和五个红苹果。", "gold": [["pear", 2], ["red_apple", 5]], "source": "llm_gen", "llm_ms": 1492, "llm_agree": true, "llm_items": [["pear", 2], ["red_apple", 5]]}
+{"utt": "要两个梨，五个红苹果。", "gold": [["pear", 2], ["red_apple", 5]], "source": "llm_gen", "llm_ms": 1489, "llm_agree": true, "llm_items": [["pear", 2], ["red_apple", 5]]}
+{"utt": "要一个梨，要一个绿苹果，要两个香蕉，", "gold": [["banana", 2], ["green_apple", 1], ["pear", 1]], "source": "llm_gen", "llm_ms": 1794, "llm_agree": true, "llm_items": [["pear", 1], ["green_apple", 1], ["banana", 2]]}
+{"utt": "先要一个梨，再要两个香蕉，最后要一个绿苹果，", "gold": [["banana", 2], ["green_apple", 1], ["pear", 1]], "source": "llm_gen", "llm_ms": 1803, "llm_agree": true, "llm_items": [["pear", 1], ["banana", 2], ["green_apple", 1]]}
+{"utt": "我要一个绿苹果，想要两个香蕉，还得一个梨，", "gold": [["banana", 2], ["green_apple", 1], ["pear", 1]], "source": "llm_gen", "llm_ms": 1795, "llm_agree": true, "llm_items": [["green_apple", 1], ["banana", 2], ["pear", 1]]}
+{"utt": "麻烦发一个梨，一个绿苹果，还有两个香蕉过来，", "gold": [["banana", 2], ["green_apple", 1], ["pear", 1]], "source": "llm_gen", "llm_ms": 1810, "llm_agree": true, "llm_items": [["pear", 1], ["green_apple", 1], ["banana", 2]]}
+{"utt": "来一绿苹果，两香蕉，再加一个梨行不？", "gold": [["banana", 2], ["green_apple", 1], ["pear", 1]], "source": "llm_gen", "llm_ms": 3171, "llm_agree": false, "llm_items": null}

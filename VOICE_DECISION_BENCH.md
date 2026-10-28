@@ -30,6 +30,7 @@ LLM 只放离线侧和旁路。详见 §4。
 | `bench_pipeline.py` | LLM 意图整理 → Laya 终审 | `LLM_MODEL=qwen3.5:4b .venv/bin/python bench_pipeline.py 10 3` |
 | `bench_voice.py` | 语音 → ASR → LLM → Laya | `.venv/bin/python bench_voice.py 3` |
 | `bench_industrial.py` | **工业回路** (最终形态) | `.venv/bin/python bench_industrial.py 5 voice\|text` |
+| `teacher_offline.py` | **离线教师**: LLM 造"语音文本→意图"语料 + 交叉标注 → 微调 Laya (设计 ①) | `.venv/bin/python teacher_offline.py all` |
 | `run_all.sh` | 依赖就绪后自动跑 pipeline + voice (带锁) | `LLM_MODEL=qwen3.5:2b ./run_all.sh` |
 
 依赖: `laya` (models/laya 已就位), `qwen3.5:4b`/`qwen3.5:2b` (ollama),
@@ -155,10 +156,59 @@ LLM 只放离线侧和旁路。详见 §4。
 
 | 角色 | 说明 | 状态 |
 |---|---|---|
-| ① 离线 teacher | 造"语音文本→意图"语料微调 Laya (laya-typed-decisions 路线) | 待做 |
+| ① 离线 teacher | 造"语音文本→意图"语料微调 Laya (laya-typed-decisions 路线) | ✅ 已实现 (`teacher_offline.py`, 见下) |
 | ② 动作标签归纳 | 冻结 6~20 个正交动作 | 本测试冻结 4 个 |
 | ③ 在线旁路 | 校验拒绝/超纲时兜底, 同校验器, 默认降级暂停 | ✅ 已实现 |
 | ④ 开放问答/工单 | "3 号口今天卡了几次" 类, 不下发控制 | 未接入 |
+
+### ① 离线教师 (`teacher_offline.py`)
+
+LLM (qwen3.5, Ollama) 只做离线侧, 不进实时路径:
+
+1. **生成**: 规则模板 (5 名称族 × 8 句式 × 5 数量, 含同音字/繁体 ASR 噪声变体) +
+   LLM 生成口语句。规则层做守护: 必须可解析、数量正确、无白名单外词, 不合格丢弃。
+2. **交叉标注**: 每条句子再让 LLM 用要货解析 prompt (在线 BYPASS_PROMPT 的完整白名单版,
+   允许 绿苹果) 独立解析一遍, 白名单校验 + 幻觉防护 (LLM 只能标规则层听到过的词)。
+   与规则 gold 不一致 → 剔出训练集 + 记入 `teacher/qa_report.json`。
+3. **微调**: 导出 `teacher/train.jsonl` / `teacher/eval.jsonl` (state 两种形态:
+   回路原样 `用户要货: 梨 x 3` + 单意图句的语音转写原文, 保留同音字; 标签都是
+   4 动作 choice, 与回路 `laya_decide` 同一个问题), `laya.train.finetune`
+   微调 base `models/laya-multilingual` → `models/laya-fruits-teacher`。
+4. **评测**: 留出集 base vs 微调; `--cases` 复现回路 4 个 CASES 的
+   规则归一化 → Laya 终审 → 校验器, 对比快路径通过率。
+
+```bash
+.venv/bin/python teacher_offline.py generate   # 造语料 + 交叉标注 (约 10 min, 串行调用 Ollama)
+.venv/bin/python teacher_offline.py train      # 微调 (CPU, 约 5 min)
+.venv/bin/python teacher_offline.py eval --cases
+.venv/bin/python teacher_offline.py all        # 一次全跑
+```
+
+实测 (2026-10-27, 本机 CPU, qwen3.5:4b @ Ollama):
+
+- **thinking 不受控 (本机结论)**: qwen3.5:4b/2b 在 iGPU + Ollama 上开 `think=true`
+  后思考段不终止 — 单句 2000 token 预算全部烧在 thinking、content 恒为空;
+  `num_predict=8192` 同样 (thinking 14817 字符后截断, 仍无 JSON); 提示词限制思考长度
+  无效, Ollama 的 `chat_template_kwargs.thinking_budget` 被忽略。标注/生成都是
+  确定性短任务, 不依赖长链推理 → 离线教师**默认 thinking 关** (`--think` 可开,
+  失败批自动降级重试, 供思考能正常终止的后端用); 在线旁路 `bench_industrial`
+  同样 `think=false` (延迟优先)。
+- **全流程实测 (qwen3.5:4b, CPU 训练, 约 1 h 总时长)**:
+  - 生成: 250 规则模板 + LLM 新句 130 (单意图 116/120 + 多意图 14/40 通过规则层验证,
+    30 条不合格丢弃), 交叉标注后再剔 37 (不一致 13 + 无法解析 24)
+  - 交叉标注: 380 句全标, **一致率 90.3%** (agree 343 / mismatch 13 / unparseable 24);
+    unparseable 全是 "离/李→梨" 同音字噪声句 (LLM 不认, 规则 gold 已知 → 剔出训练集,
+    Laya 只学干净句, 同音字由在线规则层负责), mismatch 含 "来10个苹果"→LLM 标 1 等
+  - 微调: 551 行 (496 训 + 55 校准), 4 epoch, 18.7 min, loss 0.024→0.0
+  - 评测 (139 行留出集, 含 ASR 噪声 LLM 新句): **base 89.2% → 微调 100.0%**;
+    弱项正是 base 的裸词漂移 red_apple 35/50 → 50/50, 其余动作两模型全对;
+    在线回路 4 个 CASES: 两模型快路径 4/4、动作/数量全对; 单次 Laya ~115-122 ms
+  - **上线**: `jev_api.py` 新增模型 `fruits-teacher` (别名 `jev-fruits`, 见 §4 ③),
+    serve 路径 A/B: 4 CASES 逐提及 base 8/8 / teacher 8/8 (规范句两模型都对, 教师优势
+    在未见 ASR 噪声句上); 默认 `jev-latest` 不变, 在线回路零改动, 需要时把
+    `bench_industrial.py` 的 model 换成 `jev-fruits` 即可
+  - **在线回路回归** (bench_industrial.py 3 轮, 含 .isdigit() 守护改动): 12/12 快路径,
+    12/12 正确, E2E mean 334 ms / p95 488 ms
 
 ---
 
@@ -166,7 +216,10 @@ LLM 只放离线侧和旁路。详见 §4。
 
 | 现象 | 根因 | 修复 |
 |---|---|---|
+| `import bench_industrial` 崩溃 (`invalid literal for int()`) | 模块顶层 `int(sys.argv[1])` 解析调用方 argv | `REPS` 行加 `.isdigit()` 守护 (同 bench_pipeline), `teacher_offline.py` 才能 import 复用 `normalize/validate/NAME2ACTION` |
 | LLM 请求 10+ 分钟无响应, response 空 | qwen3.5 是思考模型, 200 token 被 thinking 吃光 | 请求体加 `"think": false` |
+| thinking 模式 `num_predict` 2000/8192 都吃光、content 恒空 | iGPU + Ollama 上 qwen3.5 思考**不受控**: 2b/4b 同样, 提示词限长无效, Ollama 不支持 `thinking_budget` | 确定性解析任务 (离线教师标注/在线旁路) 一律 `think=false`; `--think` 仅在思考能正常终止的后端 (CUDA / 支持 thinking_budget) 上开, 失败批自动降级 |
+| `jev_api.py` 加了新模型却 422 `unknown model` | 白名单校验硬编码 `("english","multilingual")`, 新 `MODELS` 键进不了 | 改成 `force not in MODELS` 通用校验 (加模型只动 `MODELS` + `MODEL_ALIASES` 两处) |
 | ollama CPU 0.2%、请求全挂起 | 3 个重复 `run_all.sh` 并发互抢 | pkill + 锁文件 |
 | registry.ollama.ai network unreachable | 海外站点时断时续 | 直接重试 (断点续传 20s 收尾) |
 | HF / hf-mirror 不通 | 网络封锁 | whisper 走 modelscope (`pengzhendong/faster-whisper-small`), TTS 走 edge-tts |
@@ -179,8 +232,8 @@ LLM 只放离线侧和旁路。详见 §4。
 
 ## 6. 建议 (下一步)
 
-1. **离线 teacher 语料**: 用 qwen3.5 批量生成订单句→意图标注, 走 Laya 的
-   微调路线, 治"裸词漂移"的根 (现在靠问法工程绕过)
+1. ~~**离线 teacher 语料**~~ ✅ 已实现 (`teacher_offline.py`, 见 §4 ①): qwen3.5
+   生成 + 交叉标注 → Laya 微调, 治"裸词漂移"的根
 2. **动作集配置化**: `FRUIT_CRIT` / 规则表 / 同音字表抽成 YAML, 扩 6~20 动作时
    只改配置 + 重跑 `bench_industrial.py` 回归
 3. **多意图并行化**: 每提及一次 Laya 请求目前串行 (241ms), 并行可再压 ~一半
