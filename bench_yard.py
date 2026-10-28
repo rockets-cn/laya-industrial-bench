@@ -48,8 +48,8 @@ CN2KEY = {"红": "red", "绿": "green", "黄": "yellow", "蓝": "blue"}
 CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
-# 在纲料场: 1号/2号/3号 + 汉字/幺号 (ASR 变体), 后接 料场/场地/库 可选
-YARD_RE = re.compile(r"(?<!\d)([123一二三幺壹])\s*号(?:\s*(?:料场|场地|库|位置|区))?")
+# 在纲料场: 1号/2号/3号 + 汉字/幺号 (ASR 变体), 后接 料场/场地/仓库/库 可选
+YARD_RE = re.compile(r"(?<!\d)([123一二三幺壹])\s*号(?:\s*(?:仓库|料场|场地|库|位置|区))?")
 
 # 物料词表 (同 bench_industrial / bench_block 的既有模式)
 FRUIT_RE = re.compile(r"(?:红|绿)?苹果|香蕉|梨")
@@ -115,11 +115,11 @@ def _fruit_action(name):
 
 
 def _materials_in(seg):
-    """全文 (否定剥离后): 水果/方块 提及+数量, 按位置排序. 返回 [(pos, mention)]"""
+    """全文 (否定剥离后): 水果/方块 提及+数量, 按位置排序. 返回 [(pos, end, mention)]"""
     found = []
     for m in FRUIT_RE.finditer(seg):
-        found.append((m.start(), {"material": _fruit_action(m.group(0)),
-                                  "qty": _qty_before(seg, m.start())}))
+        found.append((m.start(), m.end(), {"material": _fruit_action(m.group(0)),
+                                           "qty": _qty_before(seg, m.start())}))
     for m in BLOCK_RE.finditer(seg):
         color = _color_of(m.group(1) or m.group(2))
         qty = _qty_before(seg, m.start())
@@ -127,8 +127,9 @@ def _materials_in(seg):
             q2 = _qty_after(seg, m.end())
             if q2:
                 qty = q2
-        found.append((m.start(), {"material": (color + "_block") if color else None,
-                                  "qty": qty}))
+        found.append((m.start(), m.end(),
+                      {"material": (color + "_block") if color else None,
+                       "qty": qty}))
     found.sort(key=lambda x: x[0])
     return found
 
@@ -150,6 +151,39 @@ def _nearest_yard(matches, pos):
     if best is None:
         return 0  # 不可达: 调用方保证至少一个料场标记; 防御性降级 -> 校验器拒
     return YARD_NUM[best[1].group(1)]
+
+
+def _is_reverse_attach(clean, mat_end, marker_start):
+    """物料尾与下一个料场标记之间是否只有 标点/空格 + 短运送动词
+    ('两个苹果放到二号' / '香蕉给1号' 倒序黏附信号). 空间隔/纯标点 = 正序."""
+    gap = clean[mat_end:marker_start]
+    if len(gap) > 4:
+        return False
+    if not re.fullmatch(r"[\s，,。；;！!？?]*(?:送到|送去|送|给|放|进|到|来)?[\s，,。；;！!？?]*",
+                        gap):
+        return False
+    return any(v in gap for v in "送给放进来到")
+
+
+def _yard_at(clean, cms, pos, mat_end):
+    """物料归属: 正序分域为主 — 料场标记拥有 [自身起点, 下一标记起点) 的物料,
+    第一个标记之前的内容归第一个标记. 无标点密集句也成立
+    ('一号仓库一个香蕉两个苹果二号仓库…' 中 '两个苹果' 属一号).
+    倒序黏附覆盖: 物料尾与下一标记间仅隔短运送动词时归该下一标记."""
+    if not cms:
+        return 0
+    cur = cms[0]
+    for m in cms:
+        if m.start() <= pos:
+            cur = m
+        else:
+            break
+    base = cur
+    for m in cms:
+        if m.start() > mat_end and _is_reverse_attach(clean, mat_end, m.start()):
+            base = m
+            break
+    return YARD_NUM[base.group(1)]
 
 
 def normalize(text):
@@ -179,22 +213,13 @@ def normalize(text):
     # 剥离否定后重新扫超纲料场 (混合订单里混进 4号 也要整体暂停)
     if OOB_YARD_RE.search(clean):
         return text, [{"yard": 0, "material": None, "qty": 1}], sorted(negated)
-    # 按子句归属: 物料归本句的料场标记 (正序/倒序句式都成立; 全局最近距离
-    # 会把 "一号料场送1个梨，二号料场送2个香蕉" 的梨误归二号). 无标记的子句
-    # 退回全局最近料场. 标记在 clean 上重查 (剥否定改变了位置).
+    # 归属: 正序分域 + 倒序黏附 (见 _yard_at). 标记在 clean 上重查
+    # (剥否定改变了位置). 子句切分/全局最近距离已弃用: 无标点密集句下
+    # 距离判定会把 '一号…两个苹果二号' 的苹果误归二号.
     cms = list(YARD_RE.finditer(clean))
-    segs = [(m.start(), m.end())
-            for m in re.finditer(r"[^，,。；;！!？?]+", clean)]
     mentions = []
-    for pos, mm in _materials_in(clean):
-        seg = next(((s, e) for s, e in segs if s <= pos < e), None)
-        in_seg = [cm for cm in cms if seg and seg[0] <= cm.start() < seg[1]]
-        if len(in_seg) == 1:
-            mm["yard"] = YARD_NUM[in_seg[0].group(1)]
-        elif len(in_seg) > 1:
-            mm["yard"] = _nearest_yard(in_seg, pos)
-        else:
-            mm["yard"] = _nearest_yard(cms, pos)
+    for pos, mend, mm in _materials_in(clean):
+        mm["yard"] = _yard_at(clean, cms, pos, mend)
         mentions.append(mm)
     return text, mentions, sorted(negated)
 
@@ -328,6 +353,11 @@ CASES = [
      [(2, "red_apple", 2)]),
     ("一号料场送1个梨，二号料场送2个香蕉",
      [(1, "pear", 1), (2, "banana", 2)]),
+    # 无标点密集句 (真实语音): 料场分域, 不能按字符距离归属
+    ("一号仓库一个香蕉两个苹果二号仓库三个苹果四个香蕉三号仓库一个梨一个香蕉",
+     [(1, "banana", 1), (1, "red_apple", 2),
+      (2, "red_apple", 3), (2, "banana", 4),
+      (3, "pear", 1), (3, "banana", 1)]),
     # 超纲: 应走 暂停+人工 (expected=None 表示只检查路径)
     ("给4号料场送两个苹果", None),                     # 料场越纲
     ("给七号料场送苹果", None),                        # 汉字越纲 (曾致 KeyError)
