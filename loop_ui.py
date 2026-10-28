@@ -203,7 +203,7 @@ def presets():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 工业决策回路 v3</title>
+<title>Laya 工业决策回路 v4</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:960px;margin:0 auto;padding:24px 16px 60px}
@@ -229,7 +229,7 @@ PAGE = """<!doctype html>
  .bar i{display:block;height:100%;width:0;background:#4ade80;transition:width .08s}
  .chip{display:inline-block;background:#1e2430;border-radius:6px;padding:2px 8px;font-size:11px;color:#8a91a0;margin-left:6px}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 <span class="muted">v3 · 语音/文本 → ASR(SenseVoice) → 规则归一化 → Laya → 校验器 → (LLM旁路)</span></h1>
+<h1>🏭 Laya 工业决策回路 <span class="muted">v4 · 语音/文本 → ASR(SenseVoice) → 规则归一化 → Laya → 校验器 → (LLM旁路)</span></h1>
 <div class="sub">实时路径不含 LLM；LLM 仅校验拒绝时旁路；任何失败安全降级为 暂停+人工。</div>
 <div class="row">
  <input id="txt" style="flex:1;min-width:260px;background:#171a21;color:#e6e6e6;border:1px solid #262b36;border-radius:8px;padding:10px 12px;font-size:14px">
@@ -507,8 +507,11 @@ function flushWav(chunks, isWake){
  };
  fr.readAsDataURL(new Blob([buf],{type:'audio/wav'}));
 }
-fetch('/presets').then(r=>r.json()).then(ps=>{$('presets').innerHTML=ps.map((p,i)=>
- `<button onclick="setDomain(${JSON.stringify(p.domain)});document.getElementById('txt').value=${JSON.stringify(p.text)};runText()">${p.name}</button>`).join('')});
+let PREDS=[];
+function runPreset(i){const p=PREDS[i]; if(!p)return;
+ setDomain(p.domain); $('txt').value=p.text; runText();}
+fetch('/presets').then(r=>r.json()).then(ps=>{PREDS=ps;$('presets').innerHTML=ps.map((p,i)=>
+ `<button onclick="runPreset(${i})">${p.name}</button>`).join('')});
 fetch('/audio').then(r=>r.json()).then(fs=>{$('wavnames').innerHTML=fs.map(f=>
  `<button style="margin:2px" onclick="runWav('${f}')">🎵 ${f}</button>`).join(' ')});
 $('drop').onclick=()=>$('wavf').click();
