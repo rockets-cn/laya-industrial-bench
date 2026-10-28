@@ -1,0 +1,73 @@
+{"text": "一个红色方块", "kind": "template", "gold": {"red": 1}, "llm": [["red", 1]], "rule": [["red", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "两个红色方块", "kind": "template", "gold": {"red": 2}, "llm": [["red", 2]], "rule": [["red", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "三个红色方块", "kind": "template", "gold": {"red": 3}, "llm": [["red", 3]], "rule": [["red", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "五个红色方块", "kind": "template", "gold": {"red": 5}, "llm": [["red", 5]], "rule": [["red", 5]], "neg": [], "rule_parse_fail": false}
+{"text": "1个红色方块", "kind": "template", "gold": {"red": 1}, "llm": [["red", 1]], "rule": [["red", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "3个红色方块", "kind": "template", "gold": {"red": 3}, "llm": [["red", 3]], "rule": [["red", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "6个红色方块", "kind": "template", "gold": {"red": 6}, "llm": [["red", 6]], "rule": [["red", 6]], "neg": [], "rule_parse_fail": false}
+{"text": "一个绿色方块", "kind": "template", "gold": {"green": 1}, "llm": [["green", 1]], "rule": [["green", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "两个绿色方块", "kind": "template", "gold": {"green": 2}, "llm": [["green", 2]], "rule": [["green", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "三个绿色方块", "kind": "template", "gold": {"green": 3}, "llm": [["green", 3]], "rule": [["green", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "五个绿色方块", "kind": "template", "gold": {"green": 5}, "llm": [["green", 5]], "rule": [["green", 5]], "neg": [], "rule_parse_fail": false}
+{"text": "1个绿色方块", "kind": "template", "gold": {"green": 1}, "llm": [["green", 1]], "rule": [["green", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "3个绿色方块", "kind": "template", "gold": {"green": 3}, "llm": [["green", 3]], "rule": [["green", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "6个绿色方块", "kind": "template", "gold": {"green": 6}, "llm": [["green", 6]], "rule": [["green", 6]], "neg": [], "rule_parse_fail": false}
+{"text": "一个黄色方块", "kind": "template", "gold": {"yellow": 1}, "llm": [["yellow", 1]], "rule": [["yellow", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "两个黄色方块", "kind": "template", "gold": {"yellow": 2}, "llm": [["yellow", 2]], "rule": [["yellow", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "三个黄色方块", "kind": "template", "gold": {"yellow": 3}, "llm": [["yellow", 3]], "rule": [["yellow", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "五个黄色方块", "kind": "template", "gold": {"yellow": 5}, "llm": [["yellow", 5]], "rule": [["yellow", 5]], "neg": [], "rule_parse_fail": false}
+{"text": "1个黄色方块", "kind": "template", "gold": {"yellow": 1}, "llm": [["yellow", 1]], "rule": [["yellow", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "3个黄色方块", "kind": "template", "gold": {"yellow": 3}, "llm": [["yellow", 3]], "rule": [["yellow", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "6个黄色方块", "kind": "template", "gold": {"yellow": 6}, "llm": [["yellow", 6]], "rule": [["yellow", 6]], "neg": [], "rule_parse_fail": false}
+{"text": "一个蓝色方块", "kind": "template", "gold": {"blue": 1}, "llm": [["blue", 1]], "rule": [["blue", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "两个蓝色方块", "kind": "template", "gold": {"blue": 2}, "llm": [["blue", 2]], "rule": [["blue", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "三个蓝色方块", "kind": "template", "gold": {"blue": 3}, "llm": [["blue", 3]], "rule": [["blue", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "五个蓝色方块", "kind": "template", "gold": {"blue": 5}, "llm": [["blue", 5]], "rule": [["blue", 5]], "neg": [], "rule_parse_fail": false}
+{"text": "1个蓝色方块", "kind": "template", "gold": {"blue": 1}, "llm": [["blue", 1]], "rule": [["blue", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "3个蓝色方块", "kind": "template", "gold": {"blue": 3}, "llm": [["blue", 3]], "rule": [["blue", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "6个蓝色方块", "kind": "template", "gold": {"blue": 6}, "llm": [["blue", 6]], "rule": [["blue", 6]], "neg": [], "rule_parse_fail": false}
+{"text": "三黄色方块", "kind": "template", "gold": {"yellow": 3}, "llm": [["yellow", 3]], "rule": [["yellow", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "两个红色的方块", "kind": "template", "gold": {"red": 2}, "llm": [["red", 2]], "rule": [["red", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "十个红色的方块", "kind": "template", "gold": {"red": 10}, "llm": [["red", 10]], "rule": [["red", 10]], "neg": [], "rule_parse_fail": false}
+{"text": "3个红方块", "kind": "template", "gold": {"red": 3}, "llm": [["red", 3]], "rule": [["red", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "两红色方块", "kind": "template", "gold": {"red": 2}, "llm": [["red", 2]], "rule": [["red", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "两个蓝方块", "kind": "template", "gold": {"blue": 2}, "llm": [["blue", 2]], "rule": [["blue", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "3红色方块", "kind": "template", "gold": {"red": 3}, "llm": [["red", 1]], "rule": [["red", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "6个红方块", "kind": "template", "gold": {"red": 6}, "llm": [["red", 6]], "rule": [["red", 6]], "neg": [], "rule_parse_fail": false}
+{"text": "6个红色方块，二十个黄色方块", "kind": "template", "gold": {"red": 6, "yellow": 20}, "llm": [["red", 6], ["yellow", 20]], "rule": [["red", 6], ["yellow", 20]], "neg": [], "rule_parse_fail": false}
+{"text": "三个黄色方块和3个绿方块", "kind": "template", "gold": {"yellow": 3, "green": 3}, "llm": [["green", 3], ["yellow", 3]], "rule": [["green", 3], ["yellow", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "6个红色方块，10个黄方块", "kind": "template", "gold": {"red": 6, "yellow": 10}, "llm": [["red", 6], ["yellow", 10]], "rule": [["red", 6], ["yellow", 10]], "neg": [], "rule_parse_fail": false}
+{"text": "五个红方块，1个黄方块", "kind": "template", "gold": {"red": 5, "yellow": 1}, "llm": [["red", 5], ["yellow", 1]], "rule": [["red", 5], ["yellow", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "20个黄色方块和三个绿色方块和15个红方块", "kind": "template", "gold": {"yellow": 20, "green": 3, "red": 15}, "llm": [["green", 3], ["red", 15], ["yellow", 20]], "rule": [["green", 3], ["red", 15], ["yellow", 20]], "neg": [], "rule_parse_fail": false}
+{"text": "两个蓝色方块和3个绿方块和二十个红色方块", "kind": "template", "gold": {"blue": 2, "green": 3, "red": 20}, "llm": [["blue", 2], ["green", 3], ["red", 20]], "rule": [["blue", 2], ["green", 3], ["red", 20]], "neg": [], "rule_parse_fail": false}
+{"text": "20个红方块和3个黄方块和6个蓝方块", "kind": "template", "gold": {"red": 20, "yellow": 3, "blue": 6}, "llm": [["blue", 6], ["red", 20], ["yellow", 3]], "rule": [["blue", 6], ["red", 20], ["yellow", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "1个红色方块和15个蓝色方块和10个绿方块", "kind": "template", "gold": {"red": 1, "blue": 15, "green": 10}, "llm": [["blue", 15], ["green", 10], ["red", 1]], "rule": [["blue", 15], ["green", 10], ["red", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "10个黄方块和十个蓝方块和一个绿色方块", "kind": "template", "gold": {"yellow": 10, "blue": 10, "green": 1}, "llm": [["blue", 10], ["green", 1], ["yellow", 10]], "rule": [["blue", 10], ["green", 1], ["yellow", 10]], "neg": [], "rule_parse_fail": false}
+{"text": "三个红方块，15个蓝方块，五个绿方块", "kind": "template", "gold": {"red": 3, "blue": 15, "green": 5}, "llm": [["blue", 15], ["green", 5], ["red", 3]], "rule": [["blue", 15], ["green", 5], ["red", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "3个蓝色方块，不要绿色方块", "kind": "template", "gold": {"blue": 3}, "llm": [["blue", 3]], "rule": [["blue", 3]], "neg": ["green"], "rule_parse_fail": false}
+{"text": "二十个黄色方块，不要红色方块", "kind": "template", "gold": {"yellow": 20}, "llm": [["yellow", 20]], "rule": [["yellow", 20]], "neg": ["red"], "rule_parse_fail": false}
+{"text": "二十个黄色方块，不要蓝色方块", "kind": "template", "gold": {"yellow": 20}, "llm": [["yellow", 20]], "rule": [["yellow", 20]], "neg": ["blue"], "rule_parse_fail": false}
+{"text": "二十个黄色方块，不要蓝色方块", "kind": "template", "gold": {"yellow": 20}, "llm": [["yellow", 20]], "rule": [["yellow", 20]], "neg": ["blue"], "rule_parse_fail": false}
+{"text": "两个绿色方块，不要红色方块", "kind": "template", "gold": {"green": 2}, "llm": [["green", 2]], "rule": [["green", 2]], "neg": ["red"], "rule_parse_fail": false}
+{"text": "五个绿色方块，不要红色方块", "kind": "template", "gold": {"green": 5}, "llm": [["green", 5]], "rule": [["green", 5]], "neg": ["red"], "rule_parse_fail": false}
+{"text": "一个苹果和一个绿色方块", "kind": "template", "gold": {"green": 1}, "llm": [["green", 1]], "rule": [["green", 1]], "neg": [], "rule_parse_fail": false}
+{"text": "八个绿色方块，三个梨", "kind": "template", "gold": {"green": 8}, "llm": [["green", 8]], "rule": [["green", 8]], "neg": [], "rule_parse_fail": false}
+{"text": "三个梨和3个蓝色方块", "kind": "template", "gold": {"blue": 3}, "llm": [["blue", 3]], "rule": [["blue", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "三个黄色方块，两个红苹果", "kind": "template", "gold": {"yellow": 3}, "llm": [["yellow", 3]], "rule": [["yellow", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "二十个蓝色方块，一个苹果", "kind": "template", "gold": {"blue": 20}, "llm": [["blue", 20]], "rule": [["blue", 20]], "neg": [], "rule_parse_fail": false}
+{"text": "10个蓝色方块，一个苹果", "kind": "template", "gold": {"blue": 10}, "llm": [["blue", 1]], "rule": [["blue", 10]], "neg": [], "rule_parse_fail": false}
+{"text": "五个红色方块，一个苹果", "kind": "template", "gold": {"red": 5}, "llm": [["red", 5]], "rule": [["red", 5]], "neg": [], "rule_parse_fail": false}
+{"text": "6个黄色方块，两个红苹果", "kind": "template", "gold": {"yellow": 6}, "llm": [["yellow", 6]], "rule": [["yellow", 6]], "neg": [], "rule_parse_fail": false}
+{"text": "方塊要紅色方塊三個", "kind": "template", "gold": {"red": 3}, "llm": [["red", 3]], "rule": [["red", 3]], "neg": [], "rule_parse_fail": false}
+{"text": "5 個 黄色 方块", "kind": "template", "gold": {"yellow": 5}, "llm": [["yellow", 5]], "rule": [["yellow", 5]], "neg": [], "rule_parse_fail": false}
+{"text": "来方快两个 蓝色的", "kind": "template", "gold": {"blue": 2}, "llm": [["blue", 2]], "rule": [["blue", 2]], "neg": [], "rule_parse_fail": false}
+{"text": "给我来十个红色的方块", "kind": "llm", "gold": null, "llm": [["red", 10]], "rule": [["red", 10]], "neg": [], "rule_parse_fail": false}
+{"text": "要二十个绿色的，还有五个黄色的", "kind": "llm", "gold": null, "llm": [["green", 20], ["yellow", 5]], "rule": [["green", 20], ["yellow", 5]], "neg": [], "rule_parse_fail": false}
+{"text": "拿三十个蓝色的过来", "kind": "llm", "gold": null, "llm": [["blue", 30]], "rule": [["blue", 30]], "neg": [], "rule_parse_fail": false}
+{"text": "别给我要苹果了，只要五个红苹果", "kind": "llm", "gold": null, "llm": [], "rule": [], "neg": [], "rule_parse_fail": false}
+{"text": "十三个黄方块和八个绿方块", "kind": "llm", "gold": null, "llm": [["green", 8], ["yellow", 13]], "rule": [["green", 8], ["yellow", 13]], "neg": [], "rule_parse_fail": false}
+{"text": "把香蕉换成蓝条，要十五个", "kind": "llm", "gold": null, "llm": [["blue", 15]], "rule": [], "neg": [], "rule_parse_fail": false}
+{"text": "不要梨子，给我二十个红的", "kind": "llm", "gold": null, "llm": [["red", 20]], "rule": [["red", 20]], "neg": [], "rule_parse_fail": false}
+{"text": "七个绿的、九个黄的凑齐就行", "kind": "llm", "gold": null, "llm": [["green", 7], ["yellow", 9]], "rule": [["green", 7], ["yellow", 9]], "neg": [], "rule_parse_fail": false}
+{"text": "二十个蓝色方块，顺便带两个青苹果", "kind": "llm", "gold": null, "llm": [["blue", 20]], "rule": [["blue", 20]], "neg": [], "rule_parse_fail": false}
+{"text": "三十个红块，别搞错颜色", "kind": "llm", "gold": null, "llm": [["red", 30]], "rule": [["red", 30]], "neg": [], "rule_parse_fail": false}
