@@ -203,7 +203,7 @@ def presets():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 工业决策回路 v5</title>
+<title>Laya 工业决策回路 v6</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -251,7 +251,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路<span class="ver">v5 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路<span class="ver">v6 · 实时路径不含 LLM · LLM 仅旁路 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -447,15 +447,18 @@ function pttUp(){ // 松开 -> 识别
 document.addEventListener('keydown',e=>{
  if(e.code!=='Space'||e.repeat)return;
  const a=document.activeElement;
- if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.tagName==='SELECT'||a.tagName==='BUTTON'||a.isContentEditable))return;
+ if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable))return; // 打字中不拦截
+ if(a&&a.tagName==='SELECT')return; // 下拉框空格展开, 保持默认
+ if(a&&a.tagName==='BUTTON')e.preventDefault(); // 焦点在按钮上时, 空格不得激活按钮
  if(!armed||flushing||recActive)return;
  e.preventDefault();
  pttDown();
 });
 document.addEventListener('keyup',e=>{
- if(e.code!=='Space'||!pttHeld)return;
- e.preventDefault();
- pttUp();
+ if(e.code!=='Space')return;
+ const a=document.activeElement;
+ if(a&&a.tagName==='BUTTON')e.preventDefault(); // 取消按下 keydown 残留的按钮激活
+ if(pttHeld){e.preventDefault();pttUp();}
 });
 function recToggle(){ // 录音识别: 点一下开始, 再点停止并识别
  if(!armed||flushing)return;
