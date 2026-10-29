@@ -8,11 +8,12 @@
   原句继续走分拣路径 (空订单 -> PAUSE+HUMAN), 绝不编造.
 
 类别:
-1. 时间/日期   "现在几点了" / "今天星期几"
+1. 时间/日期   "现在几点了" / "今天星期几" / "明天是星期几" (相对日期的星期)
 2. 料场状态   "1号料场有多少件" (最近一次分拣指令的库存, 由 loop_ui 注入)
 3. 服务状态   "8002还在跑吗" / "网关正常吗" (本机 TCP 端口探测)
 4. 资源占用   "CPU占用多少" / "内存和磁盘" (/proc/loadavg, /proc/meminfo, disk_usage)
 """
+import datetime
 import re
 import shutil
 import socket
@@ -27,7 +28,7 @@ _MATER_RE = re.compile(r"香蕉|苹果|梨|方块")
 # 料场号
 _YARD_Q_RE = re.compile(r"([123一二两])\s*号\s*(?:料场|仓库|场地|库|位置|区)?")
 _YARD_NUM = {"1": 1, "2": 2, "3": 3, "一": 1, "二": 2, "两": 2, "俩": 2, "三": 3}
-_CN = "零一二三四五六七八九"
+_DAY_CN = "一二三四五六日"   # 星期映射: 下标 0=周一 ... 6=周日 (对齐 tm_wday/weekday())
 
 # 关键词 -> 端口 (服务状态问句)
 _PORT_KW = [
@@ -39,7 +40,7 @@ _PORT_KW = [
 _TIME_KW = re.compile(r"几点|时间|星期|日期|几月|今天|现在.*点")
 _RES_KW = re.compile(r"CPU|cpu|占用|内存|磁盘|硬盘|空间|负载|用了多少")
 _QA_KW = re.compile(
-    r"几点|时间|星期|日期|还在|是否|正常吗|正常嘛|占用|多少|多长|几件|加载|"
+    r"几点|时间|星期|周几|礼拜几|日期|还在|是否|正常吗|正常嘛|占用|多少|多长|几件|加载|"
     r"内存|硬盘|磁盘|网络|CPU|cpu|服务|进程|端口|回答|是什么|状态|还有|跑吗|在吗")
 
 # 最近一次分拣指令 (由 loop_ui 在每次 /run 后注入)
@@ -92,7 +93,21 @@ def _disk_pct():
 
 def _ans_time():
     now = time.localtime()
-    return f"现在{time.strftime('%H:%M', now)} 星期{_CN[now.tm_wday]}"
+    return f"现在{time.strftime('%H:%M', now)} 星期{_DAY_CN[now.tm_wday]}"
+
+
+# 相对日期 -> 天数偏移 (今天/明天/后天; 大后天须先于 后天 匹配)
+_DAY_OFFSET = {"今天": 0, "今日": 0, "明天": 1, "明日": 1, "后天": 2, "大后天": 3}
+
+
+def _ans_weekday(text):
+    """相对日期的星期: "明天是星期几" -> "明天是星期四". 无法确定的 (下周/上周/这周) 不答."""
+    if re.search(r"下周|上周|这周|本周末|周初|月底|月初", text):
+        return None
+    m = re.search(r"大后天|明天|明日|后天|今天|今日", text)
+    label, off = (m.group(0), _DAY_OFFSET[m.group(0)]) if m else ("今天", 0)
+    d = datetime.date.today() + datetime.timedelta(days=off)
+    return f"{label}是星期{_DAY_CN[d.weekday()]}"
 
 
 def _ans_yard(text):
@@ -154,7 +169,12 @@ def answer(text):
         return False, "", 0.0
 
     try:
-        if _TIME_KW.search(t):
+        wd = re.search(r"(?:星期|周|礼拜)几", t)
+        if wd:
+            ans = _ans_weekday(t)
+            if ans is None:
+                return False, "", 0.0
+        elif _TIME_KW.search(t):
             ans = _ans_time()
         elif _YARD_Q_RE.search(t) and re.search(r"多少|几件|还有|状态|空吗", t):
             ans = _ans_yard(t)
