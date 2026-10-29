@@ -267,9 +267,14 @@ void setup() {
     Serial.printf("[hl2] UART2 @%lu rx=GPIO%d tx=GPIO%d\n",
                   (unsigned long)HL2_BAUD, HL2_RX_PIN, HL2_TX_PIN);
 
+#ifdef CONFIG_IDF_TARGET_ESP32
+    // 板载 RJ45 (EDGE 101): 先起 PHY + DHCP, 再停 DHCP 设静态 IP
     ETH.begin(ETH_PHY_TLK110, 1, 4, 13, 2, ETH_CLOCK_GPIO0_IN);
     WiFi.onEvent(ethEvent);   // ETH 事件经 Network 事件循环分发 (3.x 无 ETH.onEvent)
     applyStaticIp();
+#else
+    Serial.println("[eth] 非 ESP32 原版目标 (如 S3 仿真): 无板载以太网, MQTT 不可用");
+#endif
 
     mqtt.setServer(BROKER_IP, BROKER_PORT);
     mqtt.setCallback(onMqttMessage);

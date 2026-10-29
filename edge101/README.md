@@ -55,6 +55,32 @@ Flash 668KB/1.25MB (51%), RAM 34KB/320KB (10.4%), 无告警。
 > `pio` 不在 PATH 时: 项目 venv 里已装 PlatformIO 6.2.0,
 > 用 `<repo>/.venv/bin/pio` 代替。
 
+## 浏览器仿真 (ESP-EMU)
+
+[ESP-EMU](https://espressif.github.io/esp-emulator/) (v0.51) 只仿真
+C3/C5/C6/H2 (RV32)、P4、S3 — **不支持原版 ESP32 (LX6)**, 所以 `edge101`
+环境的 `firmware.bin` 装不进去。本工程另备 `s3emu` 环境 (ESP32-S3 目标,
+以太网段 `#ifdef CONFIG_IDF_TARGET_ESP32` 跳过), 用于无硬件时验证
+启动流程 / 串口控制台 / 状态机 / 步进脉冲:
+
+```bash
+pio run -e s3emu        # 产物 .pio/build/s3emu/firmware.bin
+```
+
+步骤:
+1. 新标签页打开 https://espressif.github.io/esp-emulator/
+2. 顶部 **Firmware** 载入 `edge101/.pio/build/s3emu/firmware.bin`
+3. 右侧 **Speed** 调到 50~100 MIPS (或 live)
+4. **UART0 console** 输入 (每行回车), 预期:
+   - boot 日志: `[edge101] boot` … `[servo]` … `[mcp] MCP23017 未检测到…`
+     `[hl2] UART2 @38400` … `[eth] 非 ESP32 原版目标…` `[edge101] ready`
+   - `help` → 5 命令列表
+   - `state` → `conveyor=stopped s1=ready s2=ready s3=ready diverted=0/0/0 steps=0`
+   - `stepper 100` → `stepper 100 done` (GPIO 面板可见 STEP=GPIO14 翻转)
+   - `sweep 1` → `sweep 1 done` (PCA9685 未接, I2C 写 NAK 不崩)
+   - `vision 红色` → `vision 红色 published` (无 broker, publish 静默)
+5. MQTT/以太网不参与仿真 (无网络硬件); 网关侧 E2E 与真机验证已覆盖该部分。
+
 ## 引脚分配 (板子只有 6 路可用输出)
 
 | 信号 | 引脚 | 备注 |
@@ -62,7 +88,7 @@ Flash 668KB/1.25MB (51%), RAM 34KB/320KB (10.4%), 无告警。
 | HL2 TX/RX | GPIO5 / GPIO12 | Serial2 重映射, 38400 |
 | 步进 STEP/DIR | GPIO14 / GPIO15 | DIR 复用板载 LED (DIR=LOW→亮) |
 | I2C SDA/SCL | GPIO18 / GPIO23 | PCA9685 @0x40, 通道 0/1/2 = 1/2/3 号舵机 |
-| 步进 EN | — | 驱动器端接 5V 常使能 (无空闲 GPIO) |
+| 步进 EN | MCP23017 PA0 | I2C @0x27 自动检测; 未接时回退驱动器端跳 5V 常使能 |
 | 以太网 | 板载 RJ45 | MDIO PHY 自动识别, 静态 IP |
 
 P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
