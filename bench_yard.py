@@ -278,8 +278,9 @@ def laya_decide(mentions, norm_text=""):
 
 def validate(mentions, answers):
     """确定性白名单 + 交叉检查 + 数量范围; 同料场同物料合并 (PLC 每组一条指令).
-    超纲料场 (yard 不在 1/2/3) 不进 reasons, 路由到 oob 挂起列表 (部分下发):
-    返回的 reasons 末尾附带 oob 说明 — 调用方以 ok=True + reasons 非空 识别 PARTIAL.
+    超纲料场 (yard 不在 1/2/3) 与 物料未定项 (如方块未说颜色) 不进 reasons,
+    路由到 oob 挂起列表 (部分下发): 返回的 reasons 末尾附带 oob 说明 —
+    调用方以 ok=True + reasons 非空 识别 PARTIAL.
     answers=None (LLM 旁路路径): 白名单 + 范围检查."""
     actions, reasons, oob = [], [], []
     for i, m in enumerate(mentions):
@@ -294,7 +295,10 @@ def validate(mentions, answers):
                 oob.append(f"料场未指定, 不下发 ({MAT_CN.get(material, material) if material else '?'} x{m.get('qty', 1)}, 需人工确认)")
             continue
         if material is None:
-            reasons.append(f"m{i}: 物料不明确")
+            # 物料未定 (典型: 方块未说颜色 — 白名单 4 色无法定夺): 该项挂起报人工,
+            # 不阻塞其他在纲项 (与 超纲料场 同走 PARTIAL 挂起通道; 纯未定单仍因
+            # "空订单" ok=False => 暂停, 行为不变)
+            oob.append(f"{yard}号 物料未定, 不下发 (x{m.get('qty', 1)}, 需人工确认颜色/种类)")
             continue
         if answers is not None:
             a_m = answers.get("m" + str(i))
@@ -564,6 +568,9 @@ CASES = [
     # 超纲混入有效指令: 部分下发 — 在纲项照发, 超纲项挂起报人工 (PARTIAL)
     ("一号料场放三个苹果，2号料场放4个苹果，5号料场放6个苹果",
      [(1, "red_apple", 3), (2, "red_apple", 4)], "partial"),
+    # 方块未说颜色: 物料未定项挂起报人工, 其余在纲项照发 (PARTIAL)
+    ("一号库径三个方块，2号库径4个苹果，3号库径5个香蕉",
+     [(2, "red_apple", 4), (3, "banana", 5)], "partial"),
     # 本机运行状态问答 (纯规则层, 答案<=30字): expected = 答案必含子串
     ("现在几点了", "现在", "qa"),
     ("明天是星期几", "明天是星期", "qa"),
