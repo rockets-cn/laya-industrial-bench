@@ -204,6 +204,10 @@ journalctl --user -u laya-loop-ui -f
 - 台账是统计旁路：记账失败只打日志，绝不影响分拣下发主路径。
 - **问答联动**：「现在各个仓库分别有多少内容」等累计库存问句由规则层（`local_qa`）
   读本台账毫秒级直答（QA 路径）；LLM 兜底开启时，当前库存也作为注入事实的一部分。
+- **清空**：页面面板内「🗑 清空台账」按钮（二次确认, `POST /ledger/reset`）,
+  或命令行（服务运行中均可, 无需停止）:
+  `python3 -c "import sqlite3; c=sqlite3.connect('data/yard_ledger.db'); c.execute('DELETE FROM moves'); c.commit(); c.execute('VACUUM')"`
+  两者都等价于重建空库；删文件方式（`rm data/yard_ledger.db`）必须先停服务再重启, 不推荐。
 
 ## 新增一个领域（LLM 离线贡献流程）
 

@@ -279,6 +279,13 @@ async def ledger_out(request: Request):
     return {"ok": True}
 
 
+@app.post("/ledger/reset")
+def ledger_reset():
+    """清空整个台账 (页面「🗑 清空台账」按钮 / 命令行). 服务无需停止."""
+    yard_ledger.reset()
+    return {"ok": True}
+
+
 # MQTT 分拣网关 (sort_mqtt.py, 默认 :8123): 把 Laya 分类结果下发到分拣线
 GATEWAY_URL = os.environ.get("SORT_GATEWAY_URL", "http://127.0.0.1:8123")
 
@@ -432,7 +439,8 @@ async function refreshLedger(){
    +'<select id="loyard">'+[1,2,3].map(y=>`<option value="${y}">${y}号</option>`).join('')+'</select>'
    +'<select id="lomat">'+Object.entries(LEDGER_MAT).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')+'</select>'
    +'<input id="loqty" type="number" min="1" max="999" value="1" style="width:72px">'
-   +'<button onclick="ledgerOut()">出库</button></div>';
+   +'<button onclick="ledgerOut()">出库</button>'
+   +'<button onclick="ledgerReset()" style="margin-left:auto;color:#f87171" title="DELETE 全部流水, 库存归零 (服务无需停止)">🗑 清空台账</button></div>';
   $('ledger').innerHTML=h;
  }catch(e){$('ledger').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
 }
@@ -442,6 +450,11 @@ async function ledgerOut(){
  try{await jpost('/ledger/out',{yard:+$('loyard').value,material:$('lomat').value,qty:q});
   $('loqty').value=1;refreshLedger();
  }catch(e){alert('出库失败: '+e.message)}
+}
+async function ledgerReset(){
+ if(!confirm('确定清空整个台账？所有流水与库存将归零, 不可恢复。'))return;
+ try{await jpost('/ledger/reset',{});refreshLedger();}
+ catch(e){alert('清空失败: '+e.message)}
 }
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};

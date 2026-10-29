@@ -121,4 +121,18 @@ def recent(n=15):
     return [dict(r) for r in rows]
 
 
+def reset():
+    """清空整个台账 (DELETE + VACUUM 缩回小文件). 服务运行中也可安全调用
+    (SQLite 自动 5s 锁等待). 等价于删除 data/yard_ledger.db 再重启.
+    注意: VACUUM 不能在事务内执行, 故 DELETE 先单独 commit."""
+    c = _conn()
+    try:
+        c.execute("DELETE FROM moves")
+        c.commit()
+        c.execute("VACUUM")
+    finally:
+        c.close()
+    return True
+
+
 init()
