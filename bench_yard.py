@@ -28,6 +28,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bench_pipeline import LAYA, llm_json  # noqa: E402
+import local_qa  # noqa: E402  (本机问答兜底, 纯规则层)
 
 REPS = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 5
 MODE = sys.argv[2] if len(sys.argv) > 2 else "text"
@@ -528,7 +529,21 @@ CASES = [
     ("给七号料场送苹果", None),                        # 汉字越纲 (曾致 KeyError)
     ("送两个红苹果", None),                            # 未指定料场
     ("1号料场送3个方块", None),                       # 物料颜色未指定
+    # 本机运行状态问答 (纯规则层, 答案<=30字): expected = 答案必含子串
+    ("现在几点了", "现在", "qa"),
+    ("CPU占用多少", "%", "qa"),
+    ("8002还在跑吗", "8002", "qa"),
+    ("1号料场有多少件", "1号料场", "qa"),
 ]
+
+
+def _cases_from():
+    """CASES -> (text, expected, kind). kind: scored|oob|qa (三元素组显式标注)."""
+    out = []
+    for c in CASES:
+        kind = c[2] if len(c) > 2 else ("oob" if c[1] is None else "scored")
+        out.append((c[0], c[1], kind))
+    return out
 
 
 def main():
@@ -542,15 +557,30 @@ def main():
             cases = [(text, None, "report")]
         except Exception as e:
             print(f"ASR 不可用 ({e}), 回退文本模式")
-            cases = [(t, e2, "oob" if e2 is None else "scored") for t, e2 in CASES]
+            cases = _cases_from()
     else:
-        cases = [(t, e, "oob" if e is None else "scored") for t, e in CASES]
+        cases = _cases_from()
 
     t_laya, t_bypass, t_e2e = [], [], []
-    n_fast = n_expand = n_bypass = n_pause = n_correct = n_total = 0
+    n_fast = n_expand = n_bypass = n_pause = n_qa = n_correct = n_total = 0
+    local_qa.set_last_order([{"yard": 1, "material": "banana", "qty": 2},
+                              {"yard": 2, "material": "red_apple", "qty": 5}])  # 问答用例基准库存
     for rep in range(REPS):
         for ci, (state_text, expected, kind) in enumerate(cases):
             t0 = time.perf_counter()
+            if kind == "qa":
+                qhit, qans, _qdt = local_qa.answer(state_text)
+                correct = qhit and isinstance(expected, str) and expected in qans
+                path = "QA" if qhit else "PAUSE+HUMAN"
+                t_e2e.append(time.perf_counter() - t0)
+                n_total += 1
+                n_correct += correct
+                if path == "QA":
+                    n_qa += 1
+                note = "" if qhit else "  [未识别为问句]"
+                print(f"rep{rep} c{ci} [{path:12s}] {'OK ' if correct else 'WRONG'} (问答)"
+                      f"{note} answer='{qans}'  期望含'{expected}'")
+                continue
             norm, mentions, neg = normalize(state_text)
             dist_ms = 0.0
             if not mentions and not neg:
@@ -600,7 +630,7 @@ def main():
 
     n = len(t_e2e)
     print(f"\n===== 料场分拣回路汇总 ({MODE}, {REPS} 轮 x {len(cases)} 句) =====")
-    print(f"路径: 快路径 {n_fast}   LLM分配 {n_expand}   LLM旁路 {n_bypass}   暂停+人工 {n_pause}   (超纲句计入暂停)")
+    print(f"路径: 快路径 {n_fast}   LLM分配 {n_expand}   LLM旁路 {n_bypass}   问答 {n_qa}   暂停+人工 {n_pause}   (超纲句计入暂停)")
     print(f"正确: {n_correct}/{n_total}")
     if t_laya:
         print(f"Laya:   mean {statistics.mean(t_laya)*1000:.0f} ms  max {max(t_laya)*1000:.0f} ms  (每提及 1 次请求: 物料终审)")

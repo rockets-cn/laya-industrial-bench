@@ -32,6 +32,11 @@ spec_by = importlib.util.spec_from_file_location("by", os.path.join(HERE, "bench
 by = importlib.util.module_from_spec(spec_by)
 spec_by.loader.exec_module(by)
 
+# 本机问答兜底 (local_qa.py): 时间/服务端口/资源/料场库存, 纯规则层零 LLM, 答案<=30字
+spec_lq = importlib.util.spec_from_file_location("local_qa", os.path.join(HERE, "local_qa.py"))
+local_qa = importlib.util.module_from_spec(spec_lq)
+spec_lq.loader.exec_module(local_qa)
+
 import bench_pipeline  # noqa: E402  (already imported by bench_industrial)
 bench_pipeline.MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
@@ -98,9 +103,20 @@ def run_side(side, text):
 
 
 def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit"):
-    """Text/normalized -> (规则层 -> Laya -> 校验器 -> LLM旁路). Returns full trace dict.
+    """Text/normalized -> 问答兜底 -> (规则层 -> Laya -> 校验器 -> LLM旁路). Returns full trace dict.
     domain: fruit | block | mixed (两个规则层并行, 各抽各的, 动作合并)."""
     t0 = time.perf_counter()
+    if domain == "yard":
+        qhit, qans, _qdt = local_qa.answer(text)
+        if qhit:
+            return {"domain": domain, "asr_text": asr_text if asr_text is not None else text,
+                    "asr_model": getattr(bi, "LAST_ASR_MODEL", "?"), "last_wav": last_wav,
+                    "asr_ms": round(asr_dt * 1000), "normalized": text, "negated": [],
+                    "mentions": [], "laya_ms": 0, "laya_answers": {},
+                    "validator_ok": True, "actions": [], "reject_reasons": [],
+                    "bypass_ms": 0, "bypass": None, "path": "QA", "answer": qans,
+                    "dist_total": None, "dist_ms": 0,
+                    "e2e_ms": round((time.perf_counter() - t0) * 1000)}
     sides = ["fruit", "block"] if domain == "mixed" else [domain]
     results = [run_side(s, text) for s in sides]
     active = [r for r in results if not r["empty"]]
@@ -110,7 +126,7 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
                     "actions": [], "reasons": ["空订单"], "path": "PAUSE+HUMAN",
                     "bypass_ms": 0.0, "bypass": None}]
         active = results
-    order = {"FAST": 0, "EXPAND": 1, "BYPASS": 1, "PAUSE+HUMAN": 2}
+    order = {"QA": 0, "FAST": 0, "EXPAND": 1, "BYPASS": 1, "PAUSE+HUMAN": 2}
     path = max((r["path"] for r in active), key=lambda p: order[p])
     merged_answers = {}
     pfx = {"fruit": "f_", "block": "b_", "yard": "y_"}
@@ -119,7 +135,7 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
             merged_answers[pfx[r["side"]] + k] = v
     merged_bypass = {k: v for r in results for k, v in
                      (r["bypass"].items() if r["bypass"] else [])} or None
-    return {
+    _res = {
         "domain": domain,
         "asr_text": asr_text if asr_text is not None else text,
         "asr_model": getattr(bi, "LAST_ASR_MODEL", "?"),
@@ -145,6 +161,8 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
         "dist_ms": round(max((r.get("dist_ms", 0.0) for r in results), default=0.0) * 1000),
         "e2e_ms": round((time.perf_counter() - t0) * 1000),
     }
+    local_qa.set_last_order(_res["actions"])  # 问答兜底用: 最近一次分拣库存
+    return _res
 
 
 @app.post("/run")
@@ -247,7 +265,7 @@ async def dispatch(request: Request):
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 料场分拣回路 v10</title>
+<title>Laya 料场分拣回路 v11</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -256,7 +274,7 @@ PAGE = """<!doctype html>
  .cards{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
  .card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:10px 14px;flex:1;min-width:110px}
  .card .k{font-size:11px;color:#8a91a0} .card .v{font-size:19px;font-weight:700;margin-top:3px}
- .path-FAST{color:#4ade80}.path-BYPASS{color:#facc15}.path-EXPAND{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
+ .path-FAST{color:#4ade80}.path-QA{color:#4ade80}.path-BYPASS{color:#facc15}.path-EXPAND{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
  .row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center}
  button{background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:8px;padding:8px 12px;
   cursor:pointer;font-size:13px} button:hover{background:#262d3d}
@@ -296,7 +314,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v10 · 分配指令: 规则层均分 / LLM 展开+对账 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v11 · 分拣+简单问答(≤30字) · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -343,7 +361,8 @@ function sec(t){return `<div class="sec">${t}</div>`}
 const domain='yard'; // 页面专属料场分拣 (后端 API 仍支持 fruit/block/mixed 基准域)
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
- if(d.path==='FAST'){['fn1','fn2','fn3','fn4','fn5','fn7'].forEach(i=>set(i,'on'));set('fn6','off')}
+ if(d.path==='QA'){['fn1','fn2','fn3','fn7'].forEach(i=>set(i,'on'));['fn4','fn5','fn6'].forEach(i=>set(i,'off'))}
+ else if(d.path==='FAST'){['fn1','fn2','fn3','fn4','fn5','fn7'].forEach(i=>set(i,'on'));set('fn6','off')}
  else if(d.path==='BYPASS'||d.path==='EXPAND'){['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6','warn');set('fn7',d.path==='EXPAND'?'on':'warn')}
  else{['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6',d.bypass_ms?'warn':'off');set('fn7','stop')}
  $('fn-asr').textContent=d.asr_ms!=null?d.asr_ms+' ms':'—';
@@ -392,11 +411,12 @@ function render(d){
    +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
  } else $('yardcards').innerHTML='';
- const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'));
- out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${JSON.stringify(d.actions)}</pre>`;
+ const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?'💬 简单回答':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认')));
+ out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+' (≤30字 · 规则层直答, 未下发 PLC)':JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;
  let h='';
  h+=sec('ASR / 输入 <span class="chip">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a style="color:#60a5fa;font-size:12px" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
+ if(d.answer!=null)h+=sec('问答 (规则层直答)')+`<pre>${d.answer}</pre>`;
  h+=sec('规则层')+`<pre>归一化: ${d.normalized}${String.fromCharCode(10)}否定项: ${d.negated.join(', ')||'无'}${String.fromCharCode(10)}提及: ${JSON.stringify(d.mentions)}</pre>`;
  if(Object.keys(d.laya_answers).length){
   h+=sec('Laya 决策 (每提及单独请求)')+'<pre>'+Object.entries(d.laya_answers).map(([k,v])=>
