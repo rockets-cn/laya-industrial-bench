@@ -10,6 +10,13 @@
           -> 确定性校验器 -> (LLM 旁路: 仅校验拒绝时) -> PLC 下发
 ```
 
+物理执行侧 (分拣线): 语音/文本回路的 yard 域 actions → `sort_mqtt.py` MQTT 网关
+(白名单校验 + 顺序执行 + 统计分发) → **3 分拣器 + 1 传送带** (MQTT,
+协议契约 [`docs/sort-mqtt.md`](docs/sort-mqtt.md)); 视觉传感器
+(`vision_input.py`, HSV 像素层识别) 发物料事件到同一网关, 网关按
+`config/material_map.json` 映射并下发。无硬件时 `sim_devices.py` 模拟器闭环,
+E2E 见 `tests/test_sort_mqtt.py`。
+
 三条设计原则（完整论证见 [`VOICE_DECISION_BENCH.md`](VOICE_DECISION_BENCH.md)）：
 
 1. **实时路径不含 LLM**。规则层做确定性抽取（颜色/数量/否定，ms 级），Laya 做单次前向的结构化
@@ -70,6 +77,14 @@ ollama serve                   # 或 systemctl --user start ollama-serve
 .venv/bin/python bench_block.py 3            # 彩色方块域
 .venv/bin/python bench_yard.py 3 text        # 料场分拣域 (1/2/3 号料场 × 8 物料)
 .venv/bin/python bench_oob.py                # 超纲验收 (PAUSE+HUMAN)
+
+# 5) 分拣线闭环 (MQTT: 1 传送带 + 3 分拣器, 模拟设备)
+.venv/bin/python broker_local.py             # 终端 1: MQTT broker (:1883)
+.venv/bin/python sim_devices.py              # 终端 2: 模拟传送带 + 3 分拣器
+.venv/bin/python sort_mqtt.py                # 终端 3: 分拣网关 (HTTP :8123, 统计分发)
+.venv/bin/python vision_input.py --gen      # 可选: 视觉传感器 (合成帧, 摄像头 --camera N)
+# Web 控制台 (loop_ui) 「📤 下发分拣线」按钮: Laya 分类结果 → 网关 → MQTT → 设备
+# E2E 测试 (自包含, 不依赖上面进程): .venv/bin/python tests/test_sort_mqtt.py
 ```
 
 **开机自启**（本机已装好，`deploy/` 可在别的机器复现）：三个 systemd 用户服务
@@ -122,6 +137,14 @@ journalctl --user -u laya-loop-ui -f
 | `deploy/` | 开机自启：systemd 用户服务 ×3 + 浏览器 autostart |
 | `scripts/open_loop_ui.sh` | 开机时等服务就绪后开浏览器 |
 | `VOICE_DECISION_BENCH.md` / `TEACHER_REPORT.md` / `DEPLOY_SENSEVOICE.md` | 链路设计报告 / 教师报告 / 部署记录 |
+| `sort_mqtt.py` | MQTT 分拣网关: 入站 (loop_ui /dispatch · SCADA `sort/inbound/command` · 视觉 `sort/inbound/vision`) → 白名单校验 → 顺序执行 → 统计分发 (JSONL 台账 + `sort/stats/summary`); 命令超时重试 → 故障锁存 → 人工清除; HTTP :8123 (`/health` `/stats` `/dispatch` `/fault/clear`) |
+| `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机, 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`); 真实 PLC 接入时的行为参照 |
+| `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
+| `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
+| `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
+| `tests/test_sort_mqtt.py` | 分拣网关 E2E 31 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计 |
+| `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
+| `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
 `laya/`（Python 包）、`sdk/`、`docs/`、`research/`、`benchmarks/`、`notebooks/`、
