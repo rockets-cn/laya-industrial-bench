@@ -15,8 +15,9 @@
                 (显式 最近/上次/刚才 才进; 由 loop_ui 每次 /run 后注入)
              c) 「现在各个仓库分别有多少内容」/「仓库库存」= 全部料场 累计库存
                 (门 _STOCK_RE: 各/分别/库存/仓库里有 等; 与 a 的区别: 不分料场)
-             d) 「哪个仓库有蓝色方块」= 物料→仓库 反查 (台账, 哪些料场有该物料库存;
-                门: 物料词 + 哪 + 有/在/库存)
+             d) 「哪个仓库有蓝色方块」/「苹果在哪个仓库里」= 物料→仓库 反查
+                (台账, 哪些料场有该物料库存; 门: 物料词 + 哪 + 有/在/库存;
+                不带颜色 苹果/方块 = 家族查询, 红+绿 / 四色合计)
 3. 服务状态   "8002还在跑吗" / "网关正常吗" (本机 TCP 端口探测)
 4. 资源占用   "CPU占用多少" / "内存和磁盘" (/proc/loadavg, /proc/meminfo, disk_usage)
 5. LLM 兜底   (可选, 默认关) 规则层认不出的问句, 让 LLM 基于注入事实回答;
@@ -180,23 +181,22 @@ def _ans_yard_stock(text):
 
 
 def _ans_mat_where(text):
-    """物料→仓库 反查: 「哪个仓库有蓝色方块？」/「蓝色方块在哪个仓库」— 查台账
-    (yard_ledger) 哪些料场 有该物料 净库存 (>0). 门: 物料词 + 哪 + (有|在|库存|存),
-    避免误抢 分配指令 (「放到哪个仓库」类无 有/在 库存语义); 全仓 0 答「没有」."""
-    mat, cn = None, None
+    """物料→仓库 反查: 「哪个仓库有蓝色方块？」/「苹果在哪个仓库里？」— 查台账
+    (yard_ledger) 哪些料场 有该物料(家族) 净库存 (>0). 门: 物料词 + 哪 + (有|在|库存|存),
+    避免误抢 分配指令 (「放到哪个仓库」类无 有/在 库存语义); 全仓 0 答「没有」.
+    不带颜色的 苹果/方块 = 家族查询 (红+绿 / 四色方块 合计)."""
     m = _MAT_WHERE_PAT.search(text)
-    if m:
-        mat = _mat_where_key(m.group(0))
-        cn = _MATCN[mat]
-    if mat is None:
+    if not m:
         return None
+    mats, cn = _mat_where_family(m.group(0))
     try:
         s = yard_ledger.stock()
     except Exception:
         return None
     hits = []
     for y in (1, 2, 3):
-        n = s["yards"].get(y, {}).get("items", {}).get(mat, 0)
+        items = s["yards"].get(y, {}).get("items", {})
+        n = sum(items.get(k, 0) for k in mats)
         if n > 0:
             hits.append((y, n))
     if not hits:
@@ -255,18 +255,27 @@ _MATCN = {"red_apple": "红苹果", "green_apple": "绿苹果", "banana": "香�
           "pear": "梨", "red_block": "红方块", "green_block": "绿方块",
           "yellow_block": "黄方块", "blue_block": "蓝方块"}
 
-# 物料反查用: 允许 颜色+色+方块 口语形态 (「蓝色方块」/「蓝方块」都认)
-_MAT_WHERE_PAT = re.compile(r"(?:红|绿)(?:色)?苹果|(?:红|绿|黄|蓝)(?:色)?方块|香蕉|梨")
+# 物料反查用: 允许 颜色+色+方块 口语形态 (「蓝色方块」/「蓝方块」都认);
+# 不带颜色 = 家族查询 (「苹果」= 红+绿, 「方块」= 红绿黄蓝) — 家族放最后匹配
+_MAT_WHERE_PAT = re.compile(
+    r"(?:红|绿)(?:色)?苹果|(?:红|绿|黄|蓝)(?:色)?方块|苹果|方块|香蕉|梨")
 
 
-def _mat_where_key(word):
-    """「蓝色方块」/「绿苹果」等口语形态 -> 物料 key (与 _MATCN 对齐)."""
+def _mat_where_family(word):
+    """口语形态 -> (物料 key 列表, 显示名). 带颜色 = 单物料; 不带颜色 = 同家族全部
+    (「苹果」= 红苹果+绿苹果, 「方块」= 红绿黄蓝方块)."""
     if word.endswith("苹果"):
-        return "red_apple" if word[0] == "红" else "green_apple"
+        if word[0] in "红绿":
+            k = "red_apple" if word[0] == "红" else "green_apple"
+            return [k], _MATCN[k]
+        return ["red_apple", "green_apple"], "苹果"
     if word.endswith("方块"):
-        return {"红": "red_block", "绿": "green_block",
-                "黄": "yellow_block", "蓝": "blue_block"}[word[0]]
-    return {"香蕉": "banana", "梨": "pear"}[word]
+        if word[0] in "红绿黄蓝":
+            k = {"红": "red_block", "绿": "green_block",
+                 "黄": "yellow_block", "蓝": "blue_block"}[word[0]]
+            return [k], _MATCN[k]
+        return ["red_block", "green_block", "yellow_block", "blue_block"], "方块"
+    return [{"香蕉": "banana", "梨": "pear"}[word]], word
 
 
 # ---------------------------------------------------------------------------
