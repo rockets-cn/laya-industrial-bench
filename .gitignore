@@ -18,6 +18,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# 固件库 (EDGE 101) 需要入库
+!edge101/lib/
+!edge101/lib/**
 lib64/
 parts/
 sdist/

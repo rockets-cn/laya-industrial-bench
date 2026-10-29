@@ -1,0 +1,252 @@
+// EDGE 101 (DFR1283, ESP32 原版) 分拣控制器 — 实现 docs/sort-mqtt.md
+// 板载 RJ45 以太网 + HuskyLens 2 (UART, GPIO5/12) + 步进 (STEP=14 DIR=15)
+// + 3 路舵机 (PCA9685 I2C, SDA=18 SCL=23, 通道 0/1/2) + 2Hz 遥测
+//
+// 引脚/网络全部在 include/config.h (依据 DFRobot wiki DFR1283).
+// 纯逻辑 (状态机/解析/协议 JSON) 在 lib/SortLogic, 主机可单测.
+#include <Arduino.h>
+#include <ETH.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
+#include "config.h"
+#include "Conveyor.h"
+#include "Sorter.h"
+#include "HuskyLens.h"
+#include "Proto.h"
+#include "ServoI2C.h"
+
+static sort::Conveyor conv;
+static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter(3)};
+static sort::HuskyLens hl2(MATERIAL_MAP, MATERIAL_MAP_LEN, HL2_RETRIGGER_MS);
+
+static HardwareSerial hlSerial(2);            // UART2 重映射到 GPIO5/12
+static EthernetClient ethClient;
+static PubSubClient mqtt(ethClient);
+static ServoI2C servos(SERVO_SDA_PIN, SERVO_SCL_PIN);
+
+// ================= 步进: 非阻塞步脉冲 =================
+static uint32_t nextStepUs = 0;
+static void steerStepper() {
+    if (conv.st != sort::DevState::kRunning) return;
+    double stepsPerSec = conv.speed_mps * 1000.0 * STEPS_PER_MM;
+    if (stepsPerSec < 1.0) stepsPerSec = 1.0;
+    uint32_t interval = (uint32_t)(1000000.0 / stepsPerSec);
+    uint32_t now = micros();
+    if (now >= nextStepUs) {
+        nextStepUs = now + interval;
+        digitalWrite(STEPPER_STEP_PIN, HIGH);
+        delayMicroseconds(2);
+        digitalWrite(STEPPER_STEP_PIN, LOW);
+        conv.steps_total++;
+    }
+}
+
+// ================= 舵机扫掠任务 (非阻塞) =================
+// 一件物料 = 一次 拨出->归位 扫掠; qty=N 则 N 次, 件间 SERVO_ITEM_GAP_MS.
+// 与 sim_devices 语义一致: 全部拨完才发 ack ok.
+struct SweepTask {
+    int n = 0;             // 分拣器 1..3
+    bool active = false;
+    bool inEject = false;
+    uint32_t phaseAt = 0;
+};
+static SweepTask sweep;
+static String lastJobId[3] = {"", "", ""};   // 各分拣器当前 job_id (divert 完成时应答用)
+
+static void servoWrite(int n, int deg) {
+    servos.setAngle(SERVO_CH[n - 1], deg);
+}
+
+static void publishSorterAck(int n, const char* job_id, const char* action,
+                             const char* result, const char* note) {
+    mqtt.publish(sort::sorterAckTopic(n, job_id).c_str(),
+                 sort::ackJson(job_id, action, result, note).c_str(), true);
+}
+static void publishConveyorAck(const char* job_id, const char* action,
+                               const char* result, const char* note) {
+    mqtt.publish(sort::conveyorAckTopic(job_id).c_str(),
+                 sort::ackJson(job_id, action, result, note).c_str(), true);
+}
+
+static void sweepStart(int n) {
+    sweep.n = n; sweep.active = true; sweep.inEject = true;
+    sweep.phaseAt = millis();
+    servoWrite(n, SERVO_EJECT_DEG);
+}
+static void sweepTick() {
+    if (!sweep.active) return;
+    uint32_t now = millis();
+    if (sweep.inEject) {
+        if (now - sweep.phaseAt >= SERVO_SWEEP_MS / 2) {
+            servoWrite(sweep.n, SERVO_REST_DEG);
+            sweep.inEject = false;
+            sweep.phaseAt = now;
+        }
+    } else if (now - sweep.phaseAt >= (uint32_t)(SERVO_ITEM_GAP_MS - SERVO_SWEEP_MS / 2)) {
+        if (sorters[sweep.n - 1].stepOne()) {      // 最后一件
+            sweep.active = false;
+            publishSorterAck(sweep.n, lastJobId[sweep.n - 1].c_str(), "divert",
+                             "ok", sorters[sweep.n - 1].mat());
+        } else {
+            sweep.inEject = true;
+            sweep.phaseAt = now;
+            servoWrite(sweep.n, SERVO_EJECT_DEG);
+        }
+    }
+}
+
+// ================= MQTT =================
+
+static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
+    std::string t(topic);
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, len)) return;
+    const char* job_id = doc["job_id"] | "";
+    const char* action = doc["action"] | "";
+    if (t == sort::conveyorCmdTopic()) {
+        double speed = doc["speed_mps"] | 1.0;
+        auto r = conv.handleCmd(action, speed);
+        if (r.handled)
+            publishConveyorAck(job_id, action, r.ok ? "ok" : "busy", r.note.c_str());
+    } else {
+        int n = 0;
+        for (n = 1; n <= 3; n++) if (t == sort::sorterCmdTopic(n)) break;
+        if (n > 3) return;
+        if (action && !strcmp(action, "divert")) lastJobId[n - 1] = job_id;
+        const char* material = doc["material"] | "";
+        int qty = doc["qty"] | 1;
+        auto r = sorters[n - 1].handleCmd(action, material, qty);
+        if (!r.handled) return;
+        if (action && !strcmp(action, "reset")) {
+            publishSorterAck(n, job_id, "reset", r.ok ? "ok" : "busy",
+                             r.note.c_str());
+        } else if (r.ok) {
+            sweepStart(n);    // divert: 拨完才应答
+        } else {
+            const char* res = r.note == "sorter fault" ? "fault" : "busy";
+            publishSorterAck(n, job_id, "divert", res, r.note.c_str());
+        }
+    }
+}
+
+static void mqttConnect() {
+    char id[40];
+    snprintf(id, sizeof(id), "%s-%04X", MQTT_CLIENT_ID, ESP.getChipId());
+    if (mqtt.connect(id, nullptr, nullptr,
+                     BROKER_IP.toString().c_str(), BROKER_PORT)) {
+        mqtt.subscribe(sort::conveyorCmdTopic().c_str(), 1);
+        for (int n = 1; n <= 3; n++)
+            mqtt.subscribe(sort::sorterCmdTopic(n).c_str(), 1);
+        Serial.println("[mqtt] connected, subscribed 4 cmd topics");
+    }
+}
+
+// ================= 视觉 (HuskyLens 2) =================
+static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
+    char fid[24];
+    snprintf(fid, sizeof(fid), "hl2-%u", ev.seq);
+    std::string p = sort::visionJson(ev.material.c_str(), 1.0, fid,
+                                     ev.x, ev.y, ev.w, ev.h);
+    mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
+    Serial.printf("[vision] %s id=%s\n", ev.material.c_str(), fid);
+    (void)now_ms;
+}
+
+// ================= 串口控制台 (调试) =================
+static String consoleBuf;
+static void onSerialCmd(const String& line) {
+    if (line == "help") {
+        Serial.println("help | state | stepper <n> | sweep <n> | vision <material>");
+    } else if (line == "state") {
+        Serial.printf("conveyor=%s s1=%s s2=%s s3=%s diverted=%u/%u/%u steps=%llu\n",
+                      conv.state(), sorters[0].state(), sorters[1].state(),
+                      sorters[2].state(), sorters[0].diverted_total,
+                      sorters[1].diverted_total, sorters[2].diverted_total,
+                      (unsigned long long)conv.steps_total);
+    } else if (line.startsWith("stepper")) {
+        int n = line.substring(8).toInt();
+        for (int i = 0; i < n; i++) {
+            digitalWrite(STEPPER_STEP_PIN, HIGH); delayMicroseconds(2);
+            digitalWrite(STEPPER_STEP_PIN, LOW); delay(2);
+        }
+        Serial.printf("stepper %d done\n", n);
+    } else if (line.startsWith("sweep")) {
+        int n = line.substring(7).toInt();
+        if (n >= 1 && n <= 3) {
+            servoWrite(n, SERVO_EJECT_DEG); delay(450);
+            servoWrite(n, SERVO_REST_DEG);
+            Serial.printf("sweep %d done\n", n);
+        }
+    } else if (line.startsWith("vision")) {
+        String m = line.substring(8).trim();
+        std::string p = sort::visionJson(m.c_str(), 1.0, "console", 0, 0, 0, 0);
+        mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
+        Serial.printf("vision %s published\n", m.c_str());
+    }
+}
+
+// ================= 生命周期 =================
+void setup() {
+    Serial.begin(115200);
+    delay(300);
+    Serial.println("\n[edge101] boot - sort controller");
+
+    pinMode(STEPPER_STEP_PIN, OUTPUT);
+    pinMode(STEPPER_DIR_PIN, OUTPUT);
+    digitalWrite(STEPPER_DIR_PIN, LOW);
+
+    servos.begin(SERVO_SDA_PIN, SERVO_SCL_PIN);
+    for (int i = 0; i < 3; i++) servos.setAngle(SERVO_CH[i], SERVO_REST_DEG);
+    Serial.printf("[servo] PCA9685 @0x%02X ch %d/%d/%d\n",
+                  SERVO_ADDR, SERVO_CH[0], SERVO_CH[1], SERVO_CH[2]);
+
+    hlSerial.begin(HL2_BAUD, SERIAL_8N1, HL2_RX_PIN, HL2_TX_PIN);
+    Serial.printf("[hl2] UART2 @%d rx=GPIO%d tx=GPIO%d\n",
+                  HL2_BAUD, HL2_RX_PIN, HL2_TX_PIN);
+
+    ETH.begin(EDGE_IP, EDGE_DNS, EDGE_GW, EDGE_MASK);
+    Serial.printf("[eth] 等待板载以太网 (静态 %s, broker %s:%d)...\n",
+                  EDGE_IP.toString().c_str(), BROKER_IP.toString().c_str(),
+                  BROKER_PORT);
+
+    mqtt.setServer(BROKER_IP, BROKER_PORT);
+    mqtt.setCallback(onMqttMessage);
+    Serial.println("[edge101] ready (serial console: help)");
+}
+
+static uint32_t lastTeleMs = 0;
+static uint32_t lastMqttTryMs = 0;
+
+void loop() {
+    steerStepper();
+    sweepTick();
+    if (!mqtt.connected() && millis() - lastMqttTryMs > 2000) {
+        lastMqttTryMs = millis();
+        if (ETH.status() == ETH_CONNECTED || ETH.status() == ETH_GOT_IP)
+            mqttConnect();
+    }
+    mqtt.loop();
+
+    while (hlSerial.available())
+        hl2.feedByte((uint8_t)hlSerial.read(), millis(), onVision, nullptr);
+
+    if (mqtt.connected() && millis() - lastTeleMs >= 500) {
+        lastTeleMs = millis();
+        mqtt.publish(sort::conveyorTeleTopic().c_str(),
+                     sort::conveyorTele(conv.state(), conv.speed_mps,
+                                        conv.steps_total).c_str(), false);
+        for (int n = 1; n <= 3; n++)
+            mqtt.publish(sort::sorterTeleTopic(n).c_str(),
+                         sort::sorterTele(sorters[n - 1].state(),
+                                          sorters[n - 1].diverted_total,
+                                          sorters[n - 1].mat()).c_str(),
+                         false);
+    }
+
+    while (Serial.available()) {
+        char c = Serial.read();
+        if (c == '\n') { onSerialCmd(consoleBuf); consoleBuf = ""; }
+        else if (c != '\r') consoleBuf += c;
+    }
+}
