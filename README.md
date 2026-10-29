@@ -13,9 +13,11 @@
 物理执行侧 (分拣线): 语音/文本回路的 yard 域 actions → `sort_mqtt.py` MQTT 网关
 (白名单校验 + 顺序执行 + 统计分发) → **3 分拣器 + 1 传送带** (MQTT,
 协议契约 [`docs/sort-mqtt.md`](docs/sort-mqtt.md)); 视觉传感器
-(`vision_input.py`, HSV 像素层识别) 发物料事件到同一网关, 网关按
-`config/material_map.json` 映射并下发。无硬件时 `sim_devices.py` 模拟器闭环,
-E2E 见 `tests/test_sort_mqtt.py`。
+(`vision_input.py`, HSV 像素层识别; 或实体 HuskyLens 2) 发物料事件到同一网关,
+网关按 `config/material_map.json` 映射并下发。无硬件时 `sim_devices.py`
+模拟器闭环; 实体硬件用 **EDGE 101 固件** (`edge101/`, 与模拟器行为等价,
+对网关零改动)。E2E 见 `tests/test_sort_mqtt.py`, 固件单测
+`edge101/tests/host/run_tests.sh`。
 
 三条设计原则（完整论证见 [`VOICE_DECISION_BENCH.md`](VOICE_DECISION_BENCH.md)）：
 
@@ -56,6 +58,18 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
 
 即：**能算的不让 LLM 算, 算不了/说得模糊的才让 LLM 算, 且 LLM 永远过校验器。**
 无数量的分配句（"把香蕉平均分到仓库里"）不触发 LLM, 照旧 PAUSE+HUMAN 等人工。
+
+### 超纲料场与部分下发（料场域）
+
+只有 1/2/3 号在纲, 超纲的 4号/5号/七号… 由 规则层参与分域归属 + 校验器路由:
+
+- **混合订单混入超纲项**（路径 `PARTIAL`, 橙色徽标）: 在纲项照发（按原话数量, 不重算）,
+  超纲项挂起并附「超纲料场 N 号不下发 (物料 xN, 需人工确认)」。
+  例: 「一号料场放三个苹果, 2号料场放4个苹果, 5号料场放6个苹果」→ 1号×3 + 2号×4 下发,
+  5号×6 挂起。页面「📤 下发分拣线」按钮对 PARTIAL 同样可用（只含在纲指令）;
+- **纯超纲单 / 分配指令目标含超纲**: 整条暂停 PAUSE+HUMAN — 分配句的数量是除出来的,
+  目标集合少一个在纲项就会分多, 规则层不重算, 也不让 LLM 重算（Tier-1/Tier-2 均拒展开）;
+- 归属保证: 超纲号占自己的域, 「5号放6个苹果」不会并入邻近 2号 域。
 
 ### 简单问答（料场页面, `local_qa.py`）
 
@@ -152,6 +166,7 @@ journalctl --user -u laya-loop-ui -f
 | `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机, 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`); 真实 PLC 接入时的行为参照 |
 | `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
 | `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
+| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 + PCA9685 I2C 3 舵机; 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (42 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
 | `tests/test_sort_mqtt.py` | 分拣网关 E2E 31 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计 |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |

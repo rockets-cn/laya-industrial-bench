@@ -52,6 +52,19 @@ CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
 
 # 在纲料场: 1号/2号/3号 + 汉字/幺号 (ASR 变体: 二/两/俩), 后接 料场/场地/仓库/库 可选
 YARD_RE = re.compile(r"(?<!\d)([123一俩二两三幺壹])\s*号(?:\s*(?:仓库|料场|场地|库|位置|区))?")
+# 全料场号 (含超纲 4号/5号/七号...): 用于分域归属 — 超纲号也占有自己的域,
+# 其物料由校验器路由到 超纲挂起 (部分下发 PARTIAL), 而不是并入邻近在纲料场
+ANY_YARD_RE = re.compile(
+    r"(?<!\d)([1-9]\d*|[一二两三四五六七八九十幺壹]+)\s*号(?:\s*(?:仓库|料场|场地|库|位置|区))?")
+
+
+def _yard_num_of(token):
+    """料场号 token -> 数值. 在纲走 YARD_NUM, 超纲用通用数值 (四->4, 七->7, 11->11)."""
+    if token in YARD_NUM:
+        return YARD_NUM[token]
+    if token.isdigit():
+        return int(token)
+    return _cn_num(token)
 
 # 物料词表 (同 bench_industrial / bench_block 的既有模式)
 FRUIT_RE = re.compile(r"(?:红|绿)?苹果|香蕉|梨")
@@ -189,13 +202,14 @@ def _yard_at(clean, cms, pos, mat_end):
         if m.start() > mat_end and _is_reverse_attach(clean, mat_end, m.start()):
             base = m
             break
-    return YARD_NUM[base.group(1)]
+    return _yard_num_of(base.group(1))
 
 
 def normalize(text):
-    """确定性: 简繁/同音 -> 否定剥离 -> 物料+数量 全文抽取 -> 最近料场归属.
+    """确定性: 简繁/同音 -> 否定剥离 -> 物料+数量 全文抽取 -> 正序分域归属.
     返回 (clean_text, mentions, negated). 无料场 -> 空提及 (信息不足, 上层暂停);
-    命中超纲料场 (4号等) -> 单条 yard=0 提及, 由校验器给出明确拒绝理由."""
+    超纲料场 (4号/5号等) 照常参与分域归属, 其物料由校验器路由到 超纲挂起
+    (部分下发 PARTIAL), 在纲项不被阻塞."""
     text = text.translate(T2S)
     for a, b in HOMOPHONE:
         text = text.replace(a, b)
@@ -203,10 +217,14 @@ def normalize(text):
     if dist:
         dm, _total, _yards = dist
         return text, dm, []
-    matches = list(YARD_RE.finditer(text))
+    # 分配句但目标含超纲料场: 数量是除出来的, 少一个目标在纲项就分多了 ->
+    # 整条不下发 (哨兵提及, 校验器拒发 -> 暂停+人工)
+    if not dist and DIST_KW_RE.search(text) and OOB_YARD_RE.search(text):
+        oob_tokens = sorted({m.group(1) + "号" for m in OOB_YARD_RE.finditer(text)})
+        return text, [{"yard": 0, "material": None, "qty": 1,
+                        "oob_msg": f"分配目标含超纲料场 {', '.join(oob_tokens)}, 整条指令不下发 (需人工确认)"}], []
+    matches = list(ANY_YARD_RE.finditer(text))
     if not matches:
-        if OOB_YARD_RE.search(text):
-            return text, [{"yard": 0, "material": None, "qty": 1}], []
         return text, [], []
     negated = set()
     clean = text
@@ -220,13 +238,11 @@ def normalize(text):
         if c:
             negated.add(c + "_block")
     clean = BLOCK_NEG_RE.sub(" ", clean)
-    # 剥离否定后重新扫超纲料场 (混合订单里混进 4号 也要整体暂停)
-    if OOB_YARD_RE.search(clean):
-        return text, [{"yard": 0, "material": None, "qty": 1}], sorted(negated)
     # 归属: 正序分域 + 倒序黏附 (见 _yard_at). 标记在 clean 上重查
     # (剥否定改变了位置). 子句切分/全局最近距离已弃用: 无标点密集句下
-    # 距离判定会把 '一号…两个苹果二号' 的苹果误归二号.
-    cms = list(YARD_RE.finditer(clean))
+    # 距离判定会把 '一号…两个苹果二号' 的苹果误归二号. 分域用全料场号
+    # (含超纲), 保证 '5号放6个苹果' 的苹果归 5号 而不是并入 2号.
+    cms = list(ANY_YARD_RE.finditer(clean))
     mentions = []
     for pos, mend, mm in _materials_in(clean):
         mm["yard"] = _yard_at(clean, cms, pos, mend)
@@ -262,12 +278,20 @@ def laya_decide(mentions, norm_text=""):
 
 def validate(mentions, answers):
     """确定性白名单 + 交叉检查 + 数量范围; 同料场同物料合并 (PLC 每组一条指令).
+    超纲料场 (yard 不在 1/2/3) 不进 reasons, 路由到 oob 挂起列表 (部分下发):
+    返回的 reasons 末尾附带 oob 说明 — 调用方以 ok=True + reasons 非空 识别 PARTIAL.
     answers=None (LLM 旁路路径): 白名单 + 范围检查."""
-    actions, reasons = [], []
+    actions, reasons, oob = [], [], []
     for i, m in enumerate(mentions):
         yard, material = m.get("yard"), m.get("material")
+        if m.get("oob_msg"):
+            oob.append(m["oob_msg"])
+            continue
         if yard not in YARDS:
-            reasons.append(f"m{i}: 料场越界 {yard!r}")
+            if yard and yard > 0:
+                oob.append(f"超纲料场 {yard} 号不下发 ({MAT_CN.get(material, material) if material else '?'} x{m.get('qty', 1)}, 需人工确认)")
+            else:
+                oob.append(f"料场未指定, 不下发 ({MAT_CN.get(material, material) if material else '?'} x{m.get('qty', 1)}, 需人工确认)")
             continue
         if material is None:
             reasons.append(f"m{i}: 物料不明确")
@@ -307,7 +331,9 @@ def validate(mentions, answers):
         s = sum(a["qty"] for a in final)
         if s != dist_total:
             reasons.append(f"分配对账失败: 展开总量 {s} != 指令 {dist_total}")
-    return (not reasons), final, reasons
+    # oob 挂起说明附在返回 reasons 末尾: ok=True+reasons 非空 => 部分下发 (PARTIAL);
+    # 纯超纲单 (无在纲项) 因 "空订单" 进 reasons 仍 ok=False => 旁路/暂停, 行为不变
+    return (not reasons), final, reasons + oob
 
 
 BYPASS_PROMPT = """你是分拣解析器。把这句话解析成 JSON, 只输出 JSON:
@@ -375,8 +401,12 @@ def _dist_material(raw):
 
 def expand_distribution(text):
     """Tier-1 确定性分配展开. 返回 ([mentions], total, yards) 或 None
-    (结构不全 -> 上层可走 LLM 展开). 每个 mention 带 dist_total 供校验器对账."""
+    (结构不全 -> 上层可走 LLM 展开). 每个 mention 带 dist_total 供校验器对账.
+    分配目标含超纲料场 (4号/5号等): 拒绝展开 — 数量是除出来的, 目标集合缺一个
+    每个在纲料场就分多了, 必须整条暂停 (由 normalize 转 哨兵提及)."""
     if not DIST_KW_RE.search(text):
+        return None
+    if OOB_YARD_RE.search(text):
         return None
     m = DIST_TOT_RE.search(text)
     if not m:
@@ -455,6 +485,8 @@ def dist_expand_if_needed(text):
     防幻觉: 物料必须与规则层在句子里听到的物料一致; 总量由规则层给出, 校验器对账."""
     if not DIST_KW_RE.search(text):
         return None
+    if OOB_YARD_RE.search(text):
+        return None  # 分配目标含超纲料场: 不展开, 整条暂停
     m = DIST_TOT_RE.search(text)
     if not m:
         return None
@@ -529,6 +561,9 @@ CASES = [
     ("给七号料场送苹果", None),                        # 汉字越纲 (曾致 KeyError)
     ("送两个红苹果", None),                            # 未指定料场
     ("1号料场送3个方块", None),                       # 物料颜色未指定
+    # 超纲混入有效指令: 部分下发 — 在纲项照发, 超纲项挂起报人工 (PARTIAL)
+    ("一号料场放三个苹果，2号料场放4个苹果，5号料场放6个苹果",
+     [(1, "red_apple", 3), (2, "red_apple", 4)], "partial"),
     # 本机运行状态问答 (纯规则层, 答案<=30字): expected = 答案必含子串
     ("现在几点了", "现在", "qa"),
     ("CPU占用多少", "%", "qa"),
@@ -562,7 +597,7 @@ def main():
         cases = _cases_from()
 
     t_laya, t_bypass, t_e2e = [], [], []
-    n_fast = n_expand = n_bypass = n_pause = n_qa = n_correct = n_total = 0
+    n_fast = n_expand = n_bypass = n_partial = n_pause = n_qa = n_correct = n_total = 0
     local_qa.set_last_order([{"yard": 1, "material": "banana", "qty": 2},
                               {"yard": 2, "material": "red_apple", "qty": 5}])  # 问答用例基准库存
     for rep in range(REPS):
@@ -602,6 +637,9 @@ def main():
                     path = "BYPASS" if ok_b else "PAUSE+HUMAN"
                 except Exception as e:
                     path, actions, reasons = "PAUSE+HUMAN", [], [f"LLM 不可用: {e.__class__.__name__}"]
+            elif reasons:
+                # ok=True + 仅 oob 挂起说明: 在纲项照发, 超纲项报人工
+                path = "PARTIAL"
             e2e = time.perf_counter() - t0
             t_e2e.append(e2e)
             got = frozenset((a["yard"], a["material"], a["qty"]) for a in actions)
@@ -610,7 +648,8 @@ def main():
                       f"actions={actions}  neg={neg}  reasons={reasons[:2]}")
             else:
                 correct = (path == "PAUSE+HUMAN") if kind == "oob" \
-                    else (got == frozenset(expected))
+                    else ((path == "PARTIAL" and got == frozenset(expected)) if kind == "partial"
+                          else (got == frozenset(expected)))
                 n_total += 1
                 n_correct += correct
                 if path == "FAST":
@@ -619,18 +658,22 @@ def main():
                     n_expand += 1
                 elif path == "BYPASS":
                     n_bypass += 1
+                elif path == "PARTIAL":
+                    n_partial += 1
                 else:
                     n_pause += 1
                 print(f"rep{rep} c{ci} [{path:12s}] {'OK ' if correct else 'WRONG'} "
-                      f"{'(超纲, 期望暂停)' if kind == 'oob' else ''} "
+                      f"{'(超纲, 期望暂停)' if kind == 'oob' else '(部分下发, 超纲挂起)' if kind == 'partial' else ''} "
                       f"actions={actions}  reasons={reasons[:2]}")
                 if not correct:
-                    exp = "PAUSE" if kind == "oob" else sorted(expected or [])
+                    exp = ("PAUSE" if kind == "oob"
+                           else ("PARTIAL " + str(sorted(expected or []))) if kind == "partial"
+                           else sorted(expected or []))
                     print(f"      expect={exp} got={sorted(got)}  state='{state_text}'")
 
     n = len(t_e2e)
     print(f"\n===== 料场分拣回路汇总 ({MODE}, {REPS} 轮 x {len(cases)} 句) =====")
-    print(f"路径: 快路径 {n_fast}   LLM分配 {n_expand}   LLM旁路 {n_bypass}   问答 {n_qa}   暂停+人工 {n_pause}   (超纲句计入暂停)")
+    print(f"路径: 快路径 {n_fast}   LLM分配 {n_expand}   LLM旁路 {n_bypass}   部分下发 {n_partial}   问答 {n_qa}   暂停+人工 {n_pause}")
     print(f"正确: {n_correct}/{n_total}")
     if t_laya:
         print(f"Laya:   mean {statistics.mean(t_laya)*1000:.0f} ms  max {max(t_laya)*1000:.0f} ms  (每提及 1 次请求: 物料终审)")

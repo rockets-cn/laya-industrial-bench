@@ -96,6 +96,9 @@ def run_side(side, text):
             path = "BYPASS" if ok_b else "PAUSE+HUMAN"
         except Exception as e:
             path, actions, reasons = "PAUSE+HUMAN", [], [f"LLM 不可用: {e}"]
+    elif reasons:
+        # ok=True + 仅超纲挂起说明: 在纲项照发, 超纲项报人工 (部分下发)
+        path = "PARTIAL"
     return {"side": side, "empty": False, "normalized": norm, "negated": neg,
             "mentions": mentions, "laya_ms": dt_l, "answers": answers, "ok": ok,
             "actions": actions, "reasons": reasons, "path": path,
@@ -126,7 +129,7 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
                     "actions": [], "reasons": ["空订单"], "path": "PAUSE+HUMAN",
                     "bypass_ms": 0.0, "bypass": None}]
         active = results
-    order = {"QA": 0, "FAST": 0, "EXPAND": 1, "BYPASS": 1, "PAUSE+HUMAN": 2}
+    order = {"QA": 0, "FAST": 0, "PARTIAL": 0, "EXPAND": 1, "BYPASS": 1, "PAUSE+HUMAN": 2}
     path = max((r["path"] for r in active), key=lambda p: order[p])
     merged_answers = {}
     pfx = {"fruit": "f_", "block": "b_", "yard": "y_"}
@@ -265,7 +268,7 @@ async def dispatch(request: Request):
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 料场分拣回路 v11</title>
+<title>Laya 料场分拣回路 v12</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -274,7 +277,7 @@ PAGE = """<!doctype html>
  .cards{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
  .card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:10px 14px;flex:1;min-width:110px}
  .card .k{font-size:11px;color:#8a91a0} .card .v{font-size:19px;font-weight:700;margin-top:3px}
- .path-FAST{color:#4ade80}.path-QA{color:#4ade80}.path-BYPASS{color:#facc15}.path-EXPAND{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
+ .path-FAST{color:#4ade80}.path-QA{color:#4ade80}.path-PARTIAL{color:#fb923c}.path-BYPASS{color:#facc15}.path-EXPAND{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
  .row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center}
  button{background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:8px;padding:8px 12px;
   cursor:pointer;font-size:13px} button:hover{background:#262d3d}
@@ -314,7 +317,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v11 · 分拣+简单问答(≤30字) · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -362,7 +365,7 @@ const domain='yard'; // 页面专属料场分拣 (后端 API 仍支持 fruit/blo
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
  if(d.path==='QA'){['fn1','fn2','fn3','fn7'].forEach(i=>set(i,'on'));['fn4','fn5','fn6'].forEach(i=>set(i,'off'))}
- else if(d.path==='FAST'){['fn1','fn2','fn3','fn4','fn5','fn7'].forEach(i=>set(i,'on'));set('fn6','off')}
+ else if(d.path==='FAST'||d.path==='PARTIAL'){['fn1','fn2','fn3','fn4','fn5','fn7'].forEach(i=>set(i,'on'));set('fn6','off')}
  else if(d.path==='BYPASS'||d.path==='EXPAND'){['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6','warn');set('fn7',d.path==='EXPAND'?'on':'warn')}
  else{['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6',d.bypass_ms?'warn':'off');set('fn7','stop')}
  $('fn-asr').textContent=d.asr_ms!=null?d.asr_ms+' ms':'—';
@@ -376,9 +379,9 @@ async function runText(){
  try{render(await jpost('/run',{text:t,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
 }
 let lastRun=null;
-function setLastRun(d){lastRun=(d&&d.actions&&d.actions.length&&(d.path==='FAST'||d.path==='EXPAND'))?d:null;
+function setLastRun(d){lastRun=(d&&d.actions&&d.actions.length&&(d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL'))?d:null;
  const b=$('btnDispatch');if(b){b.disabled=!lastRun;
- b.title=lastRun?('把最近一次运行的 '+lastRun.actions.length+' 条指令下发到 MQTT 分拣线'):'先运行并产生可执行指令 (FAST/EXPAND) 才能下发'}}
+ b.title=lastRun?('把最近一次运行的 '+lastRun.actions.length+' 条指令下发到 MQTT 分拣线'):'先运行并产生可执行指令 (FAST/EXPAND/PARTIAL) 才能下发'}}
 async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
  const b=$('btnDispatch');b.disabled=true;
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
@@ -407,11 +410,11 @@ function render(d){
    yc+=`<div class="card"><div class="k">${y}号料场</div><div class="v ${tot?'':'muted'}">${tot?tot+' 件':'空'}</div>${detail}</div>`;
   });
   $('yardcards').innerHTML=yc;
-  out+=sec('🚚 料场分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND')?'PLC 可执行':d.path)+'</span>')
+  out+=sec('🚚 料场分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL')?'PLC 可执行':d.path)+'</span>')
    +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
  } else $('yardcards').innerHTML='';
- const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?'💬 简单回答':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认')));
+ const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?'💬 简单回答':(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
  out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+' (≤30字 · 规则层直答, 未下发 PLC)':JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;
  let h='';
