@@ -416,8 +416,8 @@ DIST_EXPAND_PROMPT = """你是分拣解析器。把这条"分配"指令展开成
 - material 只能从这些里选: red_apple=红苹果, green_apple=绿苹果, banana=香蕉, pear=梨,
   red_block=红色方块, green_block=绿色方块, yellow_block=黄色方块, blue_block=蓝色方块;
   没说明颜色的"苹果"按 red_apple, 没说明颜色的"方块"不列入;
-- 指令说把 N 件物料平均/分给若干料场时, 各料场 qty 之和必须等于 N; 除不尽时余数给小号料场;
-  分到 0 的料场不列入;
+- 指令说把 N 件物料平均/分给若干料场时: **你的职责是判断料场集合**, qty 只写一个参考值
+  (规则层会按"余数给小号料场"重算数量); 各项 qty 之和必须等于 N, 分到 0 的料场不列入;
 - 分配对象确实无法确定时 yard 填 0 (会被拒绝并转人工).
 指令: {state}"""
 
@@ -469,6 +469,17 @@ def dist_expand_if_needed(text):
     lmentions = [x for x in lmentions if x["material"] == material]
     if not lmentions:
         return None, dt, reasons
+    # 均分数量由规则层裁定 (余数给小号料场); LLM 只决定料场集合.
+    # LLM 的 qty 仅用于上面的范围校验, 不信任其分配 (实测 qwen3.5-4b 会把多的 1 件给大号).
+    yard_set = sorted({x["yard"] for x in lmentions})
+    base, r = divmod(total, len(yard_set))
+    lmentions = []
+    for i, y in enumerate(yard_set):
+        q = base + (1 if i < r else 0)  # 余数给小号料场
+        if q >= 1:
+            lmentions.append({"yard": y, "material": material, "qty": q})
+    if not lmentions:
+        return None, dt, reasons + ["展开为空"]
     for x in lmentions:
         x["dist_total"] = total  # 对账锚点, 校验器强制 总量 == total
     return lmentions, dt, reasons
