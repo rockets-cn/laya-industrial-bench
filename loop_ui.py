@@ -61,12 +61,12 @@ PRESETS = [
     ("方块 否定", "8个黄色方块，不要绿色方块", "block"),
     ("方块 超纲", "就给我3个方块", "block"),
     ("混合 水果+方块", "两个红苹果和10个红色方块，再来3个蓝色方块", "mixed"),
-    ("料场 双场双料", "给1号料场送两个红苹果，3号料场送10个蓝色方块", "yard"),
-    ("料场 倒序", "两个红苹果送到3号料场，1号料场来五个香蕉", "yard"),
-    ("料场 否定", "1号料场送四个梨，不要绿色方块", "yard"),
-    ("料场 超纲 4号", "给4号料场送两个苹果", "yard"),
-    ("料场 超纲 缺场", "送两个红苹果", "yard"),
-    ("料场 密集无标点", "一号仓库一个香蕉两个苹果二号仓库三个苹果四个香蕉三号仓库一个梨一个香蕉", "yard"),
+    ("仓库 双场双料", "给1号仓库送两个红苹果，3号仓库送10个蓝色方块", "yard"),
+    ("仓库 倒序", "两个红苹果送到3号仓库，1号仓库来五个香蕉", "yard"),
+    ("仓库 否定", "1号仓库送四个梨，不要绿色方块", "yard"),
+    ("仓库 超纲 4号", "给4号仓库送两个苹果", "yard"),
+    ("仓库 超纲 缺场", "送两个红苹果", "yard"),
+    ("仓库 密集无标点", "一号仓库一个香蕉两个苹果二号仓库三个苹果四个香蕉三号仓库一个梨一个香蕉", "yard"),
 ]
 
 SIDES = {"fruit": bi, "block": bb, "yard": by}
@@ -321,7 +321,7 @@ async def dispatch(request: Request):
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 料场分拣回路 v12</title>
+<title>Laya 仓库分拣回路 v12</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -370,7 +370,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite) · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite) · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -417,7 +417,7 @@ async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content
  if(!r.ok)throw new Error((await r.text()).slice(0,300));return r.json()}
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
-const domain='yard'; // 页面专属料场分拣 (后端 API 仍支持 fruit/block/mixed 基准域)
+const domain='yard'; // 页面专属仓库分拣 (后端 API 仍支持 fruit/block/mixed 基准域; 域标识保持 yard 不变)
 const LEDGER_MAT={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
 // ---- 仓库台账 (yard_ledger.py, SQLite): 库存=入-出; 分拣下发自动记入, 面板内可手动记出 ----
 let ledOpen=false;
@@ -429,7 +429,7 @@ async function refreshLedger(){
    const it=d.yards[y].items,tot=d.yards[y].total;
    const rows=Object.entries(it).map(([m,v])=>
     `<div class="yd">${v<0?'<span style="color:#f87171">':' '}${LEDGER_MAT[m]||m} × ${v}</div>`).join('')||'<div class="yd">—</div>';
-   yc+=`<div class="card"><div class="k">${y}号料场 库存</div><div class="v ${tot?'':'muted'}">${tot>0?tot+' 件':(tot<0?'负 '+Math.abs(tot):'空')}</div>${rows}</div>`;
+   yc+=`<div class="card"><div class="k">${y}号仓库 库存</div><div class="v ${tot?'':'muted'}">${tot>0?tot+' 件':(tot<0?'负 '+Math.abs(tot):'空')}</div>${rows}</div>`;
   });
   let h='<div class="cards">'+yc+'</div>'
    +sec('📜 最近流水 <span class="chip">'+d.moves+' 笔 · 入=分拣下发自动记 出=手动</span>')
@@ -496,17 +496,17 @@ function render(d){
    +card('Laya',d.laya_ms+' ms')+(d.dist_ms?card('LLM 分配',d.dist_ms+' ms'):d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','—','muted'));
  let out='';
  if(d.domain==='yard'){
-  const lines=d.actions.map(a=>`${a.yard}号料场: ${MATCN[a.material]||a.material} × ${a.qty}`);
+  const lines=d.actions.map(a=>`${a.yard}号仓库: ${MATCN[a.material]||a.material} × ${a.qty}`);
   let yc=''; [1,2,3].forEach(y=>{
    const items=d.actions.filter(a=>a.yard===y);
    const tot=items.reduce((s,a)=>s+a.qty,0);
    const detail=items.length?items.map(a=>
     `<div class="yd">${MATCN[a.material]||a.material} × ${a.qty}</div>`).join('')
     :'<div class="yd">—</div>';
-   yc+=`<div class="card"><div class="k">${y}号料场</div><div class="v ${tot?'':'muted'}">${tot?tot+' 件':'空'}</div>${detail}</div>`;
+   yc+=`<div class="card"><div class="k">${y}号仓库</div><div class="v ${tot?'':'muted'}">${tot?tot+' 件':'空'}</div>${detail}</div>`;
   });
   $('yardcards').innerHTML=yc;
-  out+=sec('🚚 料场分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL')?'PLC 可执行':d.path)+'</span>')
+  out+=sec('🚚 仓库分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL')?'PLC 可执行':d.path)+'</span>')
    +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
  } else $('yardcards').innerHTML='';
