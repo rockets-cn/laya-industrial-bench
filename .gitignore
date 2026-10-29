@@ -107,3 +107,4 @@ voxtype_bench.toml
 
 # sort gateway runtime stats (ledger + summaries)
 stats/
+data/

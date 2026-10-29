@@ -172,6 +172,7 @@ journalctl --user -u laya-loop-ui -f
 | `scripts/open_loop_ui.sh` | 开机时等服务就绪后开浏览器 |
 | `VOICE_DECISION_BENCH.md` / `TEACHER_REPORT.md` / `DEPLOY_SENSEVOICE.md` | 链路设计报告 / 教师报告 / 部署记录 |
 | `sort_mqtt.py` | MQTT 分拣网关: 入站 (loop_ui /dispatch · SCADA `sort/inbound/command` · 视觉 `sort/inbound/vision`) → 白名单校验 → 顺序执行 → 统计分发 (JSONL 台账 + `sort/stats/summary`); 命令超时重试 → 故障锁存 → 人工清除; HTTP :8123 (`/health` `/stats` `/dispatch` `/fault/clear`) |
+| `yard_ledger.py` | 料场出入库台账 (SQLite, `data/yard_ledger.db`): 分拣下发自动记入, 页面手动记出, 库存=入-出; `record_in/record_out/stock/recent` |
 | `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机, 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`); 真实 PLC 接入时的行为参照 |
 | `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
 | `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
@@ -184,6 +185,21 @@ journalctl --user -u laya-loop-ui -f
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
 `laya/`（Python 包）、`sdk/`、`docs/`、`research/`、`benchmarks/`、`notebooks/`、
 `laya-dotnet/` `laya-java/` `laya-ts/`、`tests/`、`verify/`、`docker/`。
+
+## 仓库台账（SQLite 出入库统计）
+
+统计「放入了各仓库多少内容」：
+
+- **入库（自动）**：分拣回路每次产生可执行下发（FAST / EXPAND / PARTIAL）时，
+  按每条 action 记一行入 `data/yard_ledger.db`（`moves` 表）；PAUSE / QA / 空订单无动作不记账；
+  超纲挂起项（PARTIAL 的 oob）不下发、不记账。
+- **出库（手动）**：页面「📦 仓库台账」面板内的出库表单
+  （`POST /ledger/out`，料场 1-3 + 8 物料白名单 + 数量 1~999，越界 422）。
+- **库存**：按 料场×物料 维度 累计入 − 累计出；`GET /ledger` 返回库存 + 最近 20 笔流水。
+- **页面**：「📦 仓库台账」按钮展开面板——三料场库存卡（净件数 + 物料明细）+ 最近流水
+  （入=绿/出=橙 + 路径标记）+ 出库表单；面板开着时每次成功下发自动刷新。
+  负库存如实显示（出大于入，提示人工核对）。
+- 台账是统计旁路：记账失败只打日志，绝不影响分拣下发主路径。
 
 ## 新增一个领域（LLM 离线贡献流程）
 

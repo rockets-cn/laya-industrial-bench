@@ -37,6 +37,11 @@ spec_lq = importlib.util.spec_from_file_location("local_qa", os.path.join(HERE, 
 local_qa = importlib.util.module_from_spec(spec_lq)
 spec_lq.loader.exec_module(local_qa)
 
+# 出入库台账 (yard_ledger.py, SQLite): 分拣下发自动记入, 页面手动记出, GET /ledger
+spec_yl = importlib.util.spec_from_file_location("yard_ledger", os.path.join(HERE, "yard_ledger.py"))
+yard_ledger = importlib.util.module_from_spec(spec_yl)
+spec_yl.loader.exec_module(yard_ledger)
+
 import bench_pipeline  # noqa: E402  (already imported by bench_industrial)
 bench_pipeline.MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
@@ -175,6 +180,13 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit",
         "e2e_ms": round((time.perf_counter() - t0) * 1000),
     }
     local_qa.set_last_order(_res["actions"])  # 问答兜底用: 最近一次分拣库存
+    # 出入库台账: 产生可执行下发 (FAST/EXPAND/PARTIAL) 即自动记「入」—
+    # 统计 各料场 放入了什么/多少件; PAUSE/QA/空订单 无动作, 不记账。
+    if _res["path"] in ("FAST", "EXPAND", "PARTIAL") and _res["actions"]:
+        try:
+            yard_ledger.record_in(_res["actions"], _res["path"], source="loop_ui")
+        except Exception:
+            pass  # 记账失败不影响主流程 (台账是统计, 不是下发路径)
     return _res
 
 
@@ -242,6 +254,29 @@ async def run(request: Request):
 @app.get("/presets")
 def presets():
     return [{"name": n, "text": t, "domain": d} for n, t, d in PRESETS]
+
+
+# ---- 出入库台账 (yard_ledger.py, SQLite: data/yard_ledger.db) ----
+@app.get("/ledger")
+def ledger_get():
+    """当前库存 (入-出) + 最近流水 — 页面「📦 仓库台账」面板用."""
+    d = yard_ledger.stock()
+    d["recent"] = yard_ledger.recent(20)
+    return d
+
+
+@app.post("/ledger/out")
+async def ledger_out(request: Request):
+    """手动出库 (页面表单): {yard:1-3, material:白名单, qty:1-999, note?}."""
+    body = await request.json()
+    try:
+        yard_ledger.record_out(int(body.get("yard", 0)),
+                               str(body.get("material", "")),
+                               int(body.get("qty", 0)),
+                               note=str(body.get("note") or "手动出库"))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True}
 
 
 # MQTT 分拣网关 (sort_mqtt.py, 默认 :8123): 把 Laya 分类结果下发到分拣线
@@ -328,7 +363,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(页面可开关) · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite) · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -351,6 +386,7 @@ PAGE = """<!doctype html>
  <button class="primary" onclick="runText()">▶ 运行</button>
  <button id="btnDispatch" onclick="dispatchRun()" disabled title="把最近一次运行的分类结果下发到 MQTT 分拣线">📤 下发分拣线</button>
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer" title="规则层认不出的问句交给 LLM 基于注入事实回答 (~10s, 仅展示不下发); 规则层能答的仍毫秒级直答; 开关状态保存在本浏览器"><input type="checkbox" id="qallm"> LLM 兜底</label>
+ <button onclick="toggleLedger()" title="SQLite 出入库台账: 分拣下发自动记入, 这里可手动记出">📦 仓库台账</button>
  </div>
 <div class="row">
  <button id="micbtn" class="primary" style="min-width:120px" onclick="authToggle()">🎤 授权麦克风</button>
@@ -360,6 +396,7 @@ PAGE = """<!doctype html>
 </div>
 <div id="cards" class="cards"></div>
 <div id="yardcards" class="cards"></div>
+<div id="ledger" style="display:none;margin:14px 0"></div>
 <div id="out"></div>
 <details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
 <script>
@@ -374,6 +411,38 @@ async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
 const domain='yard'; // 页面专属料场分拣 (后端 API 仍支持 fruit/block/mixed 基准域)
+const LEDGER_MAT={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
+// ---- 仓库台账 (yard_ledger.py, SQLite): 库存=入-出; 分拣下发自动记入, 面板内可手动记出 ----
+let ledOpen=false;
+function toggleLedger(){ledOpen=!ledOpen;$('ledger').style.display=ledOpen?'block':'none';if(ledOpen)refreshLedger();}
+async function refreshLedger(){
+ try{
+  const d=await (await fetch('/ledger')).json();
+  let yc='';[1,2,3].forEach(y=>{
+   const it=d.yards[y].items,tot=d.yards[y].total;
+   const rows=Object.entries(it).map(([m,v])=>
+    `<div class="yd">${v<0?'<span style="color:#f87171">':' '}${LEDGER_MAT[m]||m} × ${v}</div>`).join('')||'<div class="yd">—</div>';
+   yc+=`<div class="card"><div class="k">${y}号料场 库存</div><div class="v ${tot?'':'muted'}">${tot>0?tot+' 件':(tot<0?'负 '+Math.abs(tot):'空')}</div>${rows}</div>`;
+  });
+  let h='<div class="cards">'+yc+'</div>'
+   +sec('📜 最近流水 <span class="chip">'+d.moves+' 笔 · 入=分拣下发自动记 出=手动</span>')
+   +'<pre style="font-size:12px">'+(d.recent.length?d.recent.map(r=>
+    `${r.ts.slice(5)} ${r.direction==='in'?'入':'<span style="color:#fb923c">出</span>'} ${r.yard}号 ${LEDGER_MAT[r.material]||r.material} ×${r.qty} (${r.path})`).join(String.fromCharCode(10)):'暂无流水 — 跑一条分拣指令试试')+'</pre>'
+   +sec('📤 手动出库')+'<div class="row">'
+   +'<select id="loyard">'+[1,2,3].map(y=>`<option value="${y}">${y}号</option>`).join('')+'</select>'
+   +'<select id="lomat">'+Object.entries(LEDGER_MAT).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')+'</select>'
+   +'<input id="loqty" type="number" min="1" max="999" value="1" style="width:72px">'
+   +'<button onclick="ledgerOut()">出库</button></div>';
+  $('ledger').innerHTML=h;
+ }catch(e){$('ledger').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+}
+async function ledgerOut(){
+ const q=+$('loqty').value;
+ if(!(q>=1&&q<=999)){alert('数量需 1~999');return}
+ try{await jpost('/ledger/out',{yard:+$('loyard').value,material:$('lomat').value,qty:q});
+  $('loqty').value=1;refreshLedger();
+ }catch(e){alert('出库失败: '+e.message)}
+}
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
  if(d.path==='QA'){['fn1','fn2','fn3','fn7'].forEach(i=>set(i,'on'));['fn4','fn5','fn6'].forEach(i=>set(i,'off'))}
@@ -405,6 +474,8 @@ function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+
 function render(d){
  drawFlow(d);
  setLastRun(d);
+ // 台账面板开着时, 每次产生可执行下发 (已自动记入) 就刷新
+ if(ledOpen&&d.actions&&d.actions.length&&['FAST','EXPAND','PARTIAL'].includes(d.path))refreshLedger();
  const pcls='path-'+d.path;
  const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
   red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
