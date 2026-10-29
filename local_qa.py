@@ -15,6 +15,8 @@
                 (显式 最近/上次/刚才 才进; 由 loop_ui 每次 /run 后注入)
              c) 「现在各个仓库分别有多少内容」/「仓库库存」= 全部料场 累计库存
                 (门 _STOCK_RE: 各/分别/库存/仓库里有 等; 与 a 的区别: 不分料场)
+             d) 「哪个仓库有蓝色方块」= 物料→仓库 反查 (台账, 哪些料场有该物料库存;
+                门: 物料词 + 哪 + 有/在/库存)
 3. 服务状态   "8002还在跑吗" / "网关正常吗" (本机 TCP 端口探测)
 4. 资源占用   "CPU占用多少" / "内存和磁盘" (/proc/loadavg, /proc/meminfo, disk_usage)
 5. LLM 兜底   (可选, 默认关) 规则层认不出的问句, 让 LLM 基于注入事实回答;
@@ -71,7 +73,7 @@ _TIME_KW = re.compile(r"几点|时间|星期|日期|几月|今天|现在.*点")
 _RES_KW = re.compile(r"CPU|cpu|占用|内存|磁盘|硬盘|空间|负载|用了多少")
 _QA_KW = re.compile(
     r"几点|时间|星期|周几|礼拜几|日期|还在|是否|正常吗|正常嘛|占用|多少|多长|几件|加载|"
-    r"内存|硬盘|磁盘|网络|CPU|cpu|服务|进程|端口|回答|是什么|什么|状态|还有|跑吗|在吗")
+    r"内存|硬盘|磁盘|网络|CPU|cpu|服务|进程|端口|回答|是什么|什么|状态|还有|跑吗|在吗|哪")
 
 # 最近一次分拣指令 (由 loop_ui 在每次 /run 后注入)
 _LAST_ORDER = []
@@ -177,6 +179,34 @@ def _ans_yard_stock(text):
     return f"{y}号仓库: {tot}件{detail}"
 
 
+def _ans_mat_where(text):
+    """物料→仓库 反查: 「哪个仓库有蓝色方块？」/「蓝色方块在哪个仓库」— 查台账
+    (yard_ledger) 哪些料场 有该物料 净库存 (>0). 门: 物料词 + 哪 + (有|在|库存|存),
+    避免误抢 分配指令 (「放到哪个仓库」类无 有/在 库存语义); 全仓 0 答「没有」."""
+    mat, cn = None, None
+    m = _MAT_WHERE_PAT.search(text)
+    if m:
+        mat = _mat_where_key(m.group(0))
+        cn = _MATCN[mat]
+    if mat is None:
+        return None
+    try:
+        s = yard_ledger.stock()
+    except Exception:
+        return None
+    hits = []
+    for y in (1, 2, 3):
+        n = s["yards"].get(y, {}).get("items", {}).get(mat, 0)
+        if n > 0:
+            hits.append((y, n))
+    if not hits:
+        return f"仓库里目前没有{cn}"
+    if len(hits) == 1:
+        return f"{cn}: 在{hits[0][0]}号仓库, {hits[0][1]}件"
+    parts = " ".join(f"{y}号({n}件)" for y, n in hits)
+    return f"{cn}在: {parts}"
+
+
 def _ans_yard(text):
     m = _YARD_Q_RE.search(text)
     if not m:
@@ -224,6 +254,19 @@ def _ans_resource(text):
 _MATCN = {"red_apple": "红苹果", "green_apple": "绿苹果", "banana": "香蕉",
           "pear": "梨", "red_block": "红方块", "green_block": "绿方块",
           "yellow_block": "黄方块", "blue_block": "蓝方块"}
+
+# 物料反查用: 允许 颜色+色+方块 口语形态 (「蓝色方块」/「蓝方块」都认)
+_MAT_WHERE_PAT = re.compile(r"(?:红|绿)(?:色)?苹果|(?:红|绿|黄|蓝)(?:色)?方块|香蕉|梨")
+
+
+def _mat_where_key(word):
+    """「蓝色方块」/「绿苹果」等口语形态 -> 物料 key (与 _MATCN 对齐)."""
+    if word.endswith("苹果"):
+        return "red_apple" if word[0] == "红" else "green_apple"
+    if word.endswith("方块"):
+        return {"红": "red_block", "绿": "green_block",
+                "黄": "yellow_block", "蓝": "blue_block"}[word[0]]
+    return {"香蕉": "banana", "梨": "pear"}[word]
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +378,9 @@ def answer(text):
     """问句 -> (hit, answer, dt). hit=False 表示不是识别得到的问句, 走分拣路径."""
     t0 = time.perf_counter()
     t = (text or "").strip()
-    if not t or _MATER_RE.search(t):
+    # 物料词 = 分拣指令, 绝不进问答 (与规则层同门); 非问句不答。
+    # 例外: 带「哪」的物料问句 = 反查查询 (「哪个仓库有蓝色方块」), 放行给 _ans_mat_where
+    if not t or (_MATER_RE.search(t) and not re.search(r"哪", t)):
         return False, "", 0.0
     if not _QA_KW.search(t):
         return False, "", 0.0
@@ -352,6 +397,12 @@ def answer(text):
             # 累计库存 (台账): 「现在仓库里有多少东西」等 — 先于 单料场最近指令;
             # 带 显式料场号 (N号...) 的问句 留给 最近指令 分支
             ans = _ans_stock_ledger()
+            if ans is None:
+                return False, "", 0.0
+        elif _MAT_WHERE_PAT.search(t) and re.search(r"哪", t) and re.search(
+                r"有|在|库存|存", t):
+            # 物料→仓库 反查: 「哪个仓库有蓝色方块」— 查台账哪些料场有该物料库存
+            ans = _ans_mat_where(t)
             if ans is None:
                 return False, "", 0.0
         elif _YARD_Q_RE.search(t) and re.search(r"最近|上次|刚才", t) and re.search(
