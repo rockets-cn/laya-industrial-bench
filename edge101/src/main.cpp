@@ -6,8 +6,11 @@
 // 纯逻辑 (状态机/解析/协议 JSON) 在 lib/SortLogic, 主机可单测.
 #include <Arduino.h>
 #include <ETH.h>
+#include <WiFi.h>
+#include <NetworkClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <esp_netif.h>
 
 #include "config.h"
 #include "Conveyor.h"
@@ -21,9 +24,9 @@ static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter
 static sort::HuskyLens hl2(MATERIAL_MAP, MATERIAL_MAP_LEN, HL2_RETRIGGER_MS);
 
 static HardwareSerial hlSerial(2);            // UART2 重映射到 GPIO5/12
-static EthernetClient ethClient;
+static NetworkClient ethClient;               // 3.x: 以太网客户端 (自动绑定默认 netif)
 static PubSubClient mqtt(ethClient);
-static ServoI2C servos(SERVO_SDA_PIN, SERVO_SCL_PIN);
+static ServoI2C servos;
 
 // ================= 步进: 非阻塞步脉冲 =================
 static uint32_t nextStepUs = 0;
@@ -97,6 +100,11 @@ static void sweepTick() {
 }
 
 // ================= MQTT =================
+static volatile bool ethUp = false;
+static void ethEvent(arduino_event_id_t event, arduino_event_info_t) {
+    if (event == ARDUINO_EVENT_ETH_GOT_IP) ethUp = true;
+    if (event == ARDUINO_EVENT_ETH_LOST_IP) ethUp = false;
+}
 
 static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
     std::string t(topic);
@@ -132,9 +140,9 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
 
 static void mqttConnect() {
     char id[40];
-    snprintf(id, sizeof(id), "%s-%04X", MQTT_CLIENT_ID, ESP.getChipId());
-    if (mqtt.connect(id, nullptr, nullptr,
-                     BROKER_IP.toString().c_str(), BROKER_PORT)) {
+    snprintf(id, sizeof(id), "%s-%04lX", MQTT_CLIENT_ID,
+             (unsigned long)(ESP.getEfuseMac() & 0xFFFF));
+    if (mqtt.connect(id, nullptr, nullptr)) {
         mqtt.subscribe(sort::conveyorCmdTopic().c_str(), 1);
         for (int n = 1; n <= 3; n++)
             mqtt.subscribe(sort::sorterCmdTopic(n).c_str(), 1);
@@ -145,7 +153,7 @@ static void mqttConnect() {
 // ================= 视觉 (HuskyLens 2) =================
 static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
     char fid[24];
-    snprintf(fid, sizeof(fid), "hl2-%u", ev.seq);
+    snprintf(fid, sizeof(fid), "hl2-%lu", (unsigned long)ev.seq);
     std::string p = sort::visionJson(ev.material.c_str(), 1.0, fid,
                                      ev.x, ev.y, ev.w, ev.h);
     mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
@@ -159,10 +167,11 @@ static void onSerialCmd(const String& line) {
     if (line == "help") {
         Serial.println("help | state | stepper <n> | sweep <n> | vision <material>");
     } else if (line == "state") {
-        Serial.printf("conveyor=%s s1=%s s2=%s s3=%s diverted=%u/%u/%u steps=%llu\n",
+        Serial.printf("conveyor=%s s1=%s s2=%s s3=%s diverted=%lu/%lu/%lu steps=%llu\n",
                       conv.state(), sorters[0].state(), sorters[1].state(),
-                      sorters[2].state(), sorters[0].diverted_total,
-                      sorters[1].diverted_total, sorters[2].diverted_total,
+                      sorters[2].state(), (unsigned long)sorters[0].diverted_total,
+                      (unsigned long)sorters[1].diverted_total,
+                      (unsigned long)sorters[2].diverted_total,
                       (unsigned long long)conv.steps_total);
     } else if (line.startsWith("stepper")) {
         int n = line.substring(8).toInt();
@@ -179,11 +188,37 @@ static void onSerialCmd(const String& line) {
             Serial.printf("sweep %d done\n", n);
         }
     } else if (line.startsWith("vision")) {
-        String m = line.substring(8).trim();
+        String m = line.substring(8);
+        m.trim();
         std::string p = sort::visionJson(m.c_str(), 1.0, "console", 0, 0, 0, 0);
         mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
         Serial.printf("vision %s published\n", m.c_str());
     }
+}
+
+// ================= 板载以太网 (IP101 PHY, DFRobot 官方 SDK 参数) =================
+// PHY=IP101 (注册为 TLK110 驱动), addr=1, MDC=GPIO4, MDIO=GPIO13, PWR=GPIO2,
+// 50MHz 参考时钟走 GPIO0 (以上引脚板内走线, 不出 40PIN 扩展口, 与外设不冲突).
+// 此版本 arduino-esp32 无静态 IP begin() 重载: 先起 PHY + DHCP, 再停 DHCP 设静态.
+static void applyStaticIp() {
+    esp_netif_t* nif = nullptr;
+    for (int i = 0; i < 30 && !nif; i++) {     // 等 ETH 任务创建 netif
+        delay(100);
+        nif = esp_netif_get_handle_from_ifkey("eth0");
+    }
+    if (!nif) {
+        Serial.println("[eth] netif 未创建, 保持 DHCP");
+        return;
+    }
+    esp_netif_dhcpc_stop(nif);
+    esp_netif_ip_info_t info;
+    esp_netif_set_ip4_addr(&info.ip,        EDGE_IP[0],   EDGE_IP[1],   EDGE_IP[2],   EDGE_IP[3]);
+    esp_netif_set_ip4_addr(&info.netmask,   EDGE_MASK[0], EDGE_MASK[1], EDGE_MASK[2], EDGE_MASK[3]);
+    esp_netif_set_ip4_addr(&info.gw,        EDGE_GW[0],   EDGE_GW[1],   EDGE_GW[2],   EDGE_GW[3]);
+    esp_netif_set_ip_info(nif, &info);
+    Serial.printf("[eth] 静态 IP %s gw %s (broker %s:%d)\n",
+                  EDGE_IP.toString().c_str(), EDGE_GW.toString().c_str(),
+                  BROKER_IP.toString().c_str(), BROKER_PORT);
 }
 
 // ================= 生命周期 =================
@@ -202,13 +237,12 @@ void setup() {
                   SERVO_ADDR, SERVO_CH[0], SERVO_CH[1], SERVO_CH[2]);
 
     hlSerial.begin(HL2_BAUD, SERIAL_8N1, HL2_RX_PIN, HL2_TX_PIN);
-    Serial.printf("[hl2] UART2 @%d rx=GPIO%d tx=GPIO%d\n",
-                  HL2_BAUD, HL2_RX_PIN, HL2_TX_PIN);
+    Serial.printf("[hl2] UART2 @%lu rx=GPIO%d tx=GPIO%d\n",
+                  (unsigned long)HL2_BAUD, HL2_RX_PIN, HL2_TX_PIN);
 
-    ETH.begin(EDGE_IP, EDGE_DNS, EDGE_GW, EDGE_MASK);
-    Serial.printf("[eth] 等待板载以太网 (静态 %s, broker %s:%d)...\n",
-                  EDGE_IP.toString().c_str(), BROKER_IP.toString().c_str(),
-                  BROKER_PORT);
+    ETH.begin(ETH_PHY_TLK110, 1, 4, 13, 2, ETH_CLOCK_GPIO0_IN);
+    WiFi.onEvent(ethEvent);   // ETH 事件经 Network 事件循环分发 (3.x 无 ETH.onEvent)
+    applyStaticIp();
 
     mqtt.setServer(BROKER_IP, BROKER_PORT);
     mqtt.setCallback(onMqttMessage);
@@ -221,10 +255,9 @@ static uint32_t lastMqttTryMs = 0;
 void loop() {
     steerStepper();
     sweepTick();
-    if (!mqtt.connected() && millis() - lastMqttTryMs > 2000) {
+    if (!mqtt.connected() && ethUp && millis() - lastMqttTryMs > 2000) {
         lastMqttTryMs = millis();
-        if (ETH.status() == ETH_CONNECTED || ETH.status() == ETH_GOT_IP)
-            mqttConnect();
+        mqttConnect();
     }
     mqtt.loop();
 

@@ -28,7 +28,7 @@ class ServoI2C {
 
     // 写占空比 (0..4095; 4095 = 满占空, 0 = 关)
     int setDuty(uint8_t ch, uint16_t duty) {
-        return writeBlock(ch, duty, 0, duty);
+        return writeBlock(ch, 0, duty);
     }
 
     // 写脉宽 (us, 50Hz)

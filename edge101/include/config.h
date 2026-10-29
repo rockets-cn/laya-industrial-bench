@@ -48,6 +48,8 @@ static const uint32_t SERVO_SWEEP_MS   = 800;  // 一次扫掠总时长 (拨出 
 static const uint32_t SERVO_ITEM_GAP_MS = 900; // 件间间隔 (>= 扫掠时长)
 
 // ---------- 板载以太网 (RJ45, 网线直连) ----------
+// PHY: IP101 (TLK110 驱动), 地址 1; MDC=GPIO4 MDIO=GPIO13 PWR=GPIO2,
+// 50MHz 参考时钟 GPIO0 — 全部板内走线 (参数出自 DFRobot 官方 SDK 1.0.1).
 // 拓扑: 本机(192.168.2.1/24, broker :1883) <--网线--> EDGE101(192.168.2.2)
 static const IPAddress EDGE_IP(192, 168, 2, 2);
 static const IPAddress EDGE_MASK(255, 255, 255, 0);
