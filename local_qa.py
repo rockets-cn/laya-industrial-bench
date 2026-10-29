@@ -9,11 +9,12 @@
 
 类别:
 1. 时间/日期   "现在几点了" / "今天星期几" / "明天是星期几" (相对日期的星期)
-2. 料场状态   a) "1号料场有多少件" = 最近一次分拣指令的库存 (由 loop_ui 注入)
-             b) "现在各个仓库分别有多少内容" = 累计库存 (SQLite 出入库台账 yard_ledger,
-                分拣下发自动记入, 入-出; 门: 各/分别/库存/总共 等, 见 _STOCK_RE)
-             c) "3号仓库现在有多少货" = 指定料场 累计库存 (台账, 必须带 现在/目前/当前;
-                不带 现在 的「N号有多少」仍走 a)
+2. 料场状态   a) 「1号料场有多少件」= 该料场 累计库存 (SQLite 台账, 默认答案;
+                空仓答「暂无库存」, 含 物料明细 top2)
+             b) 「最近一次 1号料场的指令有多少」= 最近一次分拣指令的库存
+                (显式 最近/上次/刚才 才进; 由 loop_ui 每次 /run 后注入)
+             c) 「现在各个仓库分别有多少内容」/「仓库库存」= 全部料场 累计库存
+                (门 _STOCK_RE: 各/分别/库存/仓库里有 等; 与 a 的区别: 不分料场)
 3. 服务状态   "8002还在跑吗" / "网关正常吗" (本机 TCP 端口探测)
 4. 资源占用   "CPU占用多少" / "内存和磁盘" (/proc/loadavg, /proc/meminfo, disk_usage)
 5. LLM 兜底   (可选, 默认关) 规则层认不出的问句, 让 LLM 基于注入事实回答;
@@ -154,9 +155,9 @@ def _ans_stock_ledger():
 
 
 def _ans_yard_stock(text):
-    """指定料场的 累计库存 (台账): 「3号仓库现在有多少货」— 数据源 yard_ledger SQLite
-    (入-出, 含物料明细 top2). 与 _ans_yard (最近一次分拣指令) 的区别: 这里答 当前 存量.
-    触发条件由 answer() 控制: 必须带 现在/目前/当前 (无 现在 的「N号有多少」仍走最近指令)."""
+    """指定料场的 累计库存 (台账): 「一号仓库里有多少货」/「3号仓库现在有多少货」—
+    数据源 yard_ledger SQLite (入-出, 含物料明细 top2). 这是「N号有多少」的 默认 答案;
+    仅当显式问 最近/上次/刚才 那单时, 才走 _ans_yard (最近一次分拣指令)."""
     m = _YARD_Q_RE.search(text)
     if not m:
         return None
@@ -353,15 +354,16 @@ def answer(text):
             ans = _ans_stock_ledger()
             if ans is None:
                 return False, "", 0.0
-        elif _YARD_Q_RE.search(t) and re.search(r"现在|目前|当前", t) and re.search(
-                r"多少|几件|有.*货|有什么|什么货", t):
-            # 指定料场的 累计库存 (台账): 「3号仓库现在有多少货」— 必须带 现在/目前/当前,
-            # 不带 现在 的「N号有多少」留给 最近一次分拣指令 分支 (保持 c25 语义)
+        elif _YARD_Q_RE.search(t) and re.search(r"最近|上次|刚才", t) and re.search(
+                r"多少|几件|什么|内容|指令|货", t):
+            # 显式问「最近/上次那单」→ 最近一次分拣指令的库存 (loop_ui 注入)
+            ans = _ans_yard(t)
+        elif _YARD_Q_RE.search(t) and re.search(r"多少|几件|还有|状态|空吗|有.*货|什么", t):
+            # 「N号仓库有多少货」默认答 该料场 累计库存 (台账) — 2026-10-29 用户语音实测:
+            # 「一号仓库里有多少货？」期望 库存 而非「最近一次指令」
             ans = _ans_yard_stock(t)
             if ans is None:
                 return False, "", 0.0
-        elif _YARD_Q_RE.search(t) and re.search(r"多少|几件|还有|状态|空吗", t):
-            ans = _ans_yard(t)
         elif any(pat.search(t) for pat, _, _ in _PORT_KW) or re.search(
                 r"服务|进程|端口|还在跑|跑吗|在吗|正常吗", t):
             ans = _ans_service(t)
