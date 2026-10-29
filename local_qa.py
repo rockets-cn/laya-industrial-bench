@@ -12,6 +12,8 @@
 2. 料场状态   a) "1号料场有多少件" = 最近一次分拣指令的库存 (由 loop_ui 注入)
              b) "现在各个仓库分别有多少内容" = 累计库存 (SQLite 出入库台账 yard_ledger,
                 分拣下发自动记入, 入-出; 门: 各/分别/库存/总共 等, 见 _STOCK_RE)
+             c) "3号仓库现在有多少货" = 指定料场 累计库存 (台账, 必须带 现在/目前/当前;
+                不带 现在 的「N号有多少」仍走 a)
 3. 服务状态   "8002还在跑吗" / "网关正常吗" (本机 TCP 端口探测)
 4. 资源占用   "CPU占用多少" / "内存和磁盘" (/proc/loadavg, /proc/meminfo, disk_usage)
 5. LLM 兜底   (可选, 默认关) 规则层认不出的问句, 让 LLM 基于注入事实回答;
@@ -149,6 +151,29 @@ def _ans_stock_ledger():
         return "暂无库存，共0件"
     parts = [f"{y}号{s['yards'][y]['total']}件" for y in (1, 2, 3)]
     return " ".join(parts) + f"，共{s['grand_total']}件"
+
+
+def _ans_yard_stock(text):
+    """指定料场的 累计库存 (台账): 「3号仓库现在有多少货」— 数据源 yard_ledger SQLite
+    (入-出, 含物料明细 top2). 与 _ans_yard (最近一次分拣指令) 的区别: 这里答 当前 存量.
+    触发条件由 answer() 控制: 必须带 现在/目前/当前 (无 现在 的「N号有多少」仍走最近指令)."""
+    m = _YARD_Q_RE.search(text)
+    if not m:
+        return None
+    y = _YARD_NUM.get(m.group(1))
+    if y not in (1, 2, 3):
+        return None
+    try:
+        s = yard_ledger.stock()
+    except Exception:
+        return None
+    d = s["yards"][y]
+    tot = d["total"]
+    if tot <= 0 and not d["items"]:
+        return f"{y}号仓库: 暂无库存, 0件"
+    top = sorted(d["items"].items(), key=lambda kv: -kv[1])[:2]
+    detail = " (" + " ".join(f"{_MATCN.get(k, k)} x{v}" for k, v in top) + ")" if top else ""
+    return f"{y}号仓库: {tot}件{detail}"
 
 
 def _ans_yard(text):
@@ -326,6 +351,13 @@ def answer(text):
             # 累计库存 (台账): 「现在仓库里有多少东西」等 — 先于 单料场最近指令;
             # 带 显式料场号 (N号...) 的问句 留给 最近指令 分支
             ans = _ans_stock_ledger()
+            if ans is None:
+                return False, "", 0.0
+        elif _YARD_Q_RE.search(t) and re.search(r"现在|目前|当前", t) and re.search(
+                r"多少|几件|有.*货|有什么|什么货", t):
+            # 指定料场的 累计库存 (台账): 「3号仓库现在有多少货」— 必须带 现在/目前/当前,
+            # 不带 现在 的「N号有多少」留给 最近一次分拣指令 分支 (保持 c25 语义)
+            ans = _ans_yard_stock(t)
             if ans is None:
                 return False, "", 0.0
         elif _YARD_Q_RE.search(t) and re.search(r"多少|几件|还有|状态|空吗", t):
