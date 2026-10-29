@@ -9,7 +9,9 @@
 
 类别:
 1. 时间/日期   "现在几点了" / "今天星期几" / "明天是星期几" (相对日期的星期)
-2. 料场状态   "1号料场有多少件" (最近一次分拣指令的库存, 由 loop_ui 注入)
+2. 料场状态   a) "1号料场有多少件" = 最近一次分拣指令的库存 (由 loop_ui 注入)
+             b) "现在各个仓库分别有多少内容" = 累计库存 (SQLite 出入库台账 yard_ledger,
+                分拣下发自动记入, 入-出; 门: 各/分别/库存/总共 等, 见 _STOCK_RE)
 3. 服务状态   "8002还在跑吗" / "网关正常吗" (本机 TCP 端口探测)
 4. 资源占用   "CPU占用多少" / "内存和磁盘" (/proc/loadavg, /proc/meminfo, disk_usage)
 5. LLM 兜底   (可选, 默认关) 规则层认不出的问句, 让 LLM 基于注入事实回答;
@@ -24,6 +26,18 @@ import socket
 import time
 import urllib.request
 
+# 出入库台账 (yard_ledger.py, SQLite): 累计库存问答的数据源.
+# 直接 import; 若 sys.path 不含本目录 (被按文件路径单独加载时), 退回按路径加载.
+try:
+    import yard_ledger
+except Exception:
+    import importlib.util as _ilu
+    _sp = _ilu.spec_from_file_location(
+        "yard_ledger",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "yard_ledger.py"))
+    yard_ledger = _ilu.module_from_spec(_sp)
+    _sp.loader.exec_module(yard_ledger)
+
 MAX_ANSWER_LEN = 30      # 答案硬上限 (字)
 QUERY_BUDGET_S = 3.0    # 整个问答的耗时预算
 PORT_PROBE_S = 0.4      # 单端口 TCP 探测超时
@@ -33,6 +47,9 @@ _MATER_RE = re.compile(r"香蕉|苹果|梨|方块")
 # 料场号
 _YARD_Q_RE = re.compile(r"([123一二两])\s*号\s*(?:料场|仓库|场地|库|位置|区)?")
 _YARD_NUM = {"1": 1, "2": 2, "3": 3, "一": 1, "二": 2, "两": 2, "俩": 2, "三": 3}
+# 累计库存问句门 (各/分别/总共/一共/库存): 答 台账 累计库存, 区别于 _YARD_Q_RE 的
+# 「N号料场有多少」= 最近一次分拣指令 (见 _ans_yard). 要求 仓库/料场 语境, 防误抢.
+_STOCK_RE = re.compile(r"各(个)?(?:仓库|料场)|(?:仓库|料场|库)(?:里)?(?:总|分别|分别有)|库存|总共有多少|总共多少|一共多少")
 _DAY_CN = "一二三四五六日"   # 星期映射: 下标 0=周一 ... 6=周日 (对齐 tm_wday/weekday())
 
 # 关键词 -> 端口 (服务状态问句)
@@ -46,7 +63,7 @@ _TIME_KW = re.compile(r"几点|时间|星期|日期|几月|今天|现在.*点")
 _RES_KW = re.compile(r"CPU|cpu|占用|内存|磁盘|硬盘|空间|负载|用了多少")
 _QA_KW = re.compile(
     r"几点|时间|星期|周几|礼拜几|日期|还在|是否|正常吗|正常嘛|占用|多少|多长|几件|加载|"
-    r"内存|硬盘|磁盘|网络|CPU|cpu|服务|进程|端口|回答|是什么|状态|还有|跑吗|在吗")
+    r"内存|硬盘|磁盘|网络|CPU|cpu|服务|进程|端口|回答|是什么|什么|状态|还有|跑吗|在吗")
 
 # 最近一次分拣指令 (由 loop_ui 在每次 /run 后注入)
 _LAST_ORDER = []
@@ -113,6 +130,20 @@ def _ans_weekday(text):
     label, off = (m.group(0), _DAY_OFFSET[m.group(0)]) if m else ("今天", 0)
     d = datetime.date.today() + datetime.timedelta(days=off)
     return f"{label}是星期{_DAY_CN[d.weekday()]}"
+
+
+def _ans_stock_ledger():
+    """累计库存 (出入库台账): 现在各仓库分别有多少内容 — 数据源 yard_ledger SQLite
+    (分拣下发自动记入, 页面手动记出; 库存 = 入 - 出). 台账读不到时返回 None -> 不答.
+    与 _ans_yard (最近一次分拣指令) 的区别: 这里答的是 累计 存量."""
+    try:
+        s = yard_ledger.stock()
+    except Exception:
+        return None
+    if s["moves"] == 0:
+        return "暂无库存，共0件"
+    parts = [f"{y}号{s['yards'][y]['total']}件" for y in (1, 2, 3)]
+    return " ".join(parts) + f"，共{s['grand_total']}件"
 
 
 def _ans_yard(text):
@@ -222,6 +253,13 @@ def _collect_facts():
         lines.append(f"最近一次分拣指令: {s}" if s else "最近一次分拣指令: 无")
     else:
         lines.append("最近一次分拣指令: 无")
+    # 累计库存 (出入库台账) — LLM 兜底问答的注入事实
+    try:
+        _s = yard_ledger.stock()
+        _parts = " ".join(f"{y}号{_s['yards'][y]['total']}件" for y in (1, 2, 3))
+        lines.append(f"当前仓库库存(累计入-出): {_parts}，共{_s['grand_total']}件")
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
@@ -279,6 +317,11 @@ def answer(text):
                 return False, "", 0.0
         elif _TIME_KW.search(t):
             ans = _ans_time()
+        elif _STOCK_RE.search(t):
+            # 累计库存 (台账): 「现在各个仓库分别有多少内容」等 — 先于 单料场最近指令
+            ans = _ans_stock_ledger()
+            if ans is None:
+                return False, "", 0.0
         elif _YARD_Q_RE.search(t) and re.search(r"多少|几件|还有|状态|空吗", t):
             ans = _ans_yard(t)
         elif any(pat.search(t) for pat, _, _ in _PORT_KW) or re.search(
