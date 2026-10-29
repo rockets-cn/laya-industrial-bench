@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -211,6 +212,38 @@ def presets():
     return [{"name": n, "text": t, "domain": d} for n, t, d in PRESETS]
 
 
+# MQTT 分拣网关 (sort_mqtt.py, 默认 :8123): 把 Laya 分类结果下发到分拣线
+GATEWAY_URL = os.environ.get("SORT_GATEWAY_URL", "http://127.0.0.1:8123")
+
+
+@app.post("/dispatch")
+async def dispatch(request: Request):
+    """把最近一次 /run 的 yard actions 转发到分拣网关 (白名单校验在网关侧)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(422, "bad json")
+    actions = body.get("actions")
+    if not isinstance(actions, list) or not actions:
+        raise HTTPException(422, "actions required")
+    req = urllib.request.Request(
+        GATEWAY_URL + "/dispatch",
+        data=json.dumps({"actions": actions, "source": "loop_ui",
+                          "path": body.get("path")}).encode(),
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode() or "{}")
+        except Exception:
+            detail = {}
+        raise HTTPException(e.code, detail.get("error", f"gateway error {e.code}"))
+    except Exception as e:
+        raise HTTPException(503, f"分拣网关不可达 ({GATEWAY_URL}): {e}")
+
+
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -284,6 +317,7 @@ PAGE = """<!doctype html>
  <select id="preset" onchange="runPresetSel()" title="测试指令预设"><option value="" selected>预设指令…</option></select>
  <input id="txt">
  <button class="primary" onclick="runText()">▶ 运行</button>
+ <button id="btnDispatch" onclick="dispatchRun()" disabled title="把最近一次运行的分类结果下发到 MQTT 分拣线">📤 下发分拣线</button>
 </div>
 <div class="row">
  <button id="micbtn" class="primary" style="min-width:120px" onclick="authToggle()">🎤 授权麦克风</button>
@@ -322,9 +356,21 @@ async function runText(){
  $('out').innerHTML=sec('运行中…');
  try{render(await jpost('/run',{text:t,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
 }
+let lastRun=null;
+function setLastRun(d){lastRun=(d&&d.actions&&d.actions.length&&(d.path==='FAST'||d.path==='EXPAND'))?d:null;
+ const b=$('btnDispatch');if(b){b.disabled=!lastRun;
+ b.title=lastRun?('把最近一次运行的 '+lastRun.actions.length+' 条指令下发到 MQTT 分拣线'):'先运行并产生可执行指令 (FAST/EXPAND) 才能下发'}}
+async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
+ const b=$('btnDispatch');b.disabled=true;
+ try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
+  lastRun=null;setLastRun(null);
+  $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued}) — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
+ }catch(e){lastRun=keep;setLastRun(keep);
+  $('out').innerHTML=sec('📤 分拣下发')+`<pre style="color:#f87171">❌ ${e}</pre>`+$('out').innerHTML;}}
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 function render(d){
  drawFlow(d);
+ setLastRun(d);
  const pcls='path-'+d.path;
  const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
   red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
