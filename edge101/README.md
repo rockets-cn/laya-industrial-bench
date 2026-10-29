@@ -47,6 +47,9 @@ pio device monitor         # 115200 串口监视
 ./tests/host/run_tests.sh  # 42 项: Conveyor/Sorter 状态机, HL2 帧+去重, 协议 JSON
 ```
 
+构建已验证 (2026-10-29): `pio run` SUCCESS,
+Flash 668KB/1.25MB (51%), RAM 34KB/320KB (10.4%), 无告警。
+
 > `pio` 不在 PATH 时: 项目 venv 里已装 PlatformIO 6.2.0,
 > 用 `<repo>/.venv/bin/pio` 代替。
 
@@ -95,6 +98,13 @@ vision <material>    # 手动注入一条视觉事件 (联调用)
 
 wiki 提供 Arduino IDE 板包 (package_Edge101_index.json, 板名
 "Edge101 IOT Controller")。本固件用 PlatformIO 的通用 `esp32dev`
-+ 16MB flash 构建, 依赖的核心库 (`ETH.h` / `PubSubClient` / ArduinoJson)
-与官方 SDK 一致; 若烧录遇到问题, 可对照官方板包的 flash/PSRAM 参数微调
-`platformio.ini`。
++ 16MB flash 构建, 与官方 SDK 的差异已对齐:
+
+- **PHY 参数**: 官方 SDK 实测 PHY=IP101 (TLK110 驱动), 地址 1,
+  MDC=GPIO4, MDIO=GPIO13, PWR=GPIO2, 50MHz 参考时钟=GPIO0 —
+  全部板内走线, 固件按此 6 参 `ETH.begin()` 启动, 不用 W5500 SPI 模块。
+- **静态 IP**: 该版本 arduino-esp32 无静态 IP begin() 重载, 固件在
+  `ETH.begin()` 后取 `eth0` netif, `esp_netif_dhcpc_stop` +
+  `esp_netif_set_ip_info` 设 192.168.2.2/24 (config.h 可改)。
+- 依赖库与官方一致: `ETH.h` (框架) + PubSubClient + ArduinoJson
+  (本地 vendored: 注册表 nickpurdal/PubSubClient 已 404)。

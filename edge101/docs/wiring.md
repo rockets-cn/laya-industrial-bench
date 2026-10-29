@@ -64,11 +64,13 @@ P38=板载按钮), 34/37/38/39 无上拉。
 
 ### 以太网 (板载 RJ45, 网线直连)
 
-- 无需外接模块。`ETH.begin(192.168.2.2, ...)` 静态配置。
+- 无需外接模块。PHY=**IP101** (板内 MDIO 走线: MDC=GPIO4/MDIO=GPIO13/
+  PWR=GPIO2/参考时钟=GPIO0, 参数出自 DFRobot 官方 SDK, 不占扩展口)。
+- 固件 `ETH.begin(ETH_PHY_TLK110, 1, 4, 13, 2, ETH_CLOCK_GPIO0_IN)` 后
+  停 DHCP 设静态 192.168.2.2/24 (config.h 可改)。
 - 网线: EDGE101 ↔ 本机 (192.168.2.1/24, broker :1883)。
 - **注意**: 本机直连若不开 DHCP/共享, 静态 IP 方案直接可用 (我们就是静态);
   wiki 演示的「电脑共享网络」场景可跳过。
-- PHY 由 arduino-esp32 的 ETH 库通过 MDIO 自动识别, 无需配置。
 
 ## 供电架构
 
