@@ -66,5 +66,6 @@
 
 - 实体闭环: 按 `edge101/docs/wiring.md` 接线 → `pio run -t upload` →
   串口 `state` / `sweep` / `stepper` 自测 → 网关 `POST /dispatch` 全链路。
-- 固件编译验证 (今晚已跑): ESP32 交叉编译结果见会话记录;
-  主机单测 `./edge101/tests/host/run_tests.sh` 42/42。
+- 固件编译: ESP32 交叉编译已跑通 (pio run SUCCESS, Flash 668KB/1.25MB,
+  RAM 34KB/320KB, 2026-10-29); 主机单测
+  `./edge101/tests/host/run_tests.sh` 42/42 全绿。
