@@ -31,11 +31,19 @@ static const uint8_t  HL2_TX_PIN   = 5;     // 板 TX -> HL2 RX
 static const uint32_t HL2_BAUD     = 38400;
 static const uint32_t HL2_RETRIGGER_MS = 500;  // 同物料进画面去重窗口
 
-// ---------- 步进电机 (A4988/DRV8825, 传送带) ----------
+// ---------- 步进电机 (42 两相 + MKS SERVO42C 闭环 PCBA, 传送带) ----------
+// 驱动器: Makerbase SERVO42C — 板载 16384 线磁编码器, FOC 矢量三环,
+// 开环/矢量闭环/串口控制三模式; 文档: CSDN article 120565771。
+// 我们用 STEP/DIR 驱动 (矢量闭环模式), 接线与 A4988 兼容; 串口控制模式
+// 需要第三路 UART, 板上无空闲, 暂不用。
 static const uint8_t STEPPER_STEP_PIN = 14;
 static const uint8_t STEPPER_DIR_PIN  = 15;   // 复用板载 LED (DIR=LOW -> LED 亮)
 // 无 EN 引脚 (见文件头说明): 驱动器 EN 端接 5V 常使能.
-static const double  STEPS_PER_MM = 1600.0;  // 1.8° 两相 + 1/16 细分
+// 步/mm = (200 步/圈 × 细分数) ÷ 导程 mm/圈。
+// 假设: 1.8° 电机 (200 步/圈) + 导程 10mm + 驱动器设 1/16 细分
+//   => 3200 步/圈 ÷ 10mm/圈 = 320 步/mm。
+// 电机实际导程与驱动器细分设置确定后, 此值必须同步改!
+static const double  STEPS_PER_MM = 320.0;
 
 // ---------- 舵机 ×3 (PCA9685 I2C @0x40, 通道 0/1/2) ----------
 static const uint8_t SERVO_SDA_PIN  = 18;
