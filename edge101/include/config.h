@@ -3,7 +3,7 @@
 //
 // 板级事实 (wiki「技术规格」):
 //   - ESP32 (原版, 双核 LX6 @240MHz, 16MB 片上 Flash, 520KB SRAM, 无 PSRAM)
-//   - 板载 RJ45 以太网 10/100M (MDIO PHY, arduino-esp32 ETH.begin() 自动识别)
+//   - 板载 RJ45 以太网 10/100M (PHY=IP101, 参数见 src/main.cpp ETH.begin)
 //   - 11 路原生 GPIO (40PIN 扩展口): P5 P12 P14 P15 P18 P23 P33 P34 P37 P38 P39
 //     其中 P34/P37/P38/P39 只能输入 → 可用输出: GPIO5/12/14/15/18/23 (6 路)
 //   - I2C 默认: SDA=GPIO18, SCL=GPIO23 (Arduino Wire)
@@ -17,8 +17,9 @@
 //   GPIO14 = 步进 STEP
 //   GPIO15 = 步进 DIR      (复用板载 LED: DIR=LOW 时 LED 亮, 可当方向指示)
 //   GPIO18 = I2C SDA -> PCA9685 舵机控制器 (3 路舵机, 通道 0/1/2)
-//   GPIO23 = I2C SCL
-//   步进 EN: 无空闲 GPIO → 在驱动器端把 EN 接 5V (常使能, 靠停脉冲断电逻辑不执行)
+//   GPIO23 = I2C SCL -> PCA9685 + MCP23017 (共总线, 地址 0x40 / 0x27)
+//   步进 EN: 6 路输出全用 → MCP23017 PA0 接管 (I2C 数字扩展, 固件自动检测);
+//            未接 MCP23017 时回退: 驱动器端 EN 跳线 5V (常使能)
 #pragma once
 
 #include <cstdint>
@@ -44,6 +45,11 @@ static const uint8_t STEPPER_DIR_PIN  = 15;   // 复用板载 LED (DIR=LOW -> LE
 //   => 3200 步/圈 ÷ 10mm/圈 = 320 步/mm。
 // 电机实际导程与驱动器细分设置确定后, 此值必须同步改!
 static const double  STEPS_PER_MM = 320.0;
+
+// ---------- MCP23017 (I2C 数字 IO 扩展, 与 PCA9685 共 P18/P23 总线) ----------
+// DFR0626, 默认地址 0x27 (拨码 A2A1A0 全 1); PA0 -> 步进驱动器 EN。
+// 地址/极性常量在 lib/SortLogic/src/McpEn.h (kAddr/kActiveLow), 改动需两处同步。
+// 剩余 15 路 (PA1..PA7, PB0..PB7) 预留: 料道末端光电/限位/急停等数字量。
 
 // ---------- 舵机 ×3 (PCA9685 I2C @0x40, 通道 0/1/2) ----------
 static const uint8_t SERVO_SDA_PIN  = 18;

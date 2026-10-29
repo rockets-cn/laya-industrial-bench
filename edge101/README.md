@@ -7,8 +7,9 @@ EDGE 101 (DFRobot, **ESP32 原版** — 非 S3; 板载 RJ45 以太网 + 4G CAT1)
 ```
 HuskyLens 2 (UART, GPIO5/12 @38400) ─┐
                                      ▼
-              EDGE 101  ◄── 步进 (传送带, STEP=14 DIR=15)
+              EDGE 101  ◄── 步进 (传送带, STEP=14 DIR=15, EN=MCP23017 PA0)
                      │      3 舵机 (PCA9685 I2C @0x40, SDA=18 SCL=23)
+                     │      MCP23017 I2C @0x27 (步进 EN + 15 路数字量预留)
                      │  MQTT: sort/line1/conveyor/*  sort/sorter{1,2,3}/*
                      │        sort/inbound/vision   (板载 RJ45, 静态 192.168.2.2)
                      ▼
@@ -26,7 +27,8 @@ edge101/
 │   ├── Conveyor.h            # 传送带状态机 (纯 C++, 无 Arduino 依赖)
 │   ├── Sorter.h              # 分拣器状态机 (纯 C++)
 │   ├── HuskyLens.h           # HL2 UART 帧解析 + 进画面去重 (纯 C++)
-│   └── Proto.h               # 协议 JSON 构造 (纯 C++)
+│   ├── Proto.h               # 协议 JSON 构造 (纯 C++)
+│   └── McpEn.h               # MCP23017 步进 EN (纯 C++, I2C 传输可注入)
 ├── lib/ServoI2C/src/
 │   └── ServoI2C.h            # PCA9685 16ch I2C 舵机驱动 (50Hz PWM)
 ├── tests/host/
@@ -44,7 +46,7 @@ pio run -t upload          # 烧录 (Type-C USB; 必要时按 BOOT 进下载模�
 pio device monitor         # 115200 串口监视
 
 # 主机单测 (验证纯逻辑, 无需硬件/无需 PIO)
-./tests/host/run_tests.sh  # 42 项: Conveyor/Sorter 状态机, HL2 帧+去重, 协议 JSON
+./tests/host/run_tests.sh  # 60 项: Conveyor/Sorter 状态机, HL2 帧+去重, 协议 JSON, MCP23017 EN
 ```
 
 构建已验证 (2026-10-29): `pio run` SUCCESS,
@@ -75,6 +77,8 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
   映射表 (config.h `MATERIAL_MAP`, 可换) → 进画面去重 (同物料 500ms 滑动窗,
   离屏后重入才再报) → 发 `sort/inbound/vision`。
 - **遥测**: 2Hz 发 conveyor + 3×sorter 状态 (网关 5s 无遥测判离线)。
+- **步进 EN**: MCP23017 PA0 接管 (上电自动检测): running=使能,
+  stopped/paused/fault=禁能 (停带断线圈电); 未接 MCP23017 时回退 EN 跳线 5V。
 
 ## 串口控制台 (115200, 换行结尾)
 

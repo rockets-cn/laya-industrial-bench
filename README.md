@@ -181,7 +181,7 @@ journalctl --user -u laya-loop-ui -f
 | `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机, 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`); 真实 PLC 接入时的行为参照 |
 | `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
 | `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
-| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 + PCA9685 I2C 3 舵机; 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (42 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
+| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, EN 走 MCP23017) + PCA9685 I2C 3 舵机; 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (60 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
 | `tests/test_sort_mqtt.py` | 分拣网关 E2E 31 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计 |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |

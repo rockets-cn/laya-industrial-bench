@@ -18,6 +18,7 @@
 #include "HuskyLens.h"
 #include "Proto.h"
 #include "ServoI2C.h"
+#include "McpEn.h"
 
 static sort::Conveyor conv;
 static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter(3)};
@@ -27,6 +28,24 @@ static HardwareSerial hlSerial(2);            // UART2 重映射到 GPIO5/12
 static NetworkClient ethClient;               // 3.x: 以太网客户端 (自动绑定默认 netif)
 static PubSubClient mqtt(ethClient);
 static ServoI2C servos;
+
+// MCP23017 (步进 EN + 预留数字量): TwoWire 实现 I2cReg 传输
+struct WireMcpBus : public sort::I2cReg {
+    bool alive() override {
+        Wire.beginTransmission(sort::McpEn::kAddr);
+        Wire.write(sort::McpEn::kIodirA);
+        Wire.write(0x00);                     // IODIR=全输入 (默认值, 探测写无害)
+        return Wire.endTransmission() == 0;
+    }
+    void writeReg(uint8_t reg, uint8_t val) override {
+        Wire.beginTransmission(sort::McpEn::kAddr);
+        Wire.write(reg);
+        Wire.write(val);
+        Wire.endTransmission();
+    }
+};
+static WireMcpBus mcpBus;
+static sort::McpEn mcpEn;
 
 // ================= 步进: 非阻塞步脉冲 =================
 static uint32_t nextStepUs = 0;
@@ -175,10 +194,12 @@ static void onSerialCmd(const String& line) {
                       (unsigned long long)conv.steps_total);
     } else if (line.startsWith("stepper")) {
         int n = line.substring(8).toInt();
+        if (mcpEn.present()) mcpEn.forceLevel(true);   // 手动脉冲: 临时使能
         for (int i = 0; i < n; i++) {
             digitalWrite(STEPPER_STEP_PIN, HIGH); delayMicroseconds(2);
             digitalWrite(STEPPER_STEP_PIN, LOW); delay(2);
         }
+        if (mcpEn.present()) mcpEn.forceLevel(false);  // 发完恢复禁能
         Serial.printf("stepper %d done\n", n);
     } else if (line.startsWith("sweep")) {
         int n = line.substring(7).toInt();
@@ -236,6 +257,12 @@ void setup() {
     Serial.printf("[servo] PCA9685 @0x%02X ch %d/%d/%d\n",
                   SERVO_ADDR, SERVO_CH[0], SERVO_CH[1], SERVO_CH[2]);
 
+    if (mcpEn.begin(&mcpBus, conv.state()))
+        Serial.printf("[mcp] MCP23017 @0x%02X 在线, 步进 EN -> PA0 (停带禁能)\n",
+                      sort::McpEn::kAddr);
+    else
+        Serial.println("[mcp] MCP23017 未检测到, 步进 EN 保持外部跳线 (5V 常使能)");
+
     hlSerial.begin(HL2_BAUD, SERIAL_8N1, HL2_RX_PIN, HL2_TX_PIN);
     Serial.printf("[hl2] UART2 @%lu rx=GPIO%d tx=GPIO%d\n",
                   (unsigned long)HL2_BAUD, HL2_RX_PIN, HL2_TX_PIN);
@@ -255,6 +282,7 @@ static uint32_t lastMqttTryMs = 0;
 void loop() {
     steerStepper();
     sweepTick();
+    mcpEn.sync(conv.state());   // 步进 EN 随状态 (只有电平变化才写 I2C)
     if (!mqtt.connected() && ethUp && millis() - lastMqttTryMs > 2000) {
         lastMqttTryMs = millis();
         mqttConnect();

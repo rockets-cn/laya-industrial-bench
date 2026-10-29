@@ -45,9 +45,13 @@ https://blog.csdn.net/gjy_skyblue/article/details/120565771
 |---|---|---|
 | PUL+ | STEP | GPIO14 |
 | DIR+ | DIR | GPIO15 |
-| EN+  | EN  | **驱动器端接 5V/VCC** (固件无空闲 GPIO 控制 EN, 常使能) |
+| EN+  | EN  | **MCP23017 PA0**（主）; 未接 MCP23017 时回退: 驱动器端跳线 5V 常使能 |
 | GND  | GND | 共地 |
 | 电机动力 | 12V | 12V/1.5A+ 独立供电 (不并 5V 轨; 实际电压按电机铭牌) |
+
+- **EN 由 MCP23017 接管** (I2C 数字 IO 扩展, 与 PCA9685 共总线): 固件自动检测,
+  在线时 running=使能、stopped/paused/fault=禁能 (停带断线圈电); 离线时行为
+  同跳线 5V。详见下文 MCP23017 节。
 
 - **工作模式: 矢量闭环 (STEP/DIR)** — 编码器兜底, 堵转/丢步由驱动器处理
   (可启用堵转保护, LED 状态指示)。开环模式亦可; **串口控制模式暂不用**
@@ -73,6 +77,27 @@ https://blog.csdn.net/gjy_skyblue/article/details/120565771
 | GND | GND | 共地 |
 | VDD (逻辑) | 3V3 | 模块有 VDDIO 跳线则拨 3.3V |
 | V+ (电机) | 5V 独立 | 舵机动力电源 (≥2A), **不要**用 I2C 3.3V |
+
+### MCP23017 I2C 数字 IO 扩展 (步进 EN + 预留数字量, DFR0626)
+
+与 PCA9685 **同一条 I2C 总线** (P18/P23), 地址不冲突: PCA9685 @0x40,
+MCP23017 @0x27。参考: https://wiki.dfrobot.com.cn/_SKU_DFR0626_MCP23017_IIC_to_16_digital_IO_expansion_module
+
+| 线 | 接 | 说明 |
+|---|---|---|
+| VCC | 5V | 接口供电 3.3~5.5V, 输出电平跟随 VCC |
+| GND | GND | 共地 |
+| C (SCL) | GPIO23 | 与 PCA9685 共线 |
+| D (SDA) | GPIO18 | 与 PCA9685 共线 |
+| A0/A1/A2 | 拨码全 1 | I2C 地址 0x27 (默认值) |
+| PA0 | 驱动器 EN+ | 高电平使能 (A4988/DRV8825 惯例; 若 SERVO42C 极性相反, 改 `McpEn.h kActiveLow`) |
+
+- **固件自动检测**: 启动日志 `[mcp] MCP23017 @0x27 在线, 步进 EN -> PA0
+  (停带禁能)` 或 `[mcp] MCP23017 未检测到, 步进 EN 保持外部跳线 (5V 常使能)`。
+- EN 随传送带状态: `running`=使能, `stopped/paused/fault`=禁能 (停带断线圈电,
+  替代原「EN 跳 5V 常使能」); 串口 `stepper <n>` 手动脉冲时临时使能、发完恢复。
+- **剩余 15 路预留** (PA1~PA7, PB0~PB7): 料道末端光电/限位/急停等数字量,
+  输入模式 + 内部上拉即可 (OPEN_QUESTIONS 3②)。
 
 - 3 个舵机信号线接 PCA9685 的 **OUT0/OUT1/OUT2** (通道 0/1/2 = 1/2/3 号料道)。
 - 扫掠: 0°(归位) ↔ 90°(拨出), 一件 = 一次扫掠, qty=N 连拨 N 次。

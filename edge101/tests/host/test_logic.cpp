@@ -9,6 +9,7 @@
 #include "Sorter.h"
 #include "HuskyLens.h"
 #include "Proto.h"
+#include "McpEn.h"
 
 using namespace sort;
 
@@ -174,11 +175,71 @@ static void testProto() {
     check("vision topic", visionTopic() == "sort/inbound/vision");
 }
 
+// ---- MCP23017 fake I2C ----
+struct FakeI2c : public sort::I2cReg {
+    bool alive_ok = true;
+    std::vector<std::pair<uint8_t, uint8_t>> writes;
+    bool alive() override { return alive_ok; }
+    void writeReg(uint8_t r, uint8_t v) override { writes.push_back({r, v}); }
+};
+
+static void testMcpEn() {
+    printf("\n== McpEn (MCP23017 步进 EN) ==\n");
+
+    check("策略: running -> 使能", sort::EnPolicy::enabledFor("running"));
+    check("策略: stopped -> 禁能", !sort::EnPolicy::enabledFor("stopped"));
+    check("策略: paused -> 禁能", !sort::EnPolicy::enabledFor("paused"));
+    check("策略: fault -> 禁能", !sort::EnPolicy::enabledFor("fault"));
+    check("策略: nullptr -> 禁能", !sort::EnPolicy::enabledFor(nullptr));
+
+    // 芯片离线: begin 失败, 全程无 I2C 写, sync 无动作
+    {
+        FakeI2c bus; bus.alive_ok = false;
+        sort::McpEn en;
+        check("离线 begin 返回 false", !en.begin(&bus, "stopped"));
+        check("离线 present=false", !en.present());
+        size_t n0 = bus.writes.size();
+        en.sync("running");
+        en.forceLevel(true);
+        check("离线时 sync/force 不写 I2C", bus.writes.size() == n0);
+    }
+
+    // 在线: begin 配 IODIR + 按状态初始化 (stopped -> EN 低)
+    {
+        FakeI2c bus;
+        sort::McpEn en;
+        check("在线 begin 成功", en.begin(&bus, "stopped"));
+        check("begin 配 PA0 为输出", bus.writes.size() >= 1
+              && bus.writes[0].first == sort::McpEn::kIodirA
+              && bus.writes[0].second == sort::McpEn::kEnMask);
+        check("初始 stopped -> EN=低 (level_ 初值即低, 无需写)",
+              en.level() == false && bus.writes.size() == 1);
+
+        size_t n = bus.writes.size();
+        check("同状态 sync 不写", (en.sync("stopped"), bus.writes.size() == n));
+
+        check("running -> EN=高 (1 次写)",
+              en.sync("running") && bus.writes.size() == n + 1
+              && bus.writes[n].second == sort::McpEn::kEnMask);
+        check("running 重复 sync 不写", (en.sync("running"), bus.writes.size() == n + 1));
+        check("stopped -> EN=低", !en.sync("stopped")
+              && bus.writes.size() == n + 2 && bus.writes[n + 1].second == 0x00);
+        check("paused 保持低", (en.sync("paused"), bus.writes.size() == n + 2));
+
+        // 手动强制 (串口 stepper 命令场景): 状态仍是 stopped 但临时使能
+        en.forceLevel(true);
+        check("forceLevel(true) 写高", en.level() && bus.writes.size() == n + 3);
+        en.forceLevel(false);
+        check("forceLevel(false) 写回低", !en.level() && bus.writes.size() == n + 4);
+    }
+}
+
 int main() {
     testConveyor();
     testSorter();
     testHuskyLens();
     testProto();
+    testMcpEn();
     printf("\n%s\n", FAIL ? "有失败 ✗" : "全部通过 ✔");
     printf("PASS %d  FAIL %d\n", PASS, FAIL);
     return FAIL ? 1 : 0;

@@ -12,8 +12,8 @@
 | `sort_mqtt.py` 修复 ×3 | ① paho 2.x 非法通配符致订阅线程崩溃 ② 遥测正则不匹配裸 topic ③ paused 后按遥测 start/resume |
 | `loop_ui` 下发按钮 | 「📤 下发分拣线」: Laya 分类结果 → `POST /dispatch` → 网关 :8123 (手动触发, 不自动) |
 | `docs/sort-mqtt.md` | 控制器接入协议契约 (命令/应答/遥测/白名单/统计/安全降级) |
-| **EDGE 101 固件** `edge101/` | 按 DFRobot wiki DFR1283 实测规格实现: 板载 RJ45 静态 IP + HL2 UART (GPIO5/12 重映射 Serial2) + 步进 (STEP=14 DIR=15) + PCA9685 I2C 3 舵机 (SDA=18 SCL=23) + 2Hz 遥测; 行为与 sim_devices 等价, 对网关零改动 |
-| 固件主机单测 | `edge101/tests/host/` 42 项全绿: Conveyor/Sorter 状态机对拍、HL2 帧解析 (断片/坏校验/垃圾字节恢复)、进画面去重 (500ms 滑动窗)、协议 JSON/topic |
+| **EDGE 101 固件** `edge101/` | 按 DFRobot wiki DFR1283 实测规格实现: 板载 RJ45 静态 IP + HL2 UART (GPIO5/12 重映射 Serial2) + 步进 (STEP=14 DIR=15, EN=MCP23017 PA0) + PCA9685 I2C 3 舵机 (SDA=18 SCL=23) + MCP23017 I2C 数字量 (EN+预留) + 2Hz 遥测; 行为与 sim_devices 等价, 对网关零改动 |
+| 固件主机单测 | `edge101/tests/host/` 60 项全绿: Conveyor/Sorter 状态机对拍、HL2 帧解析 (断片/坏校验/垃圾字节恢复)、进画面去重 (500ms 滑动窗)、协议 JSON/topic、MCP23017 步进 EN (在线/离线/状态映射) |
 | 实机闭环验证 | 全链路 (broker+模拟设备+网关+视觉) 手工跑通; 视觉 371ms, 语音 168ms, 7 命令 7 应答 0 超时 |
 | 实测踩坑记录 | ESP32 UART 解析器两个 bug (非 0x55 数据字节被误当失同步 / 校验和越界读) 已修并以单测锁定; busy/fault 应答语义与 sim 对齐 (busy 也发 ack) |
 
@@ -33,6 +33,7 @@
    FOC 闭环 + 堵转保护已覆盖丢步/堵转; 剩下可选项:
    ① 驱动器"单圈内上电自动回零"启用哪种 (两模式之一)?
    ② 料道末端加光电开关做长期对账 (超阈值报警)? *影响: 统计可信度。*
+      (MCP23017 上 15 路预留数字 IO 可直接接, 加接线 + 固件输入读取即可)
 
 ### 硬件采购与接线 (新, 固件按以下假设写的, 不符就改 config.h)
 
@@ -48,9 +49,12 @@
    ② 驱动器细分设多少? (与 ① 一起决定 STEPS_PER_MM; 出厂默认值?)
    ③ 堵转保护 / 自动回零 / 熄屏 默认开哪些?
    ④ 电源: 驱动器与电机共 12V 一路够吗 (12V/1.5A+)?
-   ⑤ EN 端接 5V 常使能 (停带时线圈仍通电, FOC 下电流策略未知, 可接受?)
+   ⑤ EN: 由 **MCP23017 PA0** 接管 (自动检测, 停带禁能); 未接模块时回退
+      5V 跳线常使能。若 SERVO42C 的 EN 是低电平使能, 改 McpEn.h `kActiveLow`。
    ⑥ 磁环安装 (轴中间/水平) 与线序 A+A-B+B- 按文档第 2 部分做, 屏显
       "Phase Line Error!" 时断电重调。
+   ⑦ 采购: **MCP23017 (DFR0626) ×1** — 5V 供电, 拨码全 1 (地址 0x27),
+      PA0 → 驱动器 EN+; 余 15 路预留数字量 (光电/限位/急停)。
 7. **16MB Flash 确认**: 固件按 16MB flash 构建。板上芯片若实际是 4MB,
    改 `platformio.ini` 的 `board_build.flash_size` (固件体积远小于 4MB, 不影响)。
 8. **HL2 供电与电平**: 板 5V 直接带 HL2 (峰值 ~1.5W), TX 5V→3.3V 分压。
