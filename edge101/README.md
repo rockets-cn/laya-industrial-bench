@@ -52,6 +52,19 @@ pio device monitor         # 115200 串口监视
 构建已验证 (2026-10-29): `pio run` SUCCESS,
 Flash 668KB/1.25MB (51%), RAM 34KB/320KB (10.4%), 无告警。
 
+实机以太网踩坑记录 (2026-10-29, 全部已修):
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| boot 后 `192.168.2.2` 不响应 | 此版本 arduino-esp32 3.x 默认 eth 的 netif if_key 是 **`ETH_DEF`** (非 `eth0`), `esp_netif_get_handle_from_ifkey("eth0")` 永远查不到, 静态 IP 从未配上 | `findEthNetif()` 先查 `ETH_DEF` 再回退 `eth0`; `tryStaticIp()` 幂等, setup 等 15s + loop 每 2s 重试 |
+| ping 通但 MQTT 连不上 | PC 侧 UFW `policy drop` 默认拒入站, 1883/tcp 未放行 (ICMP 有默认限速放行所以 ping 能通) | `sudo ufw allow 1883/tcp` |
+| PC 静态 IP 反复丢失 | NetworkManager 接管 enp2s0 做 DHCP, 插拔网线即清掉手加地址 | `nmcli con modify "Wired connection 1" ipv4.method manual ipv4.addresses 192.168.2.1/24` (持久) |
+
+物理全链路验证 (2026-10-29): 直连网线 PC↔EDGE101, `POST /dispatch`
+(yard=1, red_block, qty=2) → 网关批次 done, 13/13 命令 ack 0 超时;
+板端 `state` → `diverted=2/0/0, steps=6212` (步进脉冲真实产生),
+`eth` 命令确认 `up=1 ip=192.168.2.2`。串口诊断命令: `eth` / `mqtt`。
+
 > `pio` 不在 PATH 时: 项目 venv 里已装 PlatformIO 6.2.0,
 > 用 `<repo>/.venv/bin/pio` 代替。
 

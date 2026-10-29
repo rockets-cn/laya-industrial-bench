@@ -47,6 +47,11 @@ struct WireMcpBus : public sort::I2cReg {
 static WireMcpBus mcpBus;
 static sort::McpEn mcpEn;
 
+// 以太网状态 (tryStaticIp/applyStaticIp 见下文以太网节; 提前声明供事件回调使用)
+static volatile bool ethUp = false;    // 链路可用 (静态 IP 已配好或 DHCP 拿到)
+static bool netifReady = false;        // 静态 IP 已设置 (幂等, 不重复设置)
+static esp_netif_t* findEthNetif();    // 定义见以太网节 (串口 eth 命令提前引用)
+
 // ================= 步进: 非阻塞步脉冲 =================
 static uint32_t nextStepUs = 0;
 static void steerStepper() {
@@ -119,7 +124,6 @@ static void sweepTick() {
 }
 
 // ================= MQTT =================
-static volatile bool ethUp = false;
 static void ethEvent(arduino_event_id_t event, arduino_event_info_t) {
     if (event == ARDUINO_EVENT_ETH_GOT_IP) ethUp = true;
     if (event == ARDUINO_EVENT_ETH_LOST_IP) ethUp = false;
@@ -166,6 +170,13 @@ static void mqttConnect() {
         for (int n = 1; n <= 3; n++)
             mqtt.subscribe(sort::sorterCmdTopic(n).c_str(), 1);
         Serial.println("[mqtt] connected, subscribed 4 cmd topics");
+    } else {
+        static uint32_t lastFailLog = 0;
+        if (millis() - lastFailLog > 10000) {    // 失败日志限速 10s
+            lastFailLog = millis();
+            Serial.printf("[mqtt] connect 失败 (broker %s:%d)\n",
+                          BROKER_IP.toString().c_str(), BROKER_PORT);
+        }
     }
 }
 
@@ -184,7 +195,7 @@ static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
 static String consoleBuf;
 static void onSerialCmd(const String& line) {
     if (line == "help") {
-        Serial.println("help | state | stepper <n> | sweep <n> | vision <material>");
+        Serial.println("help | state | eth | mqtt | stepper <n> | sweep <n> | vision <material>");
     } else if (line == "state") {
         Serial.printf("conveyor=%s s1=%s s2=%s s3=%s diverted=%lu/%lu/%lu steps=%llu\n",
                       conv.state(), sorters[0].state(), sorters[1].state(),
@@ -214,6 +225,31 @@ static void onSerialCmd(const String& line) {
         std::string p = sort::visionJson(m.c_str(), 1.0, "console", 0, 0, 0, 0);
         mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
         Serial.printf("vision %s published\n", m.c_str());
+    } else if (line == "mqtt") {
+        Serial.printf("mqtt: connected=%d server=%s:%d\n",
+                      mqtt.connected() ? 1 : 0,
+                      BROKER_IP.toString().c_str(), BROKER_PORT);
+    } else if (line == "eth") {
+#ifdef CONFIG_IDF_TARGET_ESP32
+        esp_netif_t* nif = findEthNetif();
+        if (!nif) {
+            Serial.println("eth: netif 未找到");
+        } else {
+            esp_netif_ip_info_t ip;
+            esp_netif_get_ip_info(nif, &ip);
+            char ipstr[16], gwstr[16];
+            snprintf(ipstr, sizeof(ipstr), "%d.%d.%d.%d",
+                     (ip.ip.addr >> 24) & 0xFF, (ip.ip.addr >> 16) & 0xFF,
+                     (ip.ip.addr >> 8) & 0xFF, ip.ip.addr & 0xFF);
+            snprintf(gwstr, sizeof(gwstr), "%d.%d.%d.%d",
+                     (ip.gw.addr >> 24) & 0xFF, (ip.gw.addr >> 16) & 0xFF,
+                     (ip.gw.addr >> 8) & 0xFF, ip.gw.addr & 0xFF);
+            Serial.printf("eth: up=%d ip=%s gw=%s\n",
+                          esp_netif_is_netif_up(nif) ? 1 : 0, ipstr, gwstr);
+        }
+#else
+        Serial.println("eth: N/A (非 ESP32 原版目标)");
+#endif
     }
 }
 
@@ -221,25 +257,37 @@ static void onSerialCmd(const String& line) {
 // PHY=IP101 (注册为 TLK110 驱动), addr=1, MDC=GPIO4, MDIO=GPIO13, PWR=GPIO2,
 // 50MHz 参考时钟走 GPIO0 (以上引脚板内走线, 不出 40PIN 扩展口, 与外设不冲突).
 // 此版本 arduino-esp32 无静态 IP begin() 重载: 先起 PHY + DHCP, 再停 DHCP 设静态.
-static void applyStaticIp() {
-    esp_netif_t* nif = nullptr;
-    for (int i = 0; i < 30 && !nif; i++) {     // 等 ETH 任务创建 netif
-        delay(100);
-        nif = esp_netif_get_handle_from_ifkey("eth0");
-    }
-    if (!nif) {
-        Serial.println("[eth] netif 未创建, 保持 DHCP");
-        return;
-    }
+// 实测: 此版本 arduino-esp32 3.x 默认 eth 的 if_key 是 "ETH_DEF" (非 "eth0"),
+// 查错 key 会一直轮询不到 -> tryStaticIp() 幂等, setup 内多等, 之后 loop()
+// 每 2s 重试直到成功 (兼顾 PHY/netif 上电慢的场景).
+static esp_netif_t* findEthNetif() {
+    esp_netif_t* nif = esp_netif_get_handle_from_ifkey("ETH_DEF");
+    if (!nif) nif = esp_netif_get_handle_from_ifkey("eth0");
+    return nif;
+}
+
+static bool tryStaticIp() {
+    if (netifReady) return true;
+    esp_netif_t* nif = findEthNetif();
+    if (!nif) return false;
     esp_netif_dhcpc_stop(nif);
     esp_netif_ip_info_t info;
     esp_netif_set_ip4_addr(&info.ip,        EDGE_IP[0],   EDGE_IP[1],   EDGE_IP[2],   EDGE_IP[3]);
     esp_netif_set_ip4_addr(&info.netmask,   EDGE_MASK[0], EDGE_MASK[1], EDGE_MASK[2], EDGE_MASK[3]);
     esp_netif_set_ip4_addr(&info.gw,        EDGE_GW[0],   EDGE_GW[1],   EDGE_GW[2],   EDGE_GW[3]);
     esp_netif_set_ip_info(nif, &info);
+    netifReady = true;
+    ethUp = true;   // 静态 IP 已配好, 不依赖 GOT_IP 事件
     Serial.printf("[eth] 静态 IP %s gw %s (broker %s:%d)\n",
                   EDGE_IP.toString().c_str(), EDGE_GW.toString().c_str(),
                   BROKER_IP.toString().c_str(), BROKER_PORT);
+    return true;
+}
+
+static void applyStaticIp() {
+    for (int i = 0; i < 30 && !tryStaticIp(); i++) delay(500);   // boot 最多等 15s
+    if (!netifReady)
+        Serial.println("[eth] netif 未就绪, loop 中每 2s 重试");
 }
 
 // ================= 生命周期 =================
@@ -269,7 +317,9 @@ void setup() {
 
 #ifdef CONFIG_IDF_TARGET_ESP32
     // 板载 RJ45 (EDGE 101): 先起 PHY + DHCP, 再停 DHCP 设静态 IP
-    ETH.begin(ETH_PHY_TLK110, 1, 4, 13, 2, ETH_CLOCK_GPIO0_IN);
+    bool phyOk = ETH.begin(ETH_PHY_TLK110, 1, 4, 13, 2, ETH_CLOCK_GPIO0_IN);
+    Serial.println(phyOk ? "[eth] PHY/驱动初始化 OK"
+                         : "[eth] ETH.begin 失败 (PHY 初始化?)");
     WiFi.onEvent(ethEvent);   // ETH 事件经 Network 事件循环分发 (3.x 无 ETH.onEvent)
     applyStaticIp();
 #else
@@ -283,11 +333,16 @@ void setup() {
 
 static uint32_t lastTeleMs = 0;
 static uint32_t lastMqttTryMs = 0;
+static uint32_t lastEthTryMs = 0;
 
 void loop() {
     steerStepper();
     sweepTick();
     mcpEn.sync(conv.state());   // 步进 EN 随状态 (只有电平变化才写 I2C)
+    if (!ethUp && millis() - lastEthTryMs > 2000) {     // netif 晚到: 持续重试
+        lastEthTryMs = millis();
+        tryStaticIp();
+    }
     if (!mqtt.connected() && ethUp && millis() - lastMqttTryMs > 2000) {
         lastMqttTryMs = millis();
         mqttConnect();
