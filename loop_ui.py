@@ -105,16 +105,19 @@ def run_side(side, text):
             "bypass_ms": dt_b, "dist_ms": dist_ms, "bypass": bypass}
 
 
-def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit"):
+def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit", qa_llm=None):
     """Text/normalized -> 问答兜底 -> (规则层 -> Laya -> 校验器 -> LLM旁路). Returns full trace dict.
-    domain: fruit | block | mixed (两个规则层并行, 各抽各的, 动作合并)."""
+    domain: fruit | block | mixed (两个规则层并行, 各抽各的, 动作合并).
+    qa_llm: LLM 问答兜底开关 — None=用环境变量默认 (QA_LLM=1), True/False=本次请求指定
+            (页面「LLM 兜底」开关, 运行时切换, 无需重启服务)."""
     t0 = time.perf_counter()
     if domain == "yard":
-        # 问答: 先规则层 (毫秒级/确定性); miss 且开启 LLM 兜底 (QA_LLM=1) 时
+        # 问答: 先规则层 (毫秒级/确定性); miss 且 LLM 兜底开启 (页面开关或 QA_LLM=1) 时
         # 再让 LLM 基于注入事实答长尾 — 失败/未开则照旧回落分拣路径。
         qhit, qans, _qdt = local_qa.answer(text)
         qsrc = "rule"
-        if not qhit and local_qa.llm_enabled():
+        llm_on = bool(qa_llm) if qa_llm is not None else local_qa.llm_enabled()
+        if not qhit and llm_on:
             qhit, qans, _qllm = local_qa.answer_llm(text)
             qsrc = "llm"
         if qhit:
@@ -185,6 +188,7 @@ async def run(request: Request):
     domain = body.get("domain") or "fruit"
     if domain not in ("fruit", "block", "mixed", "yard"):
         domain = "fruit"
+    qa_llm = body.get("qa_llm")  # 页面「LLM 兜底」开关: true/false, 缺省=环境变量默认
     asr_dt, asr_text = 0.0, None
     last_wav = None
     if wav:
@@ -232,7 +236,7 @@ async def run(request: Request):
         # 唤醒词检测: 只做 ASR, 不跑 Laya/LLM 管线
         return {"wake": True, "asr_text": text, "asr_ms": round(asr_dt * 1000),
                 "asr_model": getattr(bi, "LAST_ASR_MODEL", "?")}
-    return run_pipeline(text, asr_dt, None, last_wav, domain=domain)
+    return run_pipeline(text, asr_dt, None, last_wav, domain=domain, qa_llm=qa_llm)
 
 
 @app.get("/presets")
@@ -324,7 +328,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 料场分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(页面可开关) · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -346,7 +350,8 @@ PAGE = """<!doctype html>
  <input id="txt">
  <button class="primary" onclick="runText()">▶ 运行</button>
  <button id="btnDispatch" onclick="dispatchRun()" disabled title="把最近一次运行的分类结果下发到 MQTT 分拣线">📤 下发分拣线</button>
-</div>
+ <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer" title="规则层认不出的问句交给 LLM 基于注入事实回答 (~10s, 仅展示不下发); 规则层能答的仍毫秒级直答; 开关状态保存在本浏览器"><input type="checkbox" id="qallm"> LLM 兜底</label>
+ </div>
 <div class="row">
  <button id="micbtn" class="primary" style="min-width:120px" onclick="authToggle()">🎤 授权麦克风</button>
  <button id="ptt" title="按住说话 (或按住 空格键)" style="min-width:120px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
@@ -383,8 +388,8 @@ function drawFlow(d){
 async function runText(){
  const t=$('txt').value.trim(); if(!t)return;
  $('out').innerHTML=sec('运行中…');
- try{render(await jpost('/run',{text:t,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
-}
+ try{render(await jpost('/run',{text:t,domain:domain,qa_llm:$('qallm').checked}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+ }
 let lastRun=null;
 function setLastRun(d){lastRun=(d&&d.actions&&d.actions.length&&(d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL'))?d:null;
  const b=$('btnDispatch');if(b){b.disabled=!lastRun;
@@ -614,7 +619,7 @@ function flushWav(chunks, isWake){
      if(rest.length>=2){
      // 唤醒词后紧跟了指令 ("优优给我两个苹果"), 直接跑管线, 不用重新说
      $('out').innerHTML=sec('ASR 识别中…');
-     try{render(await jpost('/run',{text:rest,domain:domain}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+     try{render(await jpost('/run',{text:rest,domain:domain,qa_llm:$('qallm').checked}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
      setModeIdle();
      } else setModeCmd(); // 只说了唤醒词, 等指令
     }
@@ -623,7 +628,7 @@ function flushWav(chunks, isWake){
    flushing=false; refreshState(); return;
   }
   $('out').innerHTML=sec('ASR 识别中…');
-  try{render(await jpost('/run',{wav:fr.result.split(',')[1],domain:domain}))}
+  try{render(await jpost('/run',{wav:fr.result.split(',')[1],domain:domain,qa_llm:$('qallm').checked}))}
   catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
   if(armed){speechStart=0;flushing=false; if(wakeOn)setModeIdle()}
   else flushing=false;
@@ -643,6 +648,13 @@ fetch('/presets').then(r=>r.json()).then(ps=>{PREDS=ps.filter(p=>p.domain==='yar
   `<option value="${i}">${p.name}</option>`).join('');
 });
 $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
+// 「LLM 兜底」开关: 状态存 localStorage (本浏览器记忆), 随每次 /run 请求发给后端
+(function(){const s=$('qallm');if(!s)return;
+ try{
+  s.checked=(localStorage.getItem('qa_llm')==='1');
+  s.addEventListener('change',()=>localStorage.setItem('qa_llm',s.checked?'1':'0'));
+ }catch(e){ /* localStorage 不可用 (如隐私模式): 不记忆, 开关仍可用 */ }
+})();
 refreshState();
 </script></div></body></html>"""
 
