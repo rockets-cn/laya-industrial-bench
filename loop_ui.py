@@ -110,7 +110,13 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
     domain: fruit | block | mixed (两个规则层并行, 各抽各的, 动作合并)."""
     t0 = time.perf_counter()
     if domain == "yard":
+        # 问答: 先规则层 (毫秒级/确定性); miss 且开启 LLM 兜底 (QA_LLM=1) 时
+        # 再让 LLM 基于注入事实答长尾 — 失败/未开则照旧回落分拣路径。
         qhit, qans, _qdt = local_qa.answer(text)
+        qsrc = "rule"
+        if not qhit and local_qa.llm_enabled():
+            qhit, qans, _qllm = local_qa.answer_llm(text)
+            qsrc = "llm"
         if qhit:
             return {"domain": domain, "asr_text": asr_text if asr_text is not None else text,
                     "asr_model": getattr(bi, "LAST_ASR_MODEL", "?"), "last_wav": last_wav,
@@ -118,6 +124,7 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit")
                     "mentions": [], "laya_ms": 0, "laya_answers": {},
                     "validator_ok": True, "actions": [], "reject_reasons": [],
                     "bypass_ms": 0, "bypass": None, "path": "QA", "answer": qans,
+                    "qa_source": qsrc,
                     "dist_total": None, "dist_ms": 0,
                     "e2e_ms": round((time.perf_counter() - t0) * 1000)}
     sides = ["fruit", "block"] if domain == "mixed" else [domain]
@@ -414,12 +421,12 @@ function render(d){
    +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
  } else $('yardcards').innerHTML='';
- const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?'💬 简单回答':(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
- out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+' (≤30字 · 规则层直答, 未下发 PLC)':JSON.stringify(d.actions)}</pre>`;
+ const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':'💬 简单回答'):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
+ out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+(d.qa_source==='llm'?' (≤30字 · LLM 兜底, 仅转述注入事实, 未下发 PLC)':' (≤30字 · 规则层直答, 未下发 PLC)'):JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;
  let h='';
  h+=sec('ASR / 输入 <span class="chip">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a style="color:#60a5fa;font-size:12px" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
- if(d.answer!=null)h+=sec('问答 (规则层直答)')+`<pre>${d.answer}</pre>`;
+ if(d.answer!=null)h+=sec('问答 '+(d.qa_source==='llm'?'(LLM 兜底 · 仅转述注入事实)':'(规则层直答)'))+`<pre>${d.answer}</pre>`;
  h+=sec('规则层')+`<pre>归一化: ${d.normalized}${String.fromCharCode(10)}否定项: ${d.negated.join(', ')||'无'}${String.fromCharCode(10)}提及: ${JSON.stringify(d.mentions)}</pre>`;
  if(Object.keys(d.laya_answers).length){
   h+=sec('Laya 决策 (每提及单独请求)')+'<pre>'+Object.entries(d.laya_answers).map(([k,v])=>
