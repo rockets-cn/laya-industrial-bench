@@ -190,19 +190,11 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit",
     return _res
 
 
-@app.post("/run")
-async def run(request: Request):
-    body = await request.json()
-    text = (body.get("text") or "").strip()
-    wav = body.get("wav")
-    mic = body.get("mic")
-    wake = bool(body.get("wake"))
-    domain = body.get("domain") or "fruit"
-    if domain not in ("fruit", "block", "mixed", "yard"):
-        domain = "fruit"
-    qa_llm = body.get("qa_llm")  # 页面「LLM 兜底」开关: true/false, 缺省=环境变量默认
-    asr_dt, asr_text = 0.0, None
-    last_wav = None
+def _asr_from_body(body):
+    """/asr 与 /run 共用的 ASR 段: wav (16k mono b64) 或 mic (浏览器 webm b64 → ffmpeg)
+    -> (dt_s, text, last_wav); 无音频返回 None, 出错抛 HTTPException."""
+    wav, mic = body.get("wav"), body.get("mic")
+    asr_dt, text, last_wav = 0.0, None, None
     if wav:
         try:
             import base64
@@ -242,6 +234,48 @@ async def run(request: Request):
         import shutil
         shutil.copy(wavp, os.path.join(AUDIO_DIR, "last_asr_input.wav"))
         last_wav = "last_asr_input.wav"
+    if text is None:
+        return None
+    return asr_dt, text, last_wav
+
+
+@app.post("/asr")
+async def asr_only(request: Request):
+    """只做 ASR (不跑 Laya/LLM 管线) — 页面拿到 识别文字 立即显示;
+    随后 /run 携带 asr_text 复用本结果, 不重复识别. 出错时页面回落单发 /run(wav)."""
+    body = await request.json()
+    r = _asr_from_body(body)
+    if r is None:
+        raise HTTPException(422, "wav or mic required")
+    dt, text, last_wav = r
+    return {"text": text, "asr_ms": round(dt * 1000), "last_wav": last_wav,
+            "asr_model": getattr(bi, "LAST_ASR_MODEL", "?")}
+
+
+@app.post("/run")
+async def run(request: Request):
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    wake = bool(body.get("wake"))
+    domain = body.get("domain") or "fruit"
+    if domain not in ("fruit", "block", "mixed", "yard"):
+        domain = "fruit"
+    qa_llm = body.get("qa_llm")  # 页面「LLM 兜底」开关: true/false, 缺省=环境变量默认
+    asr_dt, asr_text = 0.0, None
+    last_wav = None
+    if "asr_text" in body and body.get("asr_text"):
+        # 两段式: 页面已先调 /asr (即时显示识别文字), /run 复用结果 — 不重复 ASR
+        text = str(body.get("asr_text")).strip()
+        last_wav = body.get("last_wav")
+        try:
+            asr_dt = max(0.0, float(body.get("asr_ms") or 0)) / 1000.0
+        except (TypeError, ValueError):
+            asr_dt = 0.0
+    elif body.get("wav") or body.get("mic"):
+        r = _asr_from_body(body)  # 单发路径 (含 /asr 失败回落): ASR + 管线一次完成
+        if r is None:
+            raise HTTPException(422, "text, wav or mic required")
+        asr_dt, text, last_wav = r
     elif not text:
         raise HTTPException(422, "text, wav or mic required")
     if wake:
@@ -711,9 +745,21 @@ function flushWav(chunks, isWake){
    }catch(e){ if(armed) setModeIdle() }
    flushing=false; refreshState(); return;
   }
+  // 两段式: 先 /asr (识别文字 ~1-2s 即时显示) → 再 /run 复用结果 (不重复 ASR);
+  // /asr 失败时回落 单发 /run(wav) (老行为, 全程识别完才显示)
   $('out').innerHTML=sec('ASR 识别中…');
-  try{render(await jpost('/run',{wav:fr.result.split(',')[1],domain:domain,qa_llm:$('qallm').checked}))}
-  catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
+  const b64=fr.result.split(',')[1];
+  let asrInfo=null;
+  try{
+   asrInfo=await jpost('/asr',{wav:b64});
+   $('out').innerHTML=sec('ASR 识别完成 <span class="chip">'+(asrInfo.asr_ms||0)+' ms</span>')
+    +`<pre>${asrInfo.text||'(空)'}</pre>`+'<div class="yd muted">分拣管线运行中…</div>';
+  }catch(e){ /* 回落单发 */ }
+  try{
+   if(asrInfo)render(await jpost('/run',{text:asrInfo.text,domain:domain,qa_llm:$('qallm').checked,
+    asr_ms:asrInfo.asr_ms,last_wav:asrInfo.last_wav}));
+   else render(await jpost('/run',{wav:b64,domain:domain,qa_llm:$('qallm').checked}));
+  }catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
   if(armed){speechStart=0;flushing=false; if(wakeOn)setModeIdle()}
   else flushing=false;
   refreshState();
