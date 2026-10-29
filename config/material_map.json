@@ -1,0 +1,15 @@
+{
+  "_comment": "视觉识别 -> 分拣器映射. mode: fixed (本表) | round_robin (按物料轮转 1..3). 默认映射是占位, 等现场确认物料布局后改 (见 OPEN_QUESTIONS.md).",
+  "mode": "fixed",
+  "fixed": {
+    "red_apple": 1,
+    "green_apple": 1,
+    "banana": 1,
+    "pear": 1,
+    "red_block": 2,
+    "green_block": 2,
+    "yellow_block": 3,
+    "blue_block": 3
+  },
+  "confidence_min": 0.5
+}

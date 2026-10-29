@@ -1,0 +1,14 @@
+{
+  "_comment": "MQTT 分拣网关配置. 环境变量 SORT_MQTT_BROKER / SORT_GATEWAY_PORT 覆盖 broker 和 http 端口.",
+  "broker": "tcp://127.0.0.1:1883",
+  "client_id": "sort-gateway",
+  "http_port": 8123,
+  "sorter_count": 3,
+  "conveyor_id": "line1",
+  "conveyor_speed_mps": 1.0,
+  "ack_timeout_s": 3.0,
+  "ack_retries": 2,
+  "stats_period_s": 5.0,
+  "stop_conveyor_after_batch": true,
+  "queue_max": 16
+}

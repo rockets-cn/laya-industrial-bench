@@ -101,3 +101,6 @@ _patch1.py
 # local logs & runtime-generated pins
 *.log
 voxtype_bench.toml
+
+# sort gateway runtime stats (ledger + summaries)
+stats/
