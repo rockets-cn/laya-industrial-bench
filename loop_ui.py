@@ -493,7 +493,12 @@ PAGE = """<!doctype html>
 <div style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:8px 0;overflow-x:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
 <span id="gla-mode" style="font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
-<span style="font-size:11.5px;color:#5b6270">孪生在线时: 推杆/光门/料道按网关运动时间线实时还原 (1.5s 轮询 /twin)</span>
+<span style="font-size:12px;color:#8a91a0;display:flex;align-items:center;gap:5px">数据源
+<select id="gla-src" style="background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:6px;padding:3px 6px;font-size:12px" title="动画跟随哪条运动时间线: 模拟=本地孪生模拟器执行; 真实=物理设备 (未接传感器/执行器时选模拟)">
+<option value="sim">模拟（本地孪生）</option>
+<option value="device">真实（物理设备）</option>
+</select></span>
+<span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有活 400ms / 待机 600ms)</span>
 </div>
 @GATE_SVG@
 <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0 4px">
@@ -600,11 +605,14 @@ function setLastRun(d){lastRun=(d&&d.actions&&d.actions.length&&(d.path==='FAST'
  b.title=lastRun?('把最近一次运行的 '+lastRun.actions.length+' 条指令下发到 MQTT 分拣线'):'先运行并产生可执行指令 (FAST/EXPAND/PARTIAL) 才能下发'}}
 async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
  const b=$('btnDispatch');b.disabled=true;
+ if(window.__gla){__gla.setJob(keep.actions.map(a=>({yard:a.yard,material:a.material,
+  label:(MATCN[a.material]||a.material)+' × '+a.qty,color:MATCOL[a.material]||'#fb923c'})));}
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
   lastRun=null;setLastRun(null);
   $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued}) — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
   refreshTwin(); // 下发立即刷一次, 光门运行示意尽快跟上真实时序
  }catch(e){lastRun=keep;setLastRun(keep);
+  if(window.__gla){__gla.setJob([]);}
   $('out').innerHTML=sec('📤 分拣下发')+`<pre style="color:#f87171">❌ ${e}</pre>`+$('out').innerHTML;}}
 // ---- 光门运行示意 · 数字孪生同步: 轮询 /twin (代理网关 health/motion/stats) ----
 // 在线 → SVG 切实时模式 (推杆/光门/料道按运动时间线还原); 离线 → 回落循环演示
@@ -622,35 +630,41 @@ async function refreshTwin(){
   scheduleTwin(1500);
   return;
  }
+ const srcSel=$('gla-src');
+ const src=srcSel?srcSel.value:'sim'; // 数据源: sim=本地孪生模拟器 / device=物理设备
  const st=[{state:'ready',ts_ms:0},{state:'ready',ts_ms:0},{state:'ready',ts_ms:0}];
  (d.events||[]).forEach(ev=>{
   if(!ev||ev.state==null)return; // reset/cancel 只记 via 无 state, 不改状态
+  if((ev.src||'device')!==src)return; // 数据源过滤: 只还原所选来源的运动事件
   const n=ev.sorter;
   if(n>=1&&n<=3)st[n-1]={state:ev.state,ts_ms:Date.parse(ev.ts)||0};
  });
- const evs=d.events||[],last=evs[evs.length-1];
+ const evs=(d.events||[]).filter(ev=>{if(!ev)return false;return (ev.src||'device')===src;}),last=evs[evs.length-1];
  const beltOn=!!d.active_job||d.queue>0;
  const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})`
   :'数字孪生在线 · 等待事件…';
- const sig=JSON.stringify([beltOn,d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
+ const sig=JSON.stringify([src,beltOn,d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
  if(sig!==twinSig){
   twinSig=sig;
   if(gla)gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
    status:(d.fault?'⚠ 故障锁存 '+d.fault+' · ':'')+line});
  }
- if(chip)chip.textContent=`数字孪生在线 · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':' · 待机'})`;
+ if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':' · 待机'})`;
  scheduleTwin(beltOn?400:600); // 有活时加密集采; 在线待机也 600ms — 任务窗口 ~1.3s, 1.5s 轮询会整单漏掉
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
+const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
+ red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
+const MATCOL={red_apple:'#ef4444',green_apple:'#4ade80',banana:'#fbbf24',pear:'#a3d977',
+ red_block:'#ef4444',green_block:'#4ade80',yellow_block:'#facc15',blue_block:'#60a5fa'};
 async function render(d){
  drawFlow(d);
  setLastRun(d);
- refreshStock(); // 常驻库存条: 每次运行后都刷新 (分拣自动记账 / 出库 / 清空 都保持同步)
+ if(lastRun)dispatchRun(); // 语音/文本指令 → 自动执行到所选数据源, 动画演示对应操作 (QA/暂停路径无 actions, 不触发)
+ refreshStock(); // 常驻库存条: 每次运行后都刷新 (分拣自动记账 / 出库 / 清空) 都保持同步
  // 台账面板开着时, 每次产生可执行下发 (已自动记入) 就刷新
  if(ledOpen&&d.actions&&d.actions.length&&['FAST','EXPAND','PARTIAL'].includes(d.path))refreshLedger();
  const pcls='path-'+d.path;
- const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
-  red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
  $('cards').innerHTML=card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')+card('ASR',d.asr_ms+' ms')
    +card('Laya',d.laya_ms+' ms')+(d.dist_ms?card('LLM 分配',d.dist_ms+' ms'):d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','—','muted'));
  let out='';
@@ -912,6 +926,13 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 })();
 refreshState();
 refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
+(function(){ // 数据源选项: 模拟/真实, 记忆偏好, 切换立即重采
+ const sel=$('gla-src');
+ if(!sel)return;
+ const sv=localStorage.getItem('glaSrc');
+ if(sv==='device'||sv==='sim')sel.value=sv;
+ sel.addEventListener('change',()=>{localStorage.setItem('glaSrc',sel.value);twinSig='';refreshTwin();});
+})();
 refreshTwin(); // 光门运行示意: 加载即探测数字孪生 (在线切实时模式, 离线循环演示)
 </script></div></body></html>"""
 

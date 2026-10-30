@@ -187,7 +187,7 @@ journalctl --user -u laya-loop-ui -f
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
 | `tests/test_sort_mqtt.py` | 分拣网关 E2E 52 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
-| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入），在线=按网关 `sort/line1/motion` 时间线实时还原；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
+| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源, 页面可按 模拟/真实 数据源过滤）；物品 5 种内嵌矢量物料图标 + 任务料道标签（`__gla.setJob` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
@@ -237,6 +237,18 @@ journalctl --user -u laya-loop-ui -f
     ready=静止），传送带按 `belt_mps` 平移、有 job 在跑才动（网关批间停带, 忠实还原）；
     状态行显示最后事件 + 时间。离线（网关不可达）自动回落循环演示，
     页头状态条 `#gla-mode` 显示「实时同步/循环演示 + 带速 + 运行中/待机」。
+- **数据源选项（模拟/真实）**：光门区右上角 `#gla-src` 下拉，记忆到 localStorage。
+  运动事件带来源标记（`sim_devices` 发 `src:"sim"`，物理设备/网关默认 `src:"device"`），
+  页面按所选数据源**过滤** `/twin` 事件——「模拟」只看本地孪生模拟器的时间线，
+  「真实」只看物理设备事件（本机未接传感器/执行器时, 真机走 `via:immediate` 回退）。
+  局域网内真机与 sim 同时挂 broker 时, 该选项可分开呈现两路事件, 互不串线。
+- **语音指令自动驱动**：`/run` 出可执行下发（FAST/EXPAND/PARTIAL）后, 页面**自动**
+  `POST /dispatch` 到网关（不再手点「📤 下发分拣线」按钮, 该按钮保留作手动重下发）,
+  动画随即演示该指令的对应操作；下发同时经 `__gla.setJob()` 把任务物料注入 SVG。
+- **物料图标**：每路 1 件物品 5 个内嵌矢量变体（block 色随任务变 / 香蕉弧形 / 梨 /
+  红苹果 / 绿苹果, 内嵌不挂外链, SVG 离线可开）；armed/busy 时切到本任务物料并显示
+  料道标签（如「香蕉 × 2」, 颜色与物料一致）, ready/fault 隐藏。循环演示模式固定展示
+  香蕉/红苹果/蓝方块三种形态。
 - **采样节奏**：在线时自适应轮询 — 有 job（active_job/queue>0）400ms, 待机 600ms,
   离线 1500ms。任务窗口 ~1.3s（photo 时序: 光门等待 350ms + 拨件 900ms）,
   固定 1.5s 轮询会整单漏掉 busy 态。`ts:""` 的事件（真机未实现时间戳时）不驱动时间线动画。

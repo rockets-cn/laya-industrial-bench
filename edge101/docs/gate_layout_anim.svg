@@ -76,10 +76,30 @@
   <line id="gla-spoke-2" x1="1110" y1="400" x2="1110" y2="384" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5" opacity="0.6"/>
   <circle cx="1110" cy="400" r="3" fill="var(--gate-fg,#e6e6e6)"/>
 
-  <!-- 物品 ×3 (脚本驱动: 3 号口顺序, 件距 270px = 0.9m) -->
-  <g id="gla-obj-1" opacity="0" transform="translate(40,400)"><rect x="-9" y="-9" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/></g>
-  <g id="gla-obj-2" opacity="0" transform="translate(40,400)"><rect x="-9" y="-9" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/></g>
-  <g id="gla-obj-3" opacity="0" transform="translate(40,400)"><rect x="-9" y="-9" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/></g>
+  <!-- 物品 ×3 (脚本驱动: 3 号口顺序, 件距 270px = 0.9m).
+       每物 5 变体: block(方块, 颜色脚本设) / banana / pear / red_apple / green_apple,
+       内嵌矢量图标 (不依赖外部图片: 独立 XML/离线/内联三态均可用); 脚本按任务物料切换. -->
+  <g id="gla-obj-1" opacity="0" transform="translate(40,400)">
+    <rect id="gla-obj-1-block" x="-9" y="-9" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/>
+    <g id="gla-obj-1-banana" display="none"><path d="M-7.5,2.5 C-8,-3.5 -3,-7.5 4.5,-7.5 C6.5,-7.5 7.5,-6.5 7.5,-5.5 C2,-5.5 -3.5,-1.5 -4.5,4 L-6.5,6 C-7.5,5.5 -7.8,4 -7.5,2.5 Z" fill="#fbbf24" stroke="#b45309" stroke-width="0.8"/></g>
+    <g id="gla-obj-1-pear" display="none"><circle cx="0" cy="2.8" r="5.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><circle cx="0" cy="-3.2" r="3.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><line x1="0" y1="-6.4" x2="0.5" y2="-8.8" stroke="#78350f" stroke-width="1.1"/></g>
+    <g id="gla-obj-1-red_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#ef4444" stroke="#991b1b" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#4ade80" transform="rotate(-20 3.2 -6.4)"/></g>
+    <g id="gla-obj-1-green_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#4ade80" stroke="#166534" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#bbf7d0" transform="rotate(-20 3.2 -6.4)"/></g>
+  </g>
+  <g id="gla-obj-2" opacity="0" transform="translate(40,400)">
+    <rect id="gla-obj-2-block" x="-9" y="-9" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/>
+    <g id="gla-obj-2-banana" display="none"><path d="M-7.5,2.5 C-8,-3.5 -3,-7.5 4.5,-7.5 C6.5,-7.5 7.5,-6.5 7.5,-5.5 C2,-5.5 -3.5,-1.5 -4.5,4 L-6.5,6 C-7.5,5.5 -7.8,4 -7.5,2.5 Z" fill="#fbbf24" stroke="#b45309" stroke-width="0.8"/></g>
+    <g id="gla-obj-2-pear" display="none"><circle cx="0" cy="2.8" r="5.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><circle cx="0" cy="-3.2" r="3.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><line x1="0" y1="-6.4" x2="0.5" y2="-8.8" stroke="#78350f" stroke-width="1.1"/></g>
+    <g id="gla-obj-2-red_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#ef4444" stroke="#991b1b" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#4ade80" transform="rotate(-20 3.2 -6.4)"/></g>
+    <g id="gla-obj-2-green_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#4ade80" stroke="#166534" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#bbf7d0" transform="rotate(-20 3.2 -6.4)"/></g>
+  </g>
+  <g id="gla-obj-3" opacity="0" transform="translate(40,400)">
+    <rect id="gla-obj-3-block" x="-9" y="-9" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/>
+    <g id="gla-obj-3-banana" display="none"><path d="M-7.5,2.5 C-8,-3.5 -3,-7.5 4.5,-7.5 C6.5,-7.5 7.5,-6.5 7.5,-5.5 C2,-5.5 -3.5,-1.5 -4.5,4 L-6.5,6 C-7.5,5.5 -7.8,4 -7.5,2.5 Z" fill="#fbbf24" stroke="#b45309" stroke-width="0.8"/></g>
+    <g id="gla-obj-3-pear" display="none"><circle cx="0" cy="2.8" r="5.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><circle cx="0" cy="-3.2" r="3.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><line x1="0" y1="-6.4" x2="0.5" y2="-8.8" stroke="#78350f" stroke-width="1.1"/></g>
+    <g id="gla-obj-3-red_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#ef4444" stroke="#991b1b" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#4ade80" transform="rotate(-20 3.2 -6.4)"/></g>
+    <g id="gla-obj-3-green_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#4ade80" stroke="#166534" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#bbf7d0" transform="rotate(-20 3.2 -6.4)"/></g>
+  </g>
 
   <!-- 光门 ×3: x=380 / 650 / 920 (白色虚线 = 已装光束; 橙色叠加 = 挡光/落沿) -->
   <g>
@@ -128,6 +148,11 @@
   <text x="588" y="496" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="middle" transform="rotate(45 588 496)">1号料道</text>
   <text x="858" y="496" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="middle" transform="rotate(45 858 496)">2号料道</text>
   <text x="1128" y="496" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="middle" transform="rotate(45 1128 496)">3号料道</text>
+
+  <!-- 任务物料标签 (脚本显隐): 「香蕉 ×2」等, 按任务物料着色 -->
+  <text id="gla-jlabel-1" x="618" y="576" font-size="11.5" font-weight="600" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle" opacity="0"></text>
+  <text id="gla-jlabel-2" x="888" y="576" font-size="11.5" font-weight="600" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle" opacity="0"></text>
+  <text id="gla-jlabel-3" x="1130" y="576" font-size="11.5" font-weight="600" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle" opacity="0"></text>
 
   <!-- 末端对账门 ×(未装, 虚线 ×) -->
   <line x1="598" y1="498" x2="614" y2="514" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
@@ -273,6 +298,24 @@
   // ---- 数字孪生同步模式: 页面轮询网关(health/motion)注入真实状态; 离线回落循环演示 ----
   var twinMode=false, twinData=null;
   var PXM=303.0; // 1px≈3.3mm → 1m≈303px
+  var jobMats=[null,null,null]; // 每分拣器任务物料 {m:变体键, label:'香蕉 ×2', color:'#fbbf24'} (页面 setJob 注入)
+  var VARKEYS=['block','banana','pear','red_apple','green_apple'];
+  function setVariant(i,key){
+    for(var k=0;5>k;k++){
+      get('gla-obj-'+(i+1)+'-'+VARKEYS[k]).setAttribute('display',(VARKEYS[k]===key)?'inline':'none');
+    }
+    if(jobMats[i]){
+      if(jobMats[i].color)get('gla-obj-'+(i+1)+'-block').setAttribute('fill',jobMats[i].color);
+    }
+  }
+  function showLabel(i){
+    if(!jobMats[i])return;
+    var lb=get('gla-jlabel-'+(i+1));
+    lb.setAttribute('opacity','1');
+    lb.setAttribute('fill',jobMats[i].color);
+    if(lb.textContent!==jobMats[i].label)lb.textContent=jobMats[i].label;
+  }
+  function hideLabel(i){get('gla-jlabel-'+(i+1)).setAttribute('opacity','0');}
   function twinFrame(now){
     var td=twinData||{};
     var beltOn=!!td.belt_on, bps=td.belt_mps||1;
@@ -284,6 +327,7 @@
     for(var i=0;3>i;i++){
       var si=td.sorters?(td.sorters[i]||{}):{};
       var st=si.state||'ready', ts=si.ts_ms||0;
+      setVariant(i,jobMats[i]?jobMats[i].m:'block'); // 物品图标随任务物料切换
       var p=0; if(ts){p=(now+td.t0-ts)/900; if(p>1)p=1;} // 350ms 蓄能 + 推出拨入 ≈ 900ms
       var rod=get('gla-rod-'+(i+1));
       if('armed'===st){ // 光门已触发, 推杆推出中 (450ms)
@@ -294,6 +338,7 @@
         get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
         get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
         get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+        showLabel(i);
       } else if('busy'===st){ // 推出完成, 物品滑入料道
         rod.setAttribute('y2','402.0');
         rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
@@ -304,6 +349,7 @@
         var op2=cc>=CHL-8?Math.max(0,(CHL-cc)/8):1;
         get('gla-obj-'+(i+1)).setAttribute('opacity',op2.toFixed(2));
         get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(P[i]+C45*cc).toFixed(1)+','+(400+C45*cc).toFixed(1)+')');
+        showLabel(i);
       } else if('fault'===st){ // 故障: 光门红色告警, 推杆不动作
         rod.setAttribute('y2','438.0');
         rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
@@ -311,6 +357,7 @@
         get('gla-gate-'+(i+1)).setAttribute('opacity','0.90');
         get('gla-gate-'+(i+1)).setAttribute('stroke','#f87171');
         get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+        hideLabel(i);
       } else { // ready: 静止
         rod.setAttribute('y2','438.0');
         rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
@@ -318,6 +365,7 @@
         get('gla-gate-'+(i+1)).setAttribute('opacity','0');
         get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
         get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+        hideLabel(i);
       }
     }
     get('gla-status').textContent=td.status||'数字孪生在线 · 等待事件…';
@@ -334,7 +382,28 @@
   window.__gla={render:render,twinFrame:twinFrame,
     setTwin:function(d){ twinData=d; twinMode=true;
       if(motionOff){twinFrame(performance?performance.now():Date.now());} },
-    demo:function(){ twinMode=false; twinData=null; start=null; },
+    demo:function(){ twinMode=false; twinData=null; start=null;
+      // 循环演示: 3 路各用一个物料图标 (香蕉/红苹果/蓝方块), 展示图标形态
+      jobMats=[{m:'banana',label:'香蕉',color:'#fbbf24'},
+               {m:'red_apple',label:'红苹果',color:'#ef4444'},
+               {m:'block',label:'蓝方块',color:'#60a5fa'}];
+      for(var di=0;3>di;di++){
+        setVariant(di,jobMats[di].m);
+        showLabel(di);
+      } },
+    setJob:function(list){ // 页面下发后注入本任务物料: [{yard, material, label:'香蕉 ×2', color}]
+      for(var i=0;3>i;i++)jobMats[i]=null;
+      var arr=list||[];
+      for(var a=arr.length-1;a>=0;a--){
+        var it=arr[a];
+        if(it){
+          if(it.yard>=1){
+            if(3>=it.yard)jobMats[it.yard-1]={m:it.material,label:it.label,color:it.color};
+          }
+        }
+      }
+      for(var i=0;3>i;i++)setVariant(i,jobMats[i]?jobMats[i].m:'block');
+      if(motionOff){twinFrame(performance?performance.now():Date.now());} },
     TEND:TEND,S:S,TC:TC,TG:TG,TD:TD}; // 测试钩子 (桩驱动)
   var start=null;
   function step(now){

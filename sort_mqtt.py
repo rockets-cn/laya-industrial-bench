@@ -309,7 +309,10 @@ class SortGateway:
               "sorter": payload.get("sorter"),
               "state": payload.get("state"),
               "via": payload.get("via"),
-              "job_id": payload.get("job_id", "")}
+              "job_id": payload.get("job_id", ""),
+              # 数据来源: sim 模拟器显式带 src=sim; 物理设备 (固件) 未带 → 记 device.
+              # 页面按此区分「模拟/真实」数据源, 各自还原, 互不混入.
+              "src": payload.get("src") or "device"}
         self.motion.append(ev)
         self._publish("sort/event/motion", ev)
 

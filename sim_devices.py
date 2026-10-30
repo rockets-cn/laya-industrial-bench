@@ -195,7 +195,7 @@ class SorterSim(SimDevice):
         """
         self.client.publish("sort/line1/motion", json.dumps(
             {"sorter": self.n, "state": state or self.state, "via": via,
-             "job_id": self.cur_job or "", "ts": _now()}), qos=0)
+             "job_id": self.cur_job or "", "ts": _now(), "src": "sim"}), qos=0)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         client.subscribe(self.topic, qos=1)
