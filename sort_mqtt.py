@@ -304,12 +304,15 @@ class SortGateway:
 
     def _on_motion(self, payload):
         """设备运动事件 (状态迁移时间线): 记环形缓冲 + relay 到
-        sort/event/motion (QoS0), 供动画/台账消费者还原实际情况."""
+        sort/event/motion (QoS0), 供动画/台账消费者还原实际情况.
+        item/of = 逐件件号 (qty>1 时每件一条事件序列; 旧固件/不适用缺省 0)."""
         ev = {"ts": _now(),
               "sorter": payload.get("sorter"),
               "state": payload.get("state"),
               "via": payload.get("via"),
               "job_id": payload.get("job_id", ""),
+              "item": payload.get("item", 0),
+              "of": payload.get("of", 0),
               # 数据来源: sim 模拟器显式带 src=sim; 物理设备 (固件) 未带 → 记 device.
               # 页面按此区分「模拟/真实」数据源, 各自还原, 互不混入.
               "src": payload.get("src") or "device"}
@@ -445,12 +448,25 @@ class SortGateway:
             if not ok:
                 return self._fail(job, "conveyor",
                                    f"传送带未 running (state={cstate}): {note}")
-        # 2. 分拣下发 (保序, 每条 action 一个 divert 命令)
+        # 2. 分拣下发 (保序). 动作层逐条 (action = 1 件), 但指令层同 料场+物料
+        #    合并回一条 divert 命令 (qty=N): 设备按一条命令逐件执行 (motion 事件
+        #    带件号 item k/N), 同 job_id 连发多条命令会被设备 busy-ack 折叠,
+        #    合并后才物理正确 (固件/sim 状态机一致).
+        groups, order = {}, []
         for a in job["actions"]:
-            ok, note = self._divert_cmd(job, a["yard"], a)
+            k = (a["yard"], a["material"])
+            if k in groups:
+                groups[k]["qty"] += a["qty"]
+            else:
+                groups[k] = dict(a)
+                order.append(k)
+        for k in order:
+            g = groups[k]
+            ok, note = self._divert_cmd(job, g["yard"], g)
             if not ok:
-                return self._fail(job, f"sorter{a['yard']}",
+                return self._fail(job, f"sorter{g['yard']}",
                                    f"divert 无应答/失败: {note}")
+        for a in job["actions"]:
             self.stats.item_dispatched(a["yard"], a["material"], a["qty"])
             self._publish("sort/event/dispatch",
                            {"ts": _now(), "job_id": job["job_id"],

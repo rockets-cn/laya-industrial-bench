@@ -80,13 +80,21 @@ inline std::string visionJson(const char* material, double conf,
 // via = 迁移原因: immediate (收令即拨) / photo (物理光门沿) / virtual (虚拟光门
 // 预测时刻到) / timeout (光门等待超时 fault) / reset (人工复位) / done (job 完成)
 // / next (photo job 多件: 拨完一件回 armed 等下一件) / cancel (armed 被 reset 取消).
+// 逐件件号 (qty>1 时): item = 本条事件关联的第几件 (1-indexed), of = 总件数.
+// 关联件口径: busy/timeout = 正在处理(未到场)的那件; armed/next 与 done =
+// 刚完成(刚拨出)的那件; of=0 = 不适用 (reset/cancel 或旧固件).
 inline std::string motionJson(int sorter, const char* state, const char* via,
-                              const char* job_id, const char* ts = "") {
-    return "{\"sorter\":" + std::to_string(sorter) +
+                              const char* job_id, const char* ts = "",
+                              int item = 0, int of = 0) {
+    std::string out = "{\"sorter\":" + std::to_string(sorter) +
            ",\"state\":" + jsonStr(state ? state : "") +
            ",\"via\":" + jsonStr(via ? via : "") +
            ",\"job_id\":" + jsonStr(job_id ? job_id : "") +
-           ",\"ts\":" + jsonStr(ts) + "}";
+           ",\"ts\":" + jsonStr(ts);
+    if (of > 0 && item > 0)
+        out += ",\"item\":" + std::to_string(item) +
+               ",\"of\":" + std::to_string(of);
+    return out + "}";
 }
 
 // topic

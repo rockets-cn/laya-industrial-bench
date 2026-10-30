@@ -218,9 +218,11 @@ def _ans_yard(text):
     tot = sum(a.get("qty", 0) for a in items)
     if not items:
         return f"{y}号料场: 0件"
-    detail = " ".join(
-        f"{_MATCN[a['material']]}x{a['qty']}"
-        for a in items if a.get("material") in _MATCN)
+    det = {}
+    for a in items:
+        if a.get("material") in _MATCN:
+            det[a["material"]] = det.get(a["material"], 0) + a.get("qty", 0)
+    detail = " ".join(f"{_MATCN[m]}x{n}" for m, n in det.items())
     return f"{y}号料场: {tot}件 " + detail
 
 

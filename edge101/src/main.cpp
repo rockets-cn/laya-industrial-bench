@@ -196,10 +196,14 @@ static void publishConveyorAck(const char* job_id, const char* action,
 // 运动事件: 分拣器每次状态迁移广播一条 (sort/line1/motion, QoS0 非保留).
 // via = 迁移原因 (immediate/photo/virtual/timeout/reset/done/next/cancel).
 // 网关据此维护 GET /motion 时间线, 供"让示意图动起来"的动画还原实际情况.
-static void publishMotion(int n, const char* state, const char* via) {
+// 逐件件号 (item/of): qty>1 时每件各触发一次光门+一次扫掠, 事件带件号 —
+// busy/timeout = 正在处理(未到场)的第几件; next/done = 刚完成的那件; 0 = 不适用.
+static void publishMotion(int n, const char* state, const char* via,
+                          int item = 0, int of = 0) {
     mqtt.publish(sort::motionTopic().c_str(),
                  sort::motionJson(n, state, via,
-                                  lastJobId[n - 1].c_str()).c_str(), false);
+                                  lastJobId[n - 1].c_str(), "", item, of).c_str(),
+                 false);
 }
 
 static void sweepStart(int n) {
@@ -225,13 +229,13 @@ static void sweepTick() {
                 t.active = false;
                 publishSorterAck(t.n, lastJobId[t.n - 1].c_str(), "divert",
                                  "ok", s.mat());
-                publishMotion(t.n, "ready", "done");
+                publishMotion(t.n, "ready", "done", s.done_count, s.pend_qty);
                 lastDoneJob[t.n - 1] = lastJobId[t.n - 1].c_str();
                 lastDoneAtMs[t.n - 1] = millis();
             } else if (s.state_str == "armed") {
                 // photo job 中间件: 等下一件的光门沿, 本扫掠到此为止
                 t.active = false;
-                publishMotion(t.n, "armed", "next");
+                publishMotion(t.n, "armed", "next", s.done_count, s.pend_qty);
             } else {
                 t.inEject = true;                 // immediate: 连续拨下一件
                 t.phaseAt = now;
@@ -328,7 +332,7 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
         } else if (r.ok) {
             const char* via = useVirtual ? "virtual"
                               : (photo ? "photo" : "immediate");
-            publishMotion(n, sorters[n - 1].state(), via);
+            publishMotion(n, sorters[n - 1].state(), via, 1, qty);
             if (std::strcmp(sorters[n - 1].state(), "armed") != 0)
                 sweepStart(n);    // immediate: 立即拨; photo/虚拟: 等光门沿再拨
         } else {
@@ -623,7 +627,8 @@ void loop() {
             if (gates[i].onItemEdge(hi, millis()) &&
                 sorters[i].onGateEdge(millis())) {
                 sweepStart(i + 1);
-                publishMotion(i + 1, "busy", "photo");
+                publishMotion(i + 1, "busy", "photo",
+                              sorters[i].done_count + 1, sorters[i].pend_qty);
                 Serial.printf("[gate] 分拣器%d 光门触发, 开始拨料 (剩 %d 件)\n",
                               i + 1, sorters[i].pendingQty());
             }
@@ -633,7 +638,8 @@ void loop() {
     for (int i = 0; i < 3; i++) {
         if (sorters[i].onVirtualEdge(millis())) {
             sweepStart(i + 1);
-            publishMotion(i + 1, "busy", "virtual");
+            publishMotion(i + 1, "busy", "virtual",
+                          sorters[i].done_count + 1, sorters[i].pend_qty);
             Serial.printf("[vgate] 分拣器%d 虚拟光门触发, 开始拨料 (剩 %d 件)\n",
                           i + 1, sorters[i].pendingQty());
         }
@@ -645,7 +651,8 @@ void loop() {
                           i + 1, (unsigned)sort::kPhotoTimeoutMs);
             publishSorterAck(i + 1, sorters[i].pendingJobId().c_str(),
                              "divert", "fault", "photo timeout");
-            publishMotion(i + 1, "fault", "timeout");
+            publishMotion(i + 1, "fault", "timeout",
+                          sorters[i].done_count + 1, sorters[i].pend_qty);
         }
     }
 

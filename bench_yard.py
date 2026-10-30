@@ -286,9 +286,11 @@ def laya_decide(mentions, norm_text=""):
 
 
 def validate(mentions, answers):
-    """确定性白名单 + 交叉检查 + 数量范围; 同料场同物料合并 (PLC 每组一条指令).
-    超纲料场 (yard 不在 1/2/3) 与 物料未定项 (如方块未说颜色) 不进 reasons,
-    路由到 oob 挂起列表 (部分下发): 返回的 reasons 末尾附带 oob 说明 —
+    """确定性白名单 + 交叉检查 + 数量范围; 逐件展开 (1 件 = 1 条 qty=1 动作,
+    同料场同物料不合并): 物理上每件 = 一次光门触发 + 一次推杆扫掠 (固件
+    Sorter::stepOne 逐件, sim 镜像), 运动时间线也是逐件事件序列, 数字孪生
+    按件回放. 超纲料场 (yard 不在 1/2/3) 与 物料未定项 (如方块未说颜色) 不进
+    reasons, 路由到 oob 挂起列表 (部分下发): 返回的 reasons 末尾附带 oob 说明 —
     调用方以 ok=True + reasons 非空 识别 PARTIAL.
     answers=None (LLM 旁路路径): 白名单 + 范围检查."""
     actions, reasons, oob = [], [], []
@@ -325,16 +327,12 @@ def validate(mentions, answers):
             reasons.append(f"m{i}: 数量越界 {m['qty']}")
             continue
         actions.append({"yard": yard, "material": material, "qty": m["qty"]})
-    merged = {}
-    for a in actions:
-        k = (a["yard"], a["material"])
-        merged[k] = merged.get(k, 0) + a["qty"]
+    # 逐件展开: 1 件 = 1 条 qty=1 动作 (同料场同物料不合并 — 每件都是独立的
+    # 光门触发+拨料动作, 与固件/sim 逐件执行口径一致; 总量不变, 对账仍成立).
     final = []
-    for (y, mat), qty in merged.items():
-        if not (1 <= qty <= 99):
-            reasons.append(f"合并后数量越界: 料场{y} {mat} x{qty}")
-            continue
-        final.append({"yard": y, "material": mat, "qty": qty})
+    for a in actions:
+        for _ in range(a["qty"]):
+            final.append({"yard": a["yard"], "material": a["material"], "qty": 1})
     if not final and not reasons:
         reasons.append("空订单")
     # 分配指令对账: 展开后的总量必须与指令说的总数精确一致 (容差 0)
@@ -533,40 +531,40 @@ def dist_expand_if_needed(text):
 
 CASES = [
     ("给1号料场送两个红苹果，3号料场送10个蓝色方块",
-     [(1, "red_apple", 2), (3, "blue_block", 10)]),   # 双料场双物料
+     [(1, "red_apple", 1), (3, "blue_block", 1)]),   # 双料场双物料 (逐件展开)
     ("1号料场要5个黄色方块，2号料场来三个香蕉",
-     [(1, "yellow_block", 5), (2, "banana", 3)]),
+     [(1, "yellow_block", 1), (2, "banana", 1)]),
     ("两个红苹果送到3号料场",
-     [(3, "red_apple", 2)]),                          # 物料在料场前 (倒序)
+     [(3, "red_apple", 1)]),                          # 物料在料场前 (倒序)
     ("1号料场送四个梨，不要绿色方块",
-     [(1, "pear", 4)]),                               # 段内否定
+     [(1, "pear", 1)]),                               # 段内否定
     ("3号料场来8个绿色方块和一把香蕉",
-     [(3, "green_block", 8), (3, "banana", 1)]),
+     [(3, "green_block", 1), (3, "banana", 1)]),
     # 汉字料场号变体 (ASR/口语常见): 二号 曾漏在 YARD_RE 里被误拒
     ("给二号料场送3个香蕉",
-     [(2, "banana", 3)]),
+     [(2, "banana", 1)]),
     ("两个红苹果放二号仓库",
-     [(2, "red_apple", 2)]),
+     [(2, "red_apple", 1)]),
     # 后置数量且料场号夹在物料与数量之间 (真实语音语序: 先报物料再说放到哪几件)
     ("把香蕉放到一号仓库两个",
-     [(1, "banana", 2)]),
+     [(1, "banana", 1)]),
     ("一号料场送1个梨，二号料场送2个香蕉",
-     [(1, "pear", 1), (2, "banana", 2)]),
+     [(1, "pear", 1), (2, "banana", 1)]),
     # 无标点密集句 (真实语音): 料场分域, 不能按字符距离归属
     ("一号仓库一个香蕉两个苹果二号仓库三个苹果四个香蕉三号仓库一个梨一个香蕉",
-     [(1, "banana", 1), (1, "red_apple", 2),
-      (2, "red_apple", 3), (2, "banana", 4),
+     [(1, "banana", 1), (1, "red_apple", 1),
+      (2, "red_apple", 1), (2, "banana", 1),
       (3, "pear", 1), (3, "banana", 1)]),
     # 口语 '两号' (ASR 常转成 两号 而非 二号)
     ("一号仓库放两个香蕉两号仓库放三个香蕉三号仓库放四个苹果",
-     [(1, "banana", 2), (2, "banana", 3), (3, "red_apple", 4)]),
-    # 分配指令: Tier-1 确定性展开 (余数给小号料场)
+     [(1, "banana", 1), (2, "banana", 1), (3, "red_apple", 1)]),
+    # 分配指令: Tier-1 确定性展开 (余数给小号料场); 逐件后每料场 1 条 qty=1
     ("九十九个香蕉平均分到三个仓库里去",
-     [(1, "banana", 33), (2, "banana", 33), (3, "banana", 33)]),
+     [(1, "banana", 1), (2, "banana", 1), (3, "banana", 1)]),
     ("100个香蕉平均分到三个仓库",
-     [(1, "banana", 34), (2, "banana", 33), (3, "banana", 33)]),
+     [(1, "banana", 1), (2, "banana", 1), (3, "banana", 1)]),
     ("把40个梨平均分到1号和3号仓库",
-     [(1, "pear", 20), (3, "pear", 20)]),
+     [(1, "pear", 1), (3, "pear", 1)]),
     ("两个红苹果平均分到1号和3号",
      [(1, "red_apple", 1), (3, "red_apple", 1)]),
     ("两个香蕉平均分到三个仓库",
@@ -579,10 +577,10 @@ CASES = [
     ("1号料场送3个方块", None),                       # 物料颜色未指定
     # 超纲混入有效指令: 部分下发 — 在纲项照发, 超纲项挂起报人工 (PARTIAL)
     ("一号料场放三个苹果，2号料场放4个苹果，5号料场放6个苹果",
-     [(1, "red_apple", 3), (2, "red_apple", 4)], "partial"),
+     [(1, "red_apple", 1), (2, "red_apple", 1)], "partial"),
     # 方块未说颜色: 物料未定项挂起报人工, 其余在纲项照发 (PARTIAL)
     ("一号库径三个方块，2号库径4个苹果，3号库径5个香蕉",
-     [(2, "red_apple", 4), (3, "banana", 5)], "partial"),
+     [(2, "red_apple", 1), (3, "banana", 1)], "partial"),
     # 本机运行状态问答 (纯规则层, 答案<=30字): expected = 答案必含子串
     ("现在几点了", "现在", "qa"),
     ("明天是星期几", "明天是星期", "qa"),

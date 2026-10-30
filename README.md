@@ -180,14 +180,14 @@ journalctl --user -u laya-loop-ui -f
 | `VOICE_DECISION_BENCH.md` / `TEACHER_REPORT.md` / `DEPLOY_SENSEVOICE.md` | 链路设计报告 / 教师报告 / 部署记录 |
 | `sort_mqtt.py` | MQTT 分拣网关: 入站 (loop_ui /dispatch · SCADA `sort/inbound/command` · 视觉 `sort/inbound/vision`) → 白名单校验 → 顺序执行 → 统计分发 (JSONL 台账 + `sort/stats/summary`); 命令超时重试 → 故障锁存 → 人工清除; HTTP :8123 (`/health` `/stats` `/motion` `/dispatch` `/fault/clear`) |
 | `yard_ledger.py` | 料场出入库台账 (SQLite, `data/yard_ledger.db`): 分拣下发自动记入, 页面手动记出, 库存=入-出; `record_in/record_out/stock/recent` |
-| `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机 (按件计时, 真实时序), 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`), 光门模式 (`--photo-wait/--photo-timeout/--photo-dead-sorter`), 运动事件 (`sort/line1/motion`, 与固件契约一致); 真实 PLC 接入时的行为参照 |
+| `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机 (按件计时, 真实时序), 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`), 光门模式 (`--photo-wait/--photo-timeout/--photo-dead-sorter`), 运动事件带逐件件号 item/of (`sort/line1/motion`, 与固件契约一致); 真实 PLC 接入时的行为参照 |
 | `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
 | `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
-| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, RMT 硬件脉冲, EN 走 MCP23017) + PCA9685 I2C 3 舵机 + 3 路光门 (推杆推出时序触发, MCP23017 PB0/1/2; 未接线时虚拟光门按带面位置预测); 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (141 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
+| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, RMT 硬件脉冲, EN 走 MCP23017) + PCA9685 I2C 3 舵机 + 3 路光门 (推杆推出时序触发, MCP23017 PB0/1/2; 未接线时虚拟光门按带面位置预测); 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (142 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
 | `tests/test_sort_mqtt.py` | 分拣网关 E2E 52 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
-| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源, 页面可按 模拟/真实 数据源过滤）；物品 5 种内嵌矢量物料图标 + 任务料道标签（`__gla.setJob` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
+| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入, 每轮随机 3 种物料），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源 + 逐件件号, 页面可按 模拟/真实 数据源过滤；任务下发后逐件回放 带首→相机→光门→拨入 全旅程）；物品 5 种内嵌矢量物料图标 + 任务料道标签（`__gla.setJob` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
@@ -249,6 +249,21 @@ journalctl --user -u laya-loop-ui -f
   红苹果 / 绿苹果, 内嵌不挂外链, SVG 离线可开）；armed/busy 时切到本任务物料并显示
   料道标签（如「香蕉 × 2」, 颜色与物料一致）, ready/fault 隐藏。循环演示模式固定展示
   香蕉/红苹果/蓝方块三种形态。
+- **全旅程回放（模拟数据源）**：任务下发后不止还原推杆状态, 而是逐件回放
+  「物品从带首出现 → 缓行过 HuskyLens 2 → 光门落沿触发推杆 → 拨入料道」的
+  完整动作序列：每分拣器一个 `journey` 状态机（travel→armed→busy→wait）,
+  行走时长按固件口径 `TRAV=(光门−带首)/1.0m/s`（分拣器 1≈2.6s / 2≈4.4s /
+  3≈6.3s, 与数字孪生 303px/m 等比）；多件任务按件连续回放（件间 0.7s 等
+  下一件），传送带在回放期间保持运行；boot 时记事件基线, 只回放启动后的新
+  事件, 避免重放旧事件。
+- **逐件件号（item/of）**：规则层「三个香蕉进一号仓库」展开为 **3 条 qty=1
+  动作**（不合并）——与物理一致：每件 = 一次光门落沿 + 一次推杆扫掠。固件
+  `Sorter::stepOne` 逐件执行, 运动事件带件号（`busy`=正在处理的第几件,
+  `next/done`=刚完成的那件, 件数即 job 的 qty）；sim 镜像同口径（photo 模式
+  逐件：等光门→拨出→回 armed 等下一件, 全部完成才 ok）。指令层仍按
+  料场+物料 合并为一条 PLC 命令（qty=N）——同 job_id 连发多条命令会被设备
+  busy-ack 折叠, 合并才物理正确；页面事件行显示「第 k/N 件」, 动画逐件还原。
+  详见 `docs/sort-mqtt.md`（motion 事件契约）。
 - **采样节奏**：在线时自适应轮询 — 有 job（active_job/queue>0）400ms, 待机 600ms,
   离线 1500ms。任务窗口 ~1.3s（photo 时序: 光门等待 350ms + 拨件 900ms）,
   固定 1.5s 轮询会整单漏掉 busy 态。`ts:""` 的事件（真机未实现时间戳时）不驱动时间线动画。

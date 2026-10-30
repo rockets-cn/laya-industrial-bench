@@ -316,6 +316,35 @@
     if(lb.textContent!==jobMats[i].label)lb.textContent=jobMats[i].label;
   }
   function hideLabel(i){get('gla-jlabel-'+(i+1)).setAttribute('opacity','0');}
+  // ---- 全旅程回放 (孪生模式): 下发 armed 事件触发 — 带首装料 → 沿带面缓行(过 HuskyLens 2 相机) → 光门落沿 → 推杆拨入料道 ----
+  // sim 每件 job 只发一组事件 (photo 单次等待近似, 见 sim_devices), 客户端按固件口径放慢的时间轴逐件回放
+  var journey=[null,null,null];   // 每分拣器 {phase:'travel'|'armed'|'busy'|'wait', t0, tArrive, tArmed, tBusy, tWait, qty, left}
+  var lastArmedMs=[0,0,0], lastBusyMs=[0,0,0], booted=false;
+  var VJ=140, TRAV=[0,0,0];      // 物品带面行走速度 (与演示模式 2:1 放慢口径一致)
+  TRAV[0]=(G[0]-X0)/VJ*1000; TRAV[1]=(G[1]-X0)/VJ*1000; TRAV[2]=(G[2]-X0)/VJ*1000;
+  function startJourney(i,phase,now,pre){
+    var qty=jobMats[i]?jobMats[i].qty:1;
+    journey[i]={phase:phase,t0:now,left:Math.max(0,(qty||1)-1),qty:qty||1};
+    if(phase==='travel')journey[i].tArrive=now+TRAV[i];
+    else journey[i].tArmed=now-pre;
+  }
+  var DEMOS=[{m:'banana',label:'香蕉',color:'#fbbf24'},
+             {m:'pear',label:'梨',color:'#a3d977'},
+             {m:'red_apple',label:'红苹果',color:'#ef4444'},
+             {m:'green_apple',label:'绿苹果',color:'#4ade80'},
+             {m:'block',label:'蓝方块',color:'#60a5fa'}];
+  function demoPick(){ // 循环演示每轮随机取 3 种物料 (模拟混合带)
+    var pool=DEMOS.slice();
+    for(var r=2;r>=0;r--){
+      var idx=Math.floor(Math.random()*(r+1));
+      var tmp=pool[0];pool[0]=pool[idx];pool[idx]=tmp;
+      jobMats[r]=pool[0];pool.splice(0,1);
+    }
+    for(var di=0;3>di;di++){
+      setVariant(di,jobMats[di].m);
+      showLabel(di);
+    }
+  }
   function twinFrame(now){
     var td=twinData||{};
     var beltOn=!!td.belt_on, bps=td.belt_mps||1;
@@ -324,51 +353,127 @@
     var ang=beltOn?(((now/1000*bps)/16*57.2958)%360):0;
     get('gla-spoke-1').setAttribute('transform','rotate('+ang.toFixed(1)+' 70 400)');
     get('gla-spoke-2').setAttribute('transform','rotate('+ang.toFixed(1)+' 1110 400)');
+    var camNow=false, msgJ='';
     for(var i=0;3>i;i++){
       var si=td.sorters?(td.sorters[i]||{}):{};
       var st=si.state||'ready', ts=si.ts_ms||0;
       setVariant(i,jobMats[i]?jobMats[i].m:'block'); // 物品图标随任务物料切换
-      var p=0; if(ts){p=(now+td.t0-ts)/900; if(p>1)p=1;} // 350ms 蓄能 + 推出拨入 ≈ 900ms
       var rod=get('gla-rod-'+(i+1));
-      if('armed'===st){ // 光门已触发, 推杆推出中 (450ms)
-        var ex=ease(Math.min(1,(now+td.t0-ts)/450));
-        rod.setAttribute('y2',(438-36*ex).toFixed(1));
-        rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
-        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.55');
-        get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
-        get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
-        get('gla-obj-'+(i+1)).setAttribute('opacity','0');
-        showLabel(i);
-      } else if('busy'===st){ // 推出完成, 物品滑入料道
-        rod.setAttribute('y2','402.0');
-        rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
-        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.75');
-        get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
-        get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
-        var cc=Math.max(0,(p-0.35))*CHL/0.65; if(cc>CHL)cc=CHL;
-        var op2=cc>=CHL-8?Math.max(0,(CHL-cc)/8):1;
-        get('gla-obj-'+(i+1)).setAttribute('opacity',op2.toFixed(2));
-        get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(P[i]+C45*cc).toFixed(1)+','+(400+C45*cc).toFixed(1)+')');
-        showLabel(i);
-      } else if('fault'===st){ // 故障: 光门红色告警, 推杆不动作
-        rod.setAttribute('y2','438.0');
-        rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
-        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
-        get('gla-gate-'+(i+1)).setAttribute('opacity','0.90');
-        get('gla-gate-'+(i+1)).setAttribute('stroke','#f87171');
-        get('gla-obj-'+(i+1)).setAttribute('opacity','0');
-        hideLabel(i);
-      } else { // ready: 静止
-        rod.setAttribute('y2','438.0');
-        rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
-        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
-        get('gla-gate-'+(i+1)).setAttribute('opacity','0');
-        get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
-        get('gla-obj-'+(i+1)).setAttribute('opacity','0');
-        hideLabel(i);
+      if('armed'===st){ // 光门落沿事件 (新的) → 启动全旅程回放
+        if(ts>lastArmedMs[i]){
+          lastArmedMs[i]=ts;
+          if(!journey[i])startJourney(i,'travel',now,0);
+        }
+      } else if('busy'===st){ // 错过 armed 窗口时的兜底触发 (物品已到门)
+        if(ts>lastBusyMs[i]){
+          lastBusyMs[i]=ts;
+          if(!journey[i])startJourney(i,'armed',now,200);
+        }
+      }
+      if('fault'===st){if(journey[i])journey[i]=null;}
+      var j=journey[i];
+      if(j){ // 全旅程: 带首装料 → 缓行过相机 → 落沿 → 拨入 (时间 2:1 放慢)
+        var nm=jobMats[i]?jobMats[i].label.split(' × ')[0]:'物品';
+        if('travel'===j.phase){ // 沿带面行走
+          var ix=X0+VJ*(now-j.t0)/1000;
+          if(ix>=G[i]){ix=G[i];j.phase='armed';j.tArmed=now;}
+          else{
+            var camT=j.t0+(150-X0)/VJ*1000; // 物品中心过 HuskyLens 2 相机
+            if(now>=camT){if(camT+500>=now)camNow=true;}
+          }
+          get('gla-obj-'+(i+1)).setAttribute('opacity','1');
+          get('gla-obj-'+(i+1)).setAttribute('transform','translate('+ix.toFixed(1)+',400)');
+          rod.setAttribute('y2','438.0');
+          rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0.35');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+          showLabel(i);
+          if(!msgJ)msgJ=nm+' 沿带面行走 → '+(i+1)+'号仓 · HuskyLens 2 识别';
+        } else if('armed'===j.phase){ // 落沿: 推杆推出 450ms, 物品随带送至推料点
+          var ex=ease(Math.min(1,(now-j.tArmed)/450));
+          rod.setAttribute('y2',(438-36*ex).toFixed(1));
+          rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.55');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-obj-'+(i+1)).setAttribute('opacity','1');
+          get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(G[i]+ex*(P[i]-G[i])).toFixed(1)+',400)');
+          showLabel(i);
+          if((now-j.tArmed)>=450){j.phase='busy';j.tBusy=now;}
+          if(!msgJ)msgJ='光门 '+(i+1)+' 落沿 → 推杆 '+(i+1)+' 推出 (行程 450ms)';
+        } else if('busy'===j.phase){ // 拨入: 物品沿 45° 滑入料道
+          var p2=(now-j.tBusy)/900;
+          rod.setAttribute('y2','402.0');
+          rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.75');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+          var cc=Math.max(0,(p2-0.35))*CHL/0.65; if(cc>CHL)cc=CHL;
+          var op2=cc>=CHL-8?Math.max(0,(CHL-cc)/8):1;
+          get('gla-obj-'+(i+1)).setAttribute('opacity',op2.toFixed(2));
+          get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(P[i]+C45*cc).toFixed(1)+','+(400+C45*cc).toFixed(1)+')');
+          showLabel(i);
+          if(p2>=1){
+            if(j.left>0){j.left--;j.phase='wait';j.tWait=now;}
+            else journey[i]=null;
+          }
+          if(!msgJ)msgJ='第 '+(j.qty-j.left)+' 件拨入 '+(i+1)+' 号料道 ✓';
+        } else { // wait: 件间间隙, 下一件待发
+          rod.setAttribute('y2','438.0');
+          rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+          showLabel(i);
+          if(now-j.tWait>=700){j.phase='travel';j.t0=now;j.tArrive=now+TRAV[i];}
+          if(!msgJ)msgJ=(i+1)+'号仓 · 下一件待发';
+        }
+      } else { // 无旅程: 原状态还原 (fault/ready/错过窗口兜底)
+        var p=0; if(ts){p=(now+td.t0-ts)/900; if(p>1)p=1;} // 350ms 蓄能 + 推出拨入 ≈ 900ms
+        if('armed'===st){ // 光门已触发, 推杆推出中 (450ms)
+          var ex=ease(Math.min(1,(now+td.t0-ts)/450));
+          rod.setAttribute('y2',(438-36*ex).toFixed(1));
+          rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.55');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+          showLabel(i);
+        } else if('busy'===st){ // 推出完成, 物品滑入料道
+          rod.setAttribute('y2','402.0');
+          rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.75');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+          var cc=Math.max(0,(p-0.35))*CHL/0.65; if(cc>CHL)cc=CHL;
+          var op2=cc>=CHL-8?Math.max(0,(CHL-cc)/8):1;
+          get('gla-obj-'+(i+1)).setAttribute('opacity',op2.toFixed(2));
+          get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(P[i]+C45*cc).toFixed(1)+','+(400+C45*cc).toFixed(1)+')');
+          showLabel(i);
+        } else if('fault'===st){ // 故障: 光门红色告警, 推杆不动作
+          rod.setAttribute('y2','438.0');
+          rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0.90');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','#f87171');
+          get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+          hideLabel(i);
+        } else { // ready: 静止
+          rod.setAttribute('y2','438.0');
+          rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
+          get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
+          get('gla-gate-'+(i+1)).setAttribute('opacity','0');
+          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+          get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+          hideLabel(i);
+        }
       }
     }
-    get('gla-status').textContent=td.status||'数字孪生在线 · 等待事件…';
+    get('gla-fan').setAttribute('opacity',camNow?'0.35':'0.10');
+    get('gla-cam').setAttribute('stroke',camNow?'var(--gate-acc,#fb923c)':'var(--gate-bd,#262b36)');
+    get('gla-status').textContent=msgJ||td.status||'数字孪生在线 · 等待事件…';
   }
   var mqr=null;
   if(window.matchMedia){mqr=window.matchMedia('(prefers-reduced-motion: reduce)');}
@@ -381,24 +486,25 @@
   }
   window.__gla={render:render,twinFrame:twinFrame,
     setTwin:function(d){ twinData=d; twinMode=true;
+      if(!booted){booted=true; // 载入时的快照作基线, 只有更新的事件才触发旅程 (避免重放旧事件)
+        var ss=d.sorters||[];
+        for(var i=0;3>i;i++){
+          var ee=ss[i]||{};
+          lastArmedMs[i]=ee.ts_ms||0;
+          lastBusyMs[i]=ee.ts_ms||0;
+        }
+      }
       if(motionOff){twinFrame(performance?performance.now():Date.now());} },
-    demo:function(){ twinMode=false; twinData=null; start=null;
-      // 循环演示: 3 路各用一个物料图标 (香蕉/红苹果/蓝方块), 展示图标形态
-      jobMats=[{m:'banana',label:'香蕉',color:'#fbbf24'},
-               {m:'red_apple',label:'红苹果',color:'#ef4444'},
-               {m:'block',label:'蓝方块',color:'#60a5fa'}];
-      for(var di=0;3>di;di++){
-        setVariant(di,jobMats[di].m);
-        showLabel(di);
-      } },
-    setJob:function(list){ // 页面下发后注入本任务物料: [{yard, material, label:'香蕉 ×2', color}]
+    beltBusy:function(){for(var i=0;3>i;i++){if(journey[i])return true;}return false;},
+    demo:function(){ twinMode=false; twinData=null; start=null; demoPick(); },
+    setJob:function(list){ // 页面下发后注入本任务物料: [{yard, material, label:'香蕉 ×2', color, qty}]
       for(var i=0;3>i;i++)jobMats[i]=null;
       var arr=list||[];
       for(var a=arr.length-1;a>=0;a--){
         var it=arr[a];
         if(it){
           if(it.yard>=1){
-            if(3>=it.yard)jobMats[it.yard-1]={m:it.material,label:it.label,color:it.color};
+            if(3>=it.yard)jobMats[it.yard-1]={m:it.material,label:it.label,color:it.color,qty:it.qty};
           }
         }
       }
@@ -406,12 +512,15 @@
       if(motionOff){twinFrame(performance?performance.now():Date.now());} },
     TEND:TEND,S:S,TC:TC,TG:TG,TD:TD}; // 测试钩子 (桩驱动)
   var start=null;
+  var lastCyc=-1;
   function step(now){
     if(twinMode){ twinFrame(now); }
     else {
       if(null==start)start=now;
       var t=(now-start)/1000;
       if(0>t)t=0;
+      var cyc=Math.floor(t/TEND);
+      if(cyc!==lastCyc){lastCyc=cyc;demoPick();} // 换轮: 重新随机 3 种物料
       render(t%TEND);
     }
     requestAnimationFrame(step);

@@ -186,16 +186,20 @@ class SorterSim(SimDevice):
         self.photo_dead = getattr(gw_args, "photo_dead", False)
         self.cur_job = None                       # 当前 job_id (运动事件关联)
 
-    def _motion(self, via, state=None):
+    def _motion(self, via, state=None, item=0, of=0):
         """运动事件: 状态迁移时间线 (与固件 sort/line1/motion 契约一致).
 
         via: immediate/photo/virtual/timeout/reset/done/next/cancel/injected
         (injected = 模拟故障注入, 固件侧无对应). 网关维护 GET /motion 时间线,
         供"让示意图动起来"的动画还原实际情况.
+        item/of: 逐件件号 (qty>1 时每件各一条事件序列, 与固件逐件扫掠一致).
         """
-        self.client.publish("sort/line1/motion", json.dumps(
-            {"sorter": self.n, "state": state or self.state, "via": via,
-             "job_id": self.cur_job or "", "ts": _now(), "src": "sim"}), qos=0)
+        payload = {"sorter": self.n, "state": state or self.state, "via": via,
+                   "job_id": self.cur_job or "", "ts": _now(), "src": "sim"}
+        if of > 0 and item > 0:
+            payload["item"] = item
+            payload["of"] = of
+        self.client.publish("sort/line1/motion", json.dumps(payload), qos=0)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         client.subscribe(self.topic, qos=1)
@@ -230,48 +234,56 @@ class SorterSim(SimDevice):
         self.cur_job = job_id
         trigger = payload.get("trigger", "immediate")
 
-        def finish():
-            time.sleep(self.item_ms * qty / 1000.0)   # qty 件全拨完才回 ok
+        def finish(sleep_ms=None):
+            # sleep_ms: 拨料耗时 (immediate 路径整段计; photo 路径逐件已扫掠, 传 None)
+            if sleep_ms is not None:
+                time.sleep(sleep_ms / 1000.0)
             if self.rng.random() < self.fault_rate:
                 self.state = "fault"
                 self._ack(job_id, action, "fault", note="injected")
-                self._motion("injected", "fault")
+                self._motion("injected", "fault", item=qty, of=qty)
             else:
                 self.diverted_total += qty
                 self.state = "ready"
                 self._ack(job_id, action, "ok", note=self.last_material)
-                self._motion("done", "ready")
+                self._motion("done", "ready", item=qty, of=qty)
 
         if trigger == "photo":
-            # 光门触发 (固件: 拨料器前侧光门, 每件各等一次落沿):
-            # 模拟"物品从相机行走到光门"的固定延迟; photo_dead 模拟
-            # "期望的物品没到光门" (超时 -> fault, 与固件 kPhotoTimeoutMs 对齐).
-            # qty>1 的逐件光门节奏在 E2E 里恒为 qty=1 (视觉单件), 此处
-            # 以单次等待近似.
+            # 光门触发, 逐件执行 (与固件一致: 一件 = 一次光门落沿 + 一次扫掠):
+            # 每件各等一次落沿, 拨完一件回 armed 等下一件 (via=next), 全部完成
+            # 才回 ok; photo_dead 模拟"期望的物品没到光门" (超时 -> fault, 与
+            # 固件 kPhotoTimeoutMs 对齐, 每件各计一个等待窗).
             self.state = "armed"
-            self._motion("photo", "armed")
+            self._motion("photo", "armed", item=1, of=qty)
 
             def arm_then_run():
-                if self.photo_dead:
-                    time.sleep(self.photo_timeout_s)
-                    if self.state == "armed":
-                        self.state = "fault"
-                        self._ack(job_id, action, "fault",
-                                  note="photo timeout")
-                        self._motion("timeout", "fault")
-                    return
-                time.sleep(self.photo_wait_s)
-                if self.state != "armed":   # 等待期间被 reset 取消
-                    return
-                self.state = "busy"
-                self._motion("photo", "busy")
-                finish()
+                for k in range(1, qty + 1):
+                    if self.photo_dead:
+                        time.sleep(self.photo_timeout_s)
+                        if self.state == "armed":
+                            self.state = "fault"
+                            self._ack(job_id, action, "fault",
+                                      note="photo timeout")
+                            self._motion("timeout", "fault", item=k, of=qty)
+                        return
+                    time.sleep(self.photo_wait_s)
+                    if self.state != "armed":   # 等待期间被 reset 取消
+                        return
+                    self.state = "busy"
+                    self._motion("photo", "busy", item=k, of=qty)
+                    time.sleep(self.item_ms / 1000.0)   # 本件扫掠: 拨出->归位
+                    if k < qty:
+                        self.state = "armed"   # 回 armed 等下一件光门落沿
+                        self._motion("next", "armed", item=k, of=qty)
+                    else:
+                        finish()                      # 最后一件扫掠已完成, 直接收尾
 
             threading.Thread(target=arm_then_run, daemon=True).start()
         else:
             self.state = "busy"
-            self._motion("immediate", "busy")
-            threading.Thread(target=finish, daemon=True).start()
+            self._motion("immediate", "busy", item=1, of=qty)
+            threading.Thread(target=finish, args=(self.item_ms * qty,),
+                             daemon=True).start()
 
     def tele_extra(self):
         return {"state": self.state, "diverted_total": self.diverted_total,

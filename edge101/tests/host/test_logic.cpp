@@ -200,6 +200,12 @@ static void testProto() {
                            && motion.find("\"state\":\"busy\"") != std::string::npos
                            && motion.find("\"via\":\"virtual\"") != std::string::npos
                            && motion.find("\"job_id\":\"j55\"") != std::string::npos);
+    // 逐件件号: item/of 仅在 of>0 时输出 (旧固件/不适用事件保持原 5 字段)
+    std::string motionItem = motionJson(1, "busy", "photo", "j56", "", 2, 3);
+    check("motion JSON 带件号 item/of",
+          motionItem.find("\"item\":2") != std::string::npos
+          && motionItem.find("\"of\":3") != std::string::npos
+          && motion.find("\"item\"") == std::string::npos);
 
     check("conveyor cmd topic", conveyorCmdTopic() == "sort/line1/conveyor/cmd");
     check("conveyor ack topic",

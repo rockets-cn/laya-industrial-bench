@@ -131,7 +131,8 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 `sort/event/motion`, 见「网关事件与统计」):
 
 ```json
-{"sorter": 1, "state": "busy", "via": "virtual", "job_id": "j1732-7", "ts": ""}
+{"sorter": 1, "state": "busy", "via": "virtual", "job_id": "j1732-7", "ts": "",
+ "item": 2, "of": 3}
 ```
 
 - `via` = 迁移原因: `immediate` (收令即推) / `photo` (物理光门沿) /
@@ -139,16 +140,29 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
   `reset` (人工复位) / `done` (job 完成) / `next` (photo job 多件: 推完
   一件回 armed 等下一件) / `cancel` (armed 被 reset 取消)。
 - `ts` 物理控制器无 RTC 可为 `""` (与遥测相同约定); 时间线间隔 = 相对时刻。
+- `item`/`of` = 逐件件号 (1-indexed / 总件数): `qty>1` 时每件各触发一次光门
+  + 一次推杆扫掠, 对应的事件序列 — `busy`/`timeout` = 正在处理(未到场)的
+  第几件, `next`/`done` = 刚完成(刚拨出)的那件; 件数 `of` 即本 job 的 qty.
+  旧固件/不适用事件 (reset/cancel) 缺省不带该字段 (网关记 0)。
+  数字孪生据此逐件还原「带面行走 → 过相机 → 光门 → 拨入」的完整动作序列。
 
 ## 入站指令 (→ 网关)
 
 ### `sort/inbound/command` (QoS1) — SCADA / 手工
 
 ```json
-{"source": "scada", "path": "MQTT",
- "actions": [{"yard": 1, "material": "red_apple", "qty": 2},
-             {"yard": 3, "material": "blue_block", "qty": 10}]}
+{"source": "scada", "path": "MQTT", "job_id": "j1732345-1",
+ "actions": [{"yard": 1, "material": "red_apple", "qty": 1},
+             {"yard": 1, "material": "red_apple", "qty": 1},
+             {"yard": 3, "material": "blue_block", "qty": 1}]}
 ```
+
+- 动作逐条 (action = 1 件): 规则层把「三个香蕉进一号仓库」展开为 3 条
+  `qty=1` 动作 — 逻辑视图 (页面动作列表 / 台账 / 批事件)。
+- 指令合并: 网关下发 PLC 时同 料场+物料 的连续动作合并回一条
+  `divert` 命令 (qty=3): 设备状态机按一条命令逐件执行 (每件一次光门
+  落沿 + 一次推杆扫掠, motion 事件带件号 1/3, 2/3, 3/3); 同 job_id
+  连发多条命令会被 busy-ack 折叠, 合并才是物理正确的下发方式。
 
 ### `sort/inbound/vision` (QoS1) — 视觉传感器
 

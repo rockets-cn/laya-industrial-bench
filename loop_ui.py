@@ -605,8 +605,13 @@ function setLastRun(d){lastRun=(d&&d.actions&&d.actions.length&&(d.path==='FAST'
  b.title=lastRun?('把最近一次运行的 '+lastRun.actions.length+' 条指令下发到 MQTT 分拣线'):'先运行并产生可执行指令 (FAST/EXPAND/PARTIAL) 才能下发'}}
 async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
  const b=$('btnDispatch');b.disabled=true;
- if(window.__gla){__gla.setJob(keep.actions.map(a=>({yard:a.yard,material:a.material,
-  label:(MATCN[a.material]||a.material)+' × '+a.qty,color:MATCOL[a.material]||'#fb923c'})));}
+ if(window.__gla){ // 动作已逐件 (qty=1): 按 料场|物料 聚合件数供动画按件回放
+  const agg=new Map();
+  keep.actions.forEach(a=>{const k=a.yard+'|'+a.material;
+   const e=agg.get(k)||{yard:a.yard,material:a.material,qty:0};
+   e.qty+=a.qty;agg.set(k,e);});
+  __gla.setJob([...agg.values()].map(e=>({yard:e.yard,material:e.material,qty:e.qty,
+   label:(MATCN[e.material]||e.material)+' × '+e.qty,color:MATCOL[e.material]||'#fb923c'})));}
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
   lastRun=null;setLastRun(null);
   $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued}) — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
@@ -640,8 +645,8 @@ async function refreshTwin(){
   if(n>=1&&n<=3)st[n-1]={state:ev.state,ts_ms:Date.parse(ev.ts)||0};
  });
  const evs=(d.events||[]).filter(ev=>{if(!ev)return false;return (ev.src||'device')===src;}),last=evs[evs.length-1];
- const beltOn=!!d.active_job||d.queue>0;
- const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})`
+ const beltOn=!!d.active_job||d.queue>0||(gla&&gla.beltBusy?gla.beltBusy():false); // 全旅程回放期间传送带保持运行
+ const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})${(last.of>0&&last.item>0)?` · 第${last.item}/${last.of}件`:''}`
   :'数字孪生在线 · 等待事件…';
  const sig=JSON.stringify([src,beltOn,d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
  if(sig!==twinSig){
