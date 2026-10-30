@@ -108,15 +108,24 @@ static bool startStepRmt() {
     sym.level1 = 0;
     rmt_transmit_config_t tc = {};
     tc.loop_count = -1;               // 无限循环, 由 stopStepRmt() 收
-    if (rmt_enable(stepChan) != ESP_OK) { stepRmtFailed = true; return false; }
-    if (rmt_transmit(stepChan, stepEnc, &sym, sizeof(sym), &tc) != ESP_OK) {
+    esp_err_t e1 = rmt_enable(stepChan);
+    if (e1 != ESP_OK) {
+        stepRmtFailed = true;
+        Serial.printf("[step] rmt_enable 失败 %d, 回退主循环打脉冲\n", (int)e1);
+        return false;
+    }
+    esp_err_t e2 = rmt_transmit(stepChan, stepEnc, &sym, sizeof(sym), &tc);
+    if (e2 != ESP_OK) {
         rmt_disable(stepChan);
         stepRmtFailed = true;
+        Serial.printf("[step] rmt_transmit 失败 %d (period=%lu), 回退主循环\n",
+                      (int)e2, (unsigned long)period);
         return false;
     }
     stepRmtStartMs = millis();
     stepRmtPps = pps;
     stepRmtActive = true;
+    Serial.printf("[step] RMT 启动 pps=%.0f\n", pps);
     return true;
 }
 
@@ -285,7 +294,7 @@ static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
 static String consoleBuf;
 static void onSerialCmd(const String& line) {
     if (line == "help") {
-        Serial.println("help | state | eth | mqtt | stepper <n> | sweep <n> | vision <material>");
+        Serial.println("help | state | eth | mqtt | stepstat | stepinit | reboot | stepper <n> | sweep <n> | vision <material>");
     } else if (line == "state") {
         Serial.printf("conveyor=%s s1=%s s2=%s s3=%s diverted=%lu/%lu/%lu steps=%llu\n",
                       conv.state(), sorters[0].state(), sorters[1].state(),
@@ -293,6 +302,36 @@ static void onSerialCmd(const String& line) {
                       (unsigned long)sorters[1].diverted_total,
                       (unsigned long)sorters[2].diverted_total,
                       (unsigned long long)stepsLive());
+    } else if (line == "stepstat") {
+        Serial.printf("stepstat: ready=%d failed=%d active=%d pps=%.0f steps_live=%llu\n",
+                      stepRmtReady ? 1 : 0, stepRmtFailed ? 1 : 0,
+                      stepRmtActive ? 1 : 0, stepRmtPps,
+                      (unsigned long long)stepsLive());
+    } else if (line == "stepinit") {
+        if (stepRmtReady) {
+            Serial.println("stepinit: RMT 已就绪 (boot 时成功)");
+        } else {
+            rmt_tx_channel_config_t cc = {};
+            cc.gpio_num = (gpio_num_t)STEPPER_STEP_PIN;
+            cc.clk_src = RMT_CLK_SRC_APB;
+            cc.resolution_hz = 80000000;
+            cc.mem_block_symbols = 64;   // ESP32 经典: 偶数且 >=64
+            cc.trans_queue_depth = 2;
+            cc.intr_priority = 0;
+            rmt_copy_encoder_config_t ec = {};
+            esp_err_t e1 = rmt_new_tx_channel(&cc, &stepChan);
+            esp_err_t e2 = (e1 == ESP_OK) ? rmt_new_copy_encoder(&ec, &stepEnc) : ESP_FAIL;
+            Serial.printf("stepinit: channel=%d encoder=%d\n", (int)e1, (int)e2);
+            if (e1 == ESP_OK && e2 == ESP_OK) {
+                stepRmtReady = true;
+                stepRmtFailed = false;
+                Serial.println("stepinit: RMT 就绪, 后续 start 将走硬件脉冲");
+            }
+        }
+    } else if (line == "reboot") {
+        Serial.println("reboot in 1s");
+        delay(1000);
+        esp_restart();
     } else if (line.startsWith("stepper")) {
         int n = line.substring(8).toInt();
         if (mcpEn.present()) mcpEn.forceLevel(true);   // 手动脉冲: 临时使能
@@ -396,17 +435,19 @@ void setup() {
         cc.gpio_num = (gpio_num_t)STEPPER_STEP_PIN;
         cc.clk_src = RMT_CLK_SRC_APB;
         cc.resolution_hz = 80000000;
-        cc.mem_block_symbols = 4;
+        cc.mem_block_symbols = 64;   // ESP32 经典: 偶数且 >=64
         cc.trans_queue_depth = 2;
         cc.intr_priority = 0;
         rmt_copy_encoder_config_t ec = {};
-        if (rmt_new_tx_channel(&cc, &stepChan) == ESP_OK &&
-            rmt_new_copy_encoder(&ec, &stepEnc) == ESP_OK) {
+        esp_err_t ec_chan = rmt_new_tx_channel(&cc, &stepChan);
+        esp_err_t ec_enc = (ec_chan == ESP_OK) ? rmt_new_copy_encoder(&ec, &stepEnc) : ESP_FAIL;
+        if (ec_chan == ESP_OK && ec_enc == ESP_OK) {
             stepRmtReady = true;
             Serial.printf("[step] RMT @GPIO%d 硬件脉冲就绪 (APB 80MHz)\n",
                           STEPPER_STEP_PIN);
         } else {
-            Serial.println("[step] RMT 初始化失败, 回退主循环打脉冲 (~3kHz)");
+            Serial.printf("[step] RMT 初始化失败 (channel=%d encoder=%d), 回退主循环打脉冲 (~3kHz)\n",
+                          (int)ec_chan, (int)ec_enc);
         }
     }
 

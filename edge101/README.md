@@ -113,6 +113,10 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
   步进脉冲由 **RMT TX 通道硬件产生** (1 个 [pulse,gap] 符号 × 无限循环,
   APB 80MHz 分辨率 → 320k pps 级带速; 主循环只在 start/stop 时
   `rmt_transmit`/`rmt_disable`), RMT 初始化失败自动回退主循环打脉冲 (~3kHz)。
+  注意 ESP32 经典要求 `mem_block_symbols` 为偶数且 **>=64** (传 4 会
+  ESP_ERR_INVALID_ARG 静默回退); 失败原因见 boot 日志 `[step] RMT 初始化
+  失败 (channel=X encoder=Y)`, 运行时可用 `stepstat`/`stepinit` 诊断恢复。
+  真机已验证: 1.0 m/s 下 320000 pps 硬件脉冲, 步数账实一致。
 - **分拣器**: `divert` 进 busy, PCA9685 每次完成一件 `stepOne()`, N 件拨完才回
   `ok` ack; `reset` 清 fault; fault 时任何 divert 回 `fault` ack。
   **job_id 去重**: 完成窗 (60s) 内同 job_id 的 divert 重发/重投只补 `ok` 应答
@@ -129,6 +133,9 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
 ```
 help                 # 列出命令
 state                # 打印 conveyor/sorters/diverted_total/steps
+stepstat             # RMT 状态: ready/failed/active/pps/steps_live
+stepinit             # boot 时 RMT 创建失败后, 运行时重试并恢复
+reboot               # 软重启 (esp_restart)
 stepper <n>          # 手动 n 步 (验证转向)
 sweep <n>            # 手动扫掠 n 号舵机一次
 vision <material>    # 手动注入一条视觉事件 (联调用)
