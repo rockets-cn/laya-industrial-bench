@@ -645,14 +645,17 @@ async function refreshTwin(){
   if(n>=1&&n<=3)st[n-1]={state:ev.state,ts_ms:Date.parse(ev.ts)||0};
  });
  const evs=(d.events||[]).filter(ev=>{if(!ev)return false;return (ev.src||'device')===src;}),last=evs[evs.length-1];
- const beltOn=!!d.active_job||d.queue>0||(gla&&gla.beltBusy?gla.beltBusy():false); // 全旅程回放期间传送带保持运行
+ // 模拟源: 传送带持续运行 (孪生画面环境供血, 随机物料完整过相机/光门/拨入); 真实源按网关批间停带事实
+ const beltOn=src==='sim'||!!d.active_job||d.queue>0||(gla&&gla.beltBusy?gla.beltBusy():false);
  const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})${(last.of>0&&last.item>0)?` · 第${last.item}/${last.of}件`:''}`
   :'数字孪生在线 · 等待事件…';
  const sig=JSON.stringify([src,beltOn,d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
  if(sig!==twinSig){
   twinSig=sig;
-  if(gla)gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
-   status:(d.fault?'⚠ 故障锁存 '+d.fault+' · ':'')+line});
+  if(gla){gla.setSrc&&gla.setSrc(src);
+   gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
+    active_job:d.active_job||null,
+    status:(d.fault?'⚠ 故障锁存 '+d.fault+' · ':'')+line});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':' · 待机'})`;
  scheduleTwin(beltOn?400:600); // 有活时加密集采; 在线待机也 600ms — 任务窗口 ~1.3s, 1.5s 轮询会整单漏掉

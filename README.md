@@ -187,7 +187,7 @@ journalctl --user -u laya-loop-ui -f
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
 | `tests/test_sort_mqtt.py` | 分拣网关 E2E 52 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
-| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入, 每轮随机 3 种物料），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源 + 逐件件号, 页面可按 模拟/真实 数据源过滤；任务下发后逐件回放 带首→相机→光门→拨入 全旅程）；物品 5 种内嵌矢量物料图标 + 任务料道标签（`__gla.setJob` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
+| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入, 每轮随机 3 种物料），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源 + 逐件件号, 页面可按 模拟/真实 数据源过滤；任务下发后逐件回放 带首→相机→光门→拨入 全旅程；模拟源无任务时环境供血: 随机物料持续过完整流程, 不 /dispatch 不记台账）；物品 5 种内嵌矢量物料图标 + 任务/供血料道标签（`__gla.setJob`/`__gla.setSrc` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
@@ -264,6 +264,14 @@ journalctl --user -u laya-loop-ui -f
   料场+物料 合并为一条 PLC 命令（qty=N）——同 job_id 连发多条命令会被设备
   busy-ack 折叠, 合并才物理正确；页面事件行显示「第 k/N 件」, 动画逐件还原。
   详见 `docs/sort-mqtt.md`（motion 事件契约）。
+- **环境供血（模拟数据源, 无任务时）**：选择「模拟」数据源后, 传送带持续
+  运行, 孪生画面**不用发指令也能动**——每 2.5s~4s 向空闲道随机放一件物料,
+  走完整流程: 带首出现 → 缓行过 HuskyLens 2（相机扇形闪烁 + 识别状态）→
+  光门落沿 → 推杆拨入对应仓库。物料池按 `material_map.json` 分仓
+  （1号仓=水果 / 2号仓=红·绿方块 / 3号仓=黄·蓝方块）, 每件去向正确。
+  纯客户端时间线: 不 `/dispatch`、不进网关、不记台账; 真实指令到达时
+  立即接管对应道（该道的供血项让位, 其余道继续运行）; 选「真实」数据源
+  时不启用（不在物理设备事件上虚构物品）。
 - **采样节奏**：在线时自适应轮询 — 有 job（active_job/queue>0）400ms, 待机 600ms,
   离线 1500ms。任务窗口 ~1.3s（photo 时序: 光门等待 350ms + 拨件 900ms）,
   固定 1.5s 轮询会整单漏掉 busy 态。`ts:""` 的事件（真机未实现时间戳时）不驱动时间线动画。

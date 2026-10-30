@@ -309,11 +309,12 @@
     }
   }
   function showLabel(i){
-    if(!jobMats[i])return;
+    var jm=jmat(i);
+    if(!jm)return;
     var lb=get('gla-jlabel-'+(i+1));
     lb.setAttribute('opacity','1');
-    lb.setAttribute('fill',jobMats[i].color);
-    if(lb.textContent!==jobMats[i].label)lb.textContent=jobMats[i].label;
+    lb.setAttribute('fill',jm.color);
+    if(lb.textContent!==jm.label)lb.textContent=jm.label;
   }
   function hideLabel(i){get('gla-jlabel-'+(i+1)).setAttribute('opacity','0');}
   // ---- 全旅程回放 (孪生模式): 下发 armed 事件触发 — 带首装料 → 沿带面缓行(过 HuskyLens 2 相机) → 光门落沿 → 推杆拨入料道 ----
@@ -345,19 +346,47 @@
       showLabel(di);
     }
   }
+  // ---- 环境供血 (孪生 + 模拟数据源): 无真实任务时随机物料依次流过, 让传送带
+  //      持续体现完整过程: 物料带首出现, 缓行过 HuskyLens 2, 光门落沿, 拨入对应仓库.
+  //      纯客户端时间线 (不 /dispatch, 不记台账); 物料池按 material_map 分仓:
+  //      1号仓=水果, 2号仓=红/绿方块, 3号仓=黄/蓝方块
+  var LANES=[
+    [{m:'banana',label:'香蕉',color:'#fbbf24'},{m:'pear',label:'梨',color:'#a3d977'},
+     {m:'red_apple',label:'红苹果',color:'#ef4444'},{m:'green_apple',label:'绿苹果',color:'#4ade80'}],
+    [{m:'red_block',label:'红色方块',color:'#ef4444'},{m:'green_block',label:'绿色方块',color:'#4ade80'}],
+    [{m:'yellow_block',label:'黄色方块',color:'#facc15'},{m:'blue_block',label:'蓝色方块',color:'#60a5fa'}]];
+  var ambOn=false, nextAmb=0;
+  function jmat(i){var jj=journey[i];return jj?(jj.mat?jj.mat:jobMats[i]):jobMats[i];} // 旅程物料: 供血项自带, 任务项取注入
   function twinFrame(now){
     var td=twinData||{};
-    var beltOn=!!td.belt_on, bps=td.belt_mps||1;
+    var beltOn=!!td.belt_on||ambOn, bps=td.belt_mps||1; // 供血激活时传送带持续运行
     var tx=beltOn?((now/1000*bps*PXM)%80):0;
     get('gla-treads').setAttribute('transform','translate('+tx.toFixed(2)+',0)');
     var ang=beltOn?(((now/1000*bps)/16*57.2958)%360):0;
     get('gla-spoke-1').setAttribute('transform','rotate('+ang.toFixed(1)+' 70 400)');
     get('gla-spoke-2').setAttribute('transform','rotate('+ang.toFixed(1)+' 1110 400)');
+    // 环境供血: 无真实任务时向空闲道随机放料 (间隔 2.5s~4s, 只进无旅程的道)
+    if(ambOn){
+      if(!td.active_job){
+        if(now>=nextAmb){
+          var free=-1;
+          for(var fi=0;3>fi;fi++){if(!journey[fi]){free=fi;break;}}
+          if(free>=0){
+            var pool=LANES[free];
+            var pm=pool[Math.floor(Math.random()*pool.length)];
+            startJourney(free,'travel',now,0);
+            journey[free].mat={m:pm.m,label:pm.label,color:pm.color};
+            nextAmb=now+2500+Math.floor(Math.random()*1500);
+            setVariant(free,pm.m);
+          }
+        }
+      }
+    }
     var camNow=false, msgJ='';
     for(var i=0;3>i;i++){
       var si=td.sorters?(td.sorters[i]||{}):{};
       var st=si.state||'ready', ts=si.ts_ms||0;
-      setVariant(i,jobMats[i]?jobMats[i].m:'block'); // 物品图标随任务物料切换
+      setVariant(i,jmat(i)?jmat(i).m:'block'); // 物品图标随旅程物料切换 (任务/供血)
       var rod=get('gla-rod-'+(i+1));
       if('armed'===st){ // 光门落沿事件 (新的) → 启动全旅程回放
         if(ts>lastArmedMs[i]){
@@ -373,7 +402,7 @@
       if('fault'===st){if(journey[i])journey[i]=null;}
       var j=journey[i];
       if(j){ // 全旅程: 带首装料 → 缓行过相机 → 落沿 → 拨入 (时间 2:1 放慢)
-        var nm=jobMats[i]?jobMats[i].label.split(' × ')[0]:'物品';
+        var nm=(jmat(i)?jmat(i).label:'物品').split(' × ')[0];
         if('travel'===j.phase){ // 沿带面行走
           var ix=X0+VJ*(now-j.t0)/1000;
           if(ix>=G[i]){ix=G[i];j.phase='armed';j.tArmed=now;}
@@ -496,10 +525,23 @@
       }
       if(motionOff){twinFrame(performance?performance.now():Date.now());} },
     beltBusy:function(){for(var i=0;3>i;i++){if(journey[i])return true;}return false;},
+    setSrc:function(s){ // 数据源: sim=本地孪生模拟器 (开环境供血) / device=物理设备 (不在真实事件上虚构物品)
+      ambOn=(s==='sim');
+      if(ambOn)nextAmb=0;
+      if(motionOff){twinFrame(performance?performance.now():Date.now());}
+    },
     demo:function(){ twinMode=false; twinData=null; start=null; demoPick(); },
     setJob:function(list){ // 页面下发后注入本任务物料: [{yard, material, label:'香蕉 ×2', color, qty}]
       for(var i=0;3>i;i++)jobMats[i]=null;
       var arr=list||[];
+      var taskLane={};
+      for(var tk=arr.length;tk>0;tk--){
+        var it2=arr[tk-1];
+        if(it2){if(it2.yard>=1){if(3>=it2.yard)taskLane[it2.yard-1]=true;}}
+      }
+      for(var i0=0;3>i0;i0++){
+        if(taskLane[i0]){if(journey[i0])journey[i0]=null;} // 真实任务接管该道: 取消供血项
+      }
       for(var a=arr.length-1;a>=0;a--){
         var it=arr[a];
         if(it){
