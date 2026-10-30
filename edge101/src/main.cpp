@@ -537,7 +537,7 @@ void loop() {
     sweepTick();
     mcpEn.sync(conv.state());   // 步进 EN 随状态 (只有电平变化才写 I2C)
 
-    // 光门: 读电平 -> 落沿 (物品到达拨料器前侧) -> 触发 armed 分拣器拨料
+    // 光门: 读电平 -> 落沿 (物品到达推杆前侧) -> 触发 armed 分拣器推出
     if (gateOk) {
         bool hi0, hi1, hi2;
         mcpGate.poll(hi0, hi1, hi2);

@@ -53,9 +53,9 @@ static const double  STEPS_PER_MM = 320.0;
 // 地址/极性常量在 lib/SortLogic/src/McpEn.h (kAddr/kActiveLow), 改动需两处同步。
 // 剩余 13 路 (PA1..PA7, PB3..PB7) 预留: 料道末端对账光电/限位/急停等数字量。
 
-// ---------- 光门 ×3 (拨料器前方, 拨料时序触发) ----------
+// ---------- 光门 ×3 (推杆前方, 推出时序触发) ----------
 // 透过式光电, NPN 开集输出 + 内部上拉 (McpGate 配 GPPU_B):
-// 无物品=HIGH, 物品挡光=LOW。每拨料器 1 路: 物品过光门 = "到达拨料器"。
+// 无物品=HIGH, 物品挡光=LOW。每推杆 1 路: 物品过光门 = "到达推杆前侧"。
 // 固件语义: divert 命令带 trigger=photo 时, 分拣器进入 armed 等光门;
 // 光门落沿触发拨料; 5s (Sorter.h kPhotoTimeoutMs) 无物品 -> fault
 // "photo timeout"。光门未接 / MCP23017 未接时 trigger=photo 自动回退

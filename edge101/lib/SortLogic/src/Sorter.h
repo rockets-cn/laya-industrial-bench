@@ -12,8 +12,8 @@
 //   reset  fault -> ready;  armed -> ready (取消预置, 不拨料)
 //   其余 -> busy-ack (设备正在执行中)
 //
-// 光门安装 (时序关键): 装在拨料作用点【前侧 (上游)】, 距离 =
-//   带速 × (拨料动作时间 + 余量)   (公式与标定见 docs/sort-mqtt.md / wiring.md)
+// 光门安装 (时序关键): 装在推杆推料点【前侧 (上游)】, 距离 =
+//   带速 × (推出动作时间 + 余量)   (公式与标定见 docs/sort-mqtt.md / wiring.md)
 #pragma once
 #include <cstdint>
 #include <cstring>

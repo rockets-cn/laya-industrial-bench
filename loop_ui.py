@@ -45,6 +45,10 @@ spec_yl.loader.exec_module(yard_ledger)
 import bench_pipeline  # noqa: E402  (already imported by bench_industrial)
 bench_pipeline.MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
+# 分拣线光门安装示意 (edge101/docs/gate_layout.svg): 页面「光门安装布局」折叠区参考图
+GATE_SVG = open(os.path.join(HERE, "edge101", "docs", "gate_layout.svg"),
+                encoding="utf-8").read()
+
 app = FastAPI(title="Laya 工业决策回路")
 
 AUDIO_DIR = os.path.join(HERE, "test_audio")
@@ -449,6 +453,23 @@ PAGE = """<!doctype html>
 <div id="ledger" style="display:none;margin:14px 0"></div>
 <div id="out"></div>
 <details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
+<details class="fold" id="gate"><summary>📐 分拣线光门安装布局（俯视 · 每路推杆前侧/上游 · 物理参考, 装前必看）</summary>
+<div style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:8px 0;overflow-x:auto">
+@GATE_SVG@
+<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0 4px">
+<tr><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">光门</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">对应推杆</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">MCP23017</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">安装位置（俯视）</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">安装高度（侧视）</th></tr>
+<tr><td style="border:1px solid #262b36;padding:6px 8px">光门 1（透过式 NPN 开集）</td><td style="border:1px solid #262b36;padding:6px 8px">1 号推杆</td><td style="border:1px solid #262b36;padding:6px 8px;color:#fb923c">PB0</td><td style="border:1px solid #262b36;padding:6px 8px">推杆 1 推料点<b>前方 D</b>（D = v×(推出400ms+余量100ms) ≈ 50cm @1m/s），光束横跨料道、垂直带面</td><td style="border:1px solid #262b36;padding:6px 8px">物品质心高（离带面 10~30mm）</td></tr>
+<tr><td style="border:1px solid #262b36;padding:6px 8px">光门 2</td><td style="border:1px solid #262b36;padding:6px 8px">2 号推杆</td><td style="border:1px solid #262b36;padding:6px 8px;color:#fb923c">PB1</td><td style="border:1px solid #262b36;padding:6px 8px">推杆 2 推料点前方 D（同上）</td><td style="border:1px solid #262b36;padding:6px 8px">同上</td></tr>
+<tr><td style="border:1px solid #262b36;padding:6px 8px">光门 3</td><td style="border:1px solid #262b36;padding:6px 8px">3 号推杆</td><td style="border:1px solid #262b36;padding:6px 8px;color:#fb923c">PB2</td><td style="border:1px solid #262b36;padding:6px 8px">推杆 3 推料点前方 D（同上）</td><td style="border:1px solid #262b36;padding:6px 8px">同上</td></tr>
+</table>
+<ul style="font-size:12.5px;line-height:1.55;color:#8a91a0;padding-left:18px;margin:4px 0">
+<li><b>为什么是前侧</b>：光门落沿只是「推出动作开始」的时刻——推杆 400ms 推出行程必须赶在物品到达推杆推料点之前完成，所以门装在推杆上游 D 处；装在后面物品已越过推料点，触发无效。</li>
+<li><b>件距约束</b>：相邻两件 ≥ v×0.9s（1m/s → ≥0.9m，图中光门 1↔2 的 270px），上游排产保证，否则第二件到门时第一件还没推出 → 漏拨。</li>
+<li><b>末端对账门 ≠ 时序门</b>：料道末端（图中虚线 ×，OPEN #3②）确认件真进道（长期计数），与本次 3 路前侧时序门职责不同，本次不装。</li>
+<li><b>启用顺序</b>：接线 → 串口 <code>gates</code> 确认 ok=1/挡光变 0 → 按 ⑧ 带速标定修正 D → 网关 <code>divert_trigger</code> 改 "photo"；未接线期间保持 "immediate"（固件自动回退，实机已验证）。</li>
+</ul>
+</div>
+</details>
 <script>
 const $=id=>document.getElementById(id);
 window.addEventListener('error',e=>{const m=$('micstate');
@@ -816,6 +837,9 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 refreshState();
 refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
 </script></div></body></html>"""
+
+# 光门安装示意图嵌入 (edge101/docs/gate_layout.svg 独立资产, 改图不用动本页代码)
+PAGE = PAGE.replace("@GATE_SVG@", GATE_SVG)
 
 
 

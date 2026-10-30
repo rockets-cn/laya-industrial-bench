@@ -1,0 +1,177 @@
+<svg viewBox="0 0 1180 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分拣线光门安装示意图 (推杆版)"
+ style="width:100%;height:auto;display:block">
+  <!-- 颜色: var(--gate-*, 深色回退). 宿主(桌面预览)可定义 --gate-* 覆盖; loop_ui 深色页直接用回退值. -->
+  <defs>
+    <marker id="gw-arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--gate-fg,#e6e6e6)"/>
+    </marker>
+    <marker id="gw-arwm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--gate-mut,#8a91a0)"/>
+    </marker>
+  </defs>
+
+  <!-- 标题 -->
+  <text x="20" y="34" font-size="18" font-weight="700" fill="var(--gate-fg,#e6e6e6)">分拣线光门安装示意（俯视）· 3 路时序光门装在各推杆【前侧 / 上游】</text>
+  <text x="20" y="56" font-size="11" fill="var(--gate-mut,#8a91a0)">比例 1px≈3.3mm（D=50cm→150px，件距 90cm→270px）· 上行 = 上游/相机侧 · 下行 = 推杆/料道侧 · 带面行进方向 →</text>
+
+  <!-- 图例 -->
+  <rect x="840" y="76" width="320" height="140" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
+  <text x="856" y="96" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)">图例</text>
+  <rect x="856" y="108" width="12" height="12" rx="2" fill="var(--gate-acc,#fb923c)"/>
+  <text x="876" y="118" font-size="11" fill="var(--gate-mut,#8a91a0)">物品（例 10×10cm 方块）</text>
+  <line x1="862" y1="124" x2="862" y2="140" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="4 3"/>
+  <rect x="858" y="120" width="8" height="8" fill="var(--gate-fg,#e6e6e6)"/>
+  <rect x="858" y="142" width="8" height="8" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="2 2"/>
+  <text x="876" y="138" font-size="11" fill="var(--gate-mut,#8a91a0)">时序光门 ×3（前侧 · NPN 开集）</text>
+  <line x1="853" y1="154" x2="873" y2="154" stroke="var(--gate-mut,#8a91a0)" stroke-width="8" opacity="0.35" stroke-linecap="round"/>
+  <text x="876" y="158" font-size="11" fill="var(--gate-mut,#8a91a0)">料道（推出通道）</text>
+  <line x1="856" y1="168" x2="868" y2="180" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+  <line x1="868" y1="168" x2="856" y2="180" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+  <text x="876" y="178" font-size="11" fill="var(--gate-mut,#8a91a0)">末端对账门（OPEN #3② · 本次不装）</text>
+  <rect x="852" y="190" width="16" height="10" rx="2" fill="var(--gate-bg,#171a21)" stroke="var(--gate-mut,#8a91a0)"/>
+  <line x1="860" y1="190" x2="860" y2="204" stroke="var(--gate-fg,#e6e6e6)" stroke-width="4" stroke-linecap="round"/>
+  <text x="876" y="200" font-size="11" fill="var(--gate-mut,#8a91a0)">推杆（舵机驱动 · 推出 400ms）</text>
+
+  <!-- 相机 (HuskyLens 2) -->
+  <text x="150" y="212" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">t0 识别 · 像素 x/y/w/h 透传留痕（B 方案）</text>
+  <text x="150" y="232" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">HuskyLens 2</text>
+  <rect x="132" y="240" width="36" height="28" rx="4" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
+  <circle cx="150" cy="254" r="5" fill="none" stroke="var(--gate-acc,#fb923c)"/>
+  <polygon points="150,268 104,360 196,360" fill="var(--gate-acc,#fb923c)" opacity="0.10" stroke="var(--gate-acc,#fb923c)" stroke-opacity="0.45" stroke-dasharray="4 3"/>
+
+  <!-- 尺寸线: 相机->光门1 与 件距 光门1->光门2 -->
+  <line x1="200" y1="288" x2="380" y2="288" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
+  <line x1="200" y1="283" x2="200" y2="293" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
+  <line x1="380" y1="283" x2="380" y2="293" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
+  <text x="290" y="264" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">photo_margin_s = 3s（延迟 + 行程预算, 现场实测）</text>
+  <text x="290" y="278" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">相机 → 光门 1 物理距离 &lt; 50cm</text>
+  <line x1="380" y1="288" x2="650" y2="288" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
+  <line x1="650" y1="283" x2="650" y2="293" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
+  <text x="515" y="252" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">件距 ≥ v×0.9s ≈ 90cm @1m/s（上游排产保证, 否则漏拨）</text>
+
+  <!-- 上行/下行 标签 -->
+  <text x="44" y="352" font-size="11" fill="var(--gate-mut,#8a91a0)">上游 · 相机侧</text>
+  <text x="1136" y="352" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="end">下游 · 出口</text>
+
+  <!-- 传送带 -->
+  <rect x="40" y="360" width="1100" height="80" rx="6" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
+  <g stroke="var(--gate-bd,#262b36)" opacity="0.45">
+    <line x1="160" y1="364" x2="160" y2="436"/><line x1="240" y1="364" x2="240" y2="436"/>
+    <line x1="320" y1="364" x2="320" y2="436"/><line x1="400" y1="364" x2="400" y2="436"/>
+    <line x1="480" y1="364" x2="480" y2="436"/><line x1="560" y1="364" x2="560" y2="436"/>
+    <line x1="640" y1="364" x2="640" y2="436"/><line x1="720" y1="364" x2="720" y2="436"/>
+    <line x1="800" y1="364" x2="800" y2="436"/><line x1="880" y1="364" x2="880" y2="436"/>
+    <line x1="960" y1="364" x2="960" y2="436"/><line x1="1040" y1="364" x2="1040" y2="436"/>
+  </g>
+  <circle cx="70" cy="400" r="16" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/><circle cx="70" cy="400" r="3" fill="var(--gate-fg,#e6e6e6)"/>
+  <circle cx="1110" cy="400" r="16" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/><circle cx="1110" cy="400" r="3" fill="var(--gate-fg,#e6e6e6)"/>
+
+  <!-- 物品 -->
+  <rect x="241" y="391" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/>
+  <rect x="461" y="391" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/>
+  <text x="470" y="380" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">光门 1 已过 · 推杆 1 推出中（400ms）</text>
+  <rect x="861" y="391" width="18" height="18" rx="2" fill="var(--gate-acc,#fb923c)"/>
+
+  <!-- 光门 ×3: x=380 / 650 / 920 -->
+  <g>
+    <line x1="380" y1="352" x2="380" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
+    <rect x="373" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
+    <rect x="373" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
+    <text x="380" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">光门 1 · 前侧</text>
+    <text x="380" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">PB0</text>
+
+    <line x1="650" y1="352" x2="650" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
+    <rect x="643" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
+    <rect x="643" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
+    <text x="650" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">光门 2 · 前侧</text>
+    <text x="650" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">PB1</text>
+
+    <line x1="920" y1="352" x2="920" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
+    <rect x="913" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
+    <rect x="913" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
+    <text x="920" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">光门 3 · 前侧</text>
+    <text x="920" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">PB2</text>
+  </g>
+
+  <!-- 推杆 ×3 (舵机驱动): x=530 / 800 / 1070, 机座在带面下侧 -->
+  <g>
+    <!-- 1 号: 推出中 (杆已伸出到带面) -->
+    <line x1="530" y1="452" x2="530" y2="402" stroke="var(--gate-acc,#fb923c)" stroke-width="6" stroke-linecap="round"/>
+    <rect x="516" y="452" width="28" height="16" rx="3" fill="var(--gate-bg,#171a21)" stroke="var(--gate-mut,#8a91a0)"/>
+    <text x="512" y="486" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="end">推杆 1 · 推出 400ms</text>
+
+    <!-- 2 号: 收回待命 -->
+    <line x1="800" y1="452" x2="800" y2="438" stroke="var(--gate-fg,#e6e6e6)" stroke-width="6" stroke-linecap="round"/>
+    <rect x="786" y="452" width="28" height="16" rx="3" fill="var(--gate-bg,#171a21)" stroke="var(--gate-mut,#8a91a0)"/>
+    <text x="782" y="486" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="end">推杆 2 · 收回待命</text>
+
+    <!-- 3 号: 收回待命 -->
+    <line x1="1070" y1="452" x2="1070" y2="438" stroke="var(--gate-fg,#e6e6e6)" stroke-width="6" stroke-linecap="round"/>
+    <rect x="1056" y="452" width="28" height="16" rx="3" fill="var(--gate-bg,#171a21)" stroke="var(--gate-mut,#8a91a0)"/>
+    <text x="1052" y="486" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="end">推杆 3 · 收回待命</text>
+  </g>
+
+  <!-- 料道 ×3 (45°) -->
+  <line x1="538" y1="446" x2="618" y2="526" stroke="var(--gate-mut,#8a91a0)" stroke-width="16" opacity="0.30" stroke-linecap="round" marker-end="url(#gw-arwm)"/>
+  <line x1="808" y1="446" x2="888" y2="526" stroke="var(--gate-mut,#8a91a0)" stroke-width="16" opacity="0.30" stroke-linecap="round" marker-end="url(#gw-arwm)"/>
+  <line x1="1078" y1="446" x2="1158" y2="526" stroke="var(--gate-mut,#8a91a0)" stroke-width="16" opacity="0.30" stroke-linecap="round" marker-end="url(#gw-arwm)"/>
+  <text x="588" y="496" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="middle" transform="rotate(45 588 496)">1号料道</text>
+  <text x="858" y="496" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="middle" transform="rotate(45 858 496)">2号料道</text>
+  <text x="1128" y="496" font-size="11" fill="var(--gate-mut,#8a91a0)" text-anchor="middle" transform="rotate(45 1128 496)">3号料道</text>
+
+  <!-- 末端对账门 ×(未装, 虚线 ×) -->
+  <line x1="598" y1="498" x2="614" y2="514" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+  <line x1="614" y1="498" x2="598" y2="514" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+  <line x1="868" y1="498" x2="884" y2="514" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+  <line x1="884" y1="498" x2="868" y2="514" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+  <line x1="1138" y1="498" x2="1154" y2="514" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+  <line x1="1154" y1="498" x2="1138" y2="514" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
+
+  <!-- D 尺寸线: 光门->推杆推料点 -->
+  <g>
+    <line x1="380" y1="520" x2="530" y2="520" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <line x1="380" y1="515" x2="380" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <line x1="530" y1="515" x2="530" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <text x="455" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">D = v×(400ms+100ms)</text>
+    <text x="455" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">≈ 50cm @ 1.0 m/s（⑧标定后修正）</text>
+
+    <line x1="650" y1="520" x2="800" y2="520" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <line x1="650" y1="515" x2="650" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <line x1="800" y1="515" x2="800" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <text x="725" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">D = v×(400ms+100ms)</text>
+    <text x="725" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">≈ 50cm @ 1.0 m/s（⑧标定后修正）</text>
+
+    <line x1="920" y1="520" x2="1070" y2="520" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <line x1="920" y1="515" x2="920" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <line x1="1070" y1="515" x2="1070" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
+    <text x="995" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">D = v×(400ms+100ms)</text>
+    <text x="995" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">≈ 50cm @ 1.0 m/s（⑧标定后修正）</text>
+  </g>
+
+  <!-- 行进方向 -->
+  <line x1="80" y1="344" x2="1100" y2="344" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" opacity="0.85" marker-end="url(#gw-arw)"/>
+  <text x="590" y="338" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">带面行进方向（光门落沿 = 物品到达推杆前侧 = 推出动作开始）</text>
+
+  <!-- 底部: 接线说明 -->
+  <rect x="40" y="590" width="660" height="112" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
+  <text x="56" y="614" font-size="13" font-weight="700" fill="var(--gate-fg,#e6e6e6)">接线（与步进 EN 共 MCP23017 @0x27）</text>
+  <text x="56" y="636" font-size="11" fill="var(--gate-mut,#8a91a0)">PB0 = 光门 1 · PB1 = 光门 2 · PB2 = 光门 3 — IODIR 输入 + GPPU 内部上拉</text>
+  <text x="56" y="654" font-size="11" fill="var(--gate-mut,#8a91a0)">通光 = HIGH · 挡光 = LOW · 落沿 = 物品到达（固件 10ms 去抖）· 5s 无物品 → photo timeout fault</text>
+  <text x="56" y="672" font-size="11" fill="var(--gate-mut,#8a91a0)">I2C 总线 SDA = GPIO18 / SCL = GPIO23（与 PCA9685 共总线）· 未接线 → trigger=photo 自动回退 immediate</text>
+  <text x="56" y="690" font-size="11" fill="var(--gate-mut,#8a91a0)">装好并标定后: 网关 divert_trigger 改 "photo" · 串口 gates 查线（ok=1, 挡光变 0）</text>
+
+  <!-- 底部: 侧视高度 inset -->
+  <rect x="730" y="590" width="410" height="112" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
+  <text x="746" y="614" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)">侧视 · 光门安装高度（光束垂直带面）</text>
+  <line x1="752" y1="664" x2="1122" y2="664" stroke="var(--gate-fg,#e6e6e6)" stroke-width="3"/>
+  <circle cx="774" cy="678" r="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
+  <circle cx="1100" cy="678" r="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
+  <rect x="886" y="630" width="36" height="34" rx="2" fill="var(--gate-acc,#fb923c)"/>
+  <line x1="756" y1="647" x2="1118" y2="647" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
+  <rect x="746" y="641" width="12" height="12" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
+  <rect x="1122" y="641" width="12" height="12" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
+  <line x1="950" y1="647" x2="950" y2="664" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
+  <line x1="946" y1="647" x2="954" y2="647" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
+  <line x1="946" y1="664" x2="954" y2="664" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
+  <text x="958" y="662" font-size="10" fill="var(--gate-mut,#8a91a0)">10~30mm · 对齐物品质心（按件高定）</text>
+</svg>

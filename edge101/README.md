@@ -122,13 +122,13 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
   `ok` ack; `reset` 清 fault; fault 时任何 divert 回 `fault` ack。
   **job_id 去重**: 完成窗 (60s) 内同 job_id 的 divert 重发/重投只补 `ok` 应答
   不重新拨料 (防网关重发/QoS1 重投导致双拨)。
-  **光门触发** (`trigger=photo`): divert 先进 `armed` 预置, 拨料器**前侧**光门
-  (MCP23017 PB0/1/2, 透过式 NPN 开集 + 内部上拉, 每 loop 轮询, 10ms 去抖)
-  被物品通过 (落沿) 才拨; qty>1 每件拨完回 `armed` 各等一次光门;
+  **光门触发** (`trigger=photo`): divert 先进 `armed` 预置, 推杆**前侧 (上游)**
+  光门 (MCP23017 PB0/1/2, 透过式 NPN 开集 + 内部上拉, 每 loop 轮询, 10ms 去抖)
+  被物品通过 (落沿) 才推; qty>1 每件推完回 `armed` 各等一次光门;
   5s 无物品 → fault "photo timeout" + 对 job_id 回 fault ack; 光门未接线
   (MCP23017 未在线) 时自动回退 immediate (启动日志说明)。安装公式:
-  光门 = 拨料作用点 − 带速×(拨料动作时间+余量), 见 `docs/wiring.md` 光门节
-  与 `docs/sort-mqtt.md`「光门时序」。
+  光门 = 推杆推料点 − 带速×(推出动作时间+余量); 布局示意图
+  `docs/gate_layout.svg`; 详见 `docs/wiring.md` 光门节与 `docs/sort-mqtt.md`「光门时序」。
 - **视觉**: HL2 对象帧 (type=0x01) 解析 → `{object_type, ID} → material`
   映射表 (config.h `MATERIAL_MAP`, 可换) → 进画面去重 (同物料 500ms 滑动窗,
   离屏后重入才再报) → 发 `sort/inbound/vision`。
@@ -146,7 +146,7 @@ stepstat             # RMT 状态: ready/failed/active/pps/steps_live
 stepinit             # boot 时 RMT 创建失败后, 运行时重试并恢复
 reboot               # 软重启 (esp_restart)
 stepper <n>          # 手动 n 步 (验证转向)
-sweep <n>            # 手动扫掠 n 号舵机一次
+sweep <n>            # 手动扫掠 n 号舵机一次 (驱动 n 号推杆推出)
 vision <material>    # 手动注入一条视觉事件 (联调用)
 ```
 
