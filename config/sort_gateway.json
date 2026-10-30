@@ -11,7 +11,7 @@
   "divert_timeout_per_item_s": 1.0,
   "busy_wait_s": 3.0,
   "busy_wait_max_ext": 3,
-  "divert_trigger": "immediate",
+  "divert_trigger": "photo",
   "photo_margin_s": 3.0,
   "stats_period_s": 5.0,
   "stop_conveyor_after_batch": true,
