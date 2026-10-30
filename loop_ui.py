@@ -410,7 +410,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v13 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite)+常驻库存条 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v13 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite)+常驻库存卡 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -442,7 +442,7 @@ PAGE = """<!doctype html>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
 <div id="cards" class="cards"></div>
-<div id="stockbar" style="margin:10px 0 4px;font-size:13px;color:#9aa3b2;background:#171a21;border:1px solid #262b36;border-radius:10px;padding:9px 14px"></div>
+<div id="stockcards" class="cards" style="margin:10px 0 4px"></div>
 <div id="yardcards" class="cards"></div>
 <div id="ledger" style="display:none;margin:14px 0"></div>
 <div id="out"></div>
@@ -460,19 +460,23 @@ function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div c
 function sec(t){return `<div class="sec">${t}</div>`}
 const domain='yard'; // 页面专属仓库分拣 (后端 API 仍支持 fruit/block/mixed 基准域; 域标识保持 yard 不变)
 const LEDGER_MAT={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
-// ---- 常驻库存条 (GET /stock; 仓库信息之上, 不用点台账面板就能看到总库存) ----
+// ---- 常驻库存 (GET /stock; 仓库信息之上, 每仓一个卡, 样式与仓库信息一致; 不用点台账面板) ----
 async function refreshStock(){
  try{
   const d=await (await fetch('/stock')).json();
-  const agg={};[1,2,3].forEach(y=>Object.entries(d.yards[y].items).forEach(([m,v])=>{
-   if(v>0)agg[m]=(agg[m]||0)+v}));
-  const det=Object.entries(agg).sort((a,b)=>b[1]-a[1])
-   .map(([m,v])=>(LEDGER_MAT[m]||m)+' '+v).join(' · ');
-  const parts=[1,2,3].map(y=>{const t=d.yards[y].total;
-   return y+'号 '+(t>0?t+'件':(t<0?'负'+Math.abs(t):'空'))}).join(' · ');
-  $('stockbar').innerHTML='📦 库存 <b style="color:#e5e9f0">'+parts+'</b> · 共 '+d.grand_total+' 件'
-   +(det?' <span style="color:#6b7383">('+det+')</span>':'');
- }catch(e){$('stockbar').textContent='📦 库存: 加载失败 '+(e.message||e)}
+  let h='';
+  [1,2,3].forEach(y=>{
+   const it=d.yards[y].items,tot=d.yards[y].total;
+   const rows=Object.entries(it).filter(([,v])=>v!==0).map(([m,v])=>
+    `<div class="yd">${v<0?`<span style="color:#f87171">${LEDGER_MAT[m]||m} × ${v}</span>`:(LEDGER_MAT[m]||m)+' × '+v}</div>`).join('')
+    ||'<div class="yd">—</div>';
+   h+=`<div class="card"><div class="k">${y}号仓库 库存</div>`
+    +`<div class="v ${tot>0?'':(tot<0?'':'muted')}"${tot<0?' style="color:#f87171"':''}>${tot>0?tot+' 件':(tot<0?'负 '+Math.abs(tot)+' 件':'空')}</div>${rows}</div>`;
+  });
+  h+=`<div class="card" style="min-width:90px"><div class="k">📦 总库存</div>`
+   +`<div class="v ${d.grand_total>0?'':'muted'}">${d.grand_total>0?d.grand_total+' 件':'0 件'}</div></div>`;
+  $('stockcards').innerHTML=h;
+ }catch(e){$('stockcards').innerHTML='<div class="card"><div class="k">📦 库存</div><div class="v muted">加载失败 '+(e.message||e)+'</div></div>'}
 }
 // ---- 仓库台账 (yard_ledger.py, SQLite): 库存=入-出; 分拣下发自动记入, 面板内可手动记出 ----
 let ledOpen=false;
