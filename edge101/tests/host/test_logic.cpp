@@ -62,18 +62,38 @@ static void testConveyor() {
     check("stopped->start ok", r.handled && r.ok);
     check("running", c.st == DevState::kRunning && c.speed_mps == 1.5);
     r = c.handleCmd("start", 2.0);
-    check("running 时 start -> busy", r.handled && !r.ok && r.note == "state=running");
+    check("running 时 start -> ok (幂等, 更新 speed)",
+          r.handled && r.ok && c.speed_mps == 2.0);
     r = c.handleCmd("pause", 0);
     check("running->pause ok", r.ok && c.st == DevState::kPaused);
     r = c.handleCmd("start", 2.0);
-    check("paused 时 start -> busy (需 resume)", !r.ok && r.note == "state=paused");
-    r = c.handleCmd("resume", 2.0);
-    check("paused->resume ok", r.ok && c.st == DevState::kRunning && c.speed_mps == 2.0);
+    check("paused 时 start -> ok (等同 resume)",
+          r.handled && r.ok && c.st == DevState::kRunning && c.speed_mps == 2.0);
     r = c.handleCmd("stop", 0);
     check("running->stop ok", r.ok && c.st == DevState::kStopped);
+    r = c.handleCmd("stop", 0);
+    check("stopped 时 stop -> ok (幂等)", r.handled && r.ok
+          && r.note == "state=stopped");
+    r = c.handleCmd("resume", 0);
+    check("stopped 时 resume -> busy", r.handled && !r.ok
+          && r.note == "state=stopped");
+    r = c.handleCmd("start", 1.0);
+    check("stopped->start ok", r.handled && r.ok && c.st == DevState::kRunning);
+    r = c.handleCmd("pause", 0);
+    check("running->pause ok", r.handled && r.ok);
+    r = c.handleCmd("pause", 0);
+    check("paused 时 pause -> ok (幂等)", r.handled && r.ok
+          && r.note == "state=paused");
+    c.handleCmd("stop", 0);
     r = c.handleCmd("teleport", 0);
     check("未知 action 不处理", !r.handled);
     c.setFault();
+    r = c.handleCmd("start", 0);
+    check("fault 时 start -> busy", r.handled && !r.ok
+          && r.note == "state=fault");
+    r = c.handleCmd("stop", 0);
+    check("fault 时 stop -> busy", r.handled && !r.ok
+          && r.note == "state=fault");
     r = c.handleCmd("reset", 0);
     check("fault->reset ok", r.ok && c.st == DevState::kStopped);
 }

@@ -57,6 +57,13 @@ DEFAULT_CFG = {
     "conveyor_speed_mps": 1.0,
     "ack_timeout_s": 3.0,
     "ack_retries": 2,
+    # divert 实际耗时 ≈ 0.9s/件 (固件 SERVO 拨出+件间间隔), 固定 3s 超时
+    # 在 qty≥4 时会误判超时 -> 重发 -> 设备 busy -> 故障锁存/重复拨料.
+    # 因此 divert 超时 = ack_timeout_s + divert_timeout_per_item_s × qty.
+    "divert_timeout_per_item_s": 1.0,
+    # busy-ack = 设备正在执行本 job: 绝不重发 (重发=重复拨料), 只延长等待.
+    "busy_wait_s": 3.0,
+    "busy_wait_max_ext": 3,
     "stats_period_s": 5.0,
     "stop_conveyor_after_batch": True,
     "queue_max": 16,
@@ -440,31 +447,79 @@ class SortGateway:
         return f"sort/{name}/cmd"
 
     def _wait_ack(self, kind, name, job_id, timeout):
+        """等 job_id 的应答. 返回 (result, note): result=None 表示超时未收到."""
         with self._pending_lock:
             p = {"event": threading.Event(), "result": None, "note": ""}
             self._pending[(kind, name, job_id)] = p
         try:
             p["event"].wait(timeout)
-            return p["result"] == "ok", p["note"]
+            return p["result"], p["note"]
         finally:
             with self._pending_lock:
                 self._pending.pop((kind, name, job_id), None)
 
-    def _send_with_retry(self, kind, name, job_id, payload):
-        """发布命令 + 等应答, 超时重试. 返回 (ok, note)."""
-        to = float(self.cfg["ack_timeout_s"])
+    def _send_with_retry(self, kind, name, job_id, payload, timeout=None):
+        """发布命令 + 等应答. 返回 (ok, note).
+
+        - ok-ack  -> 成功
+        - fault-ack -> 立即失败 (重发不会让设备恢复)
+        - busy-ack -> 设备正在执行本 job: 绝不重发 (重发 = 重复拨料),
+          只延长等待 (busy_wait_s, 最多 busy_wait_max_ext 次)
+        - 完全无应答 (真超时) -> 重发, 最多 ack_retries 次
+        """
+        to = float(timeout if timeout is not None
+                   else self.cfg["ack_timeout_s"])
         retries = int(self.cfg["ack_retries"])
+        busy_wait = float(self.cfg.get("busy_wait_s", 3.0))
+        max_ext = int(self.cfg.get("busy_wait_max_ext", 3))
+        t_start = time.perf_counter()
+        pubs = 0
+        exts = 0
+        republished = 0
+        need_pub = True
+        saw_busy = False
         note = ""
-        for attempt in range(retries + 1):
-            self.client.publish(self._cmd_topic(kind, name),
-                                 json.dumps(payload), qos=1)
-            self.stats.cmd_sent()
-            t0 = time.perf_counter()
-            ok, note = self._wait_ack(kind, name, job_id, to)
-            self.stats.cmd_ack(ok, time.perf_counter() - t0, attempt > 0)
-            if ok:
+        while True:
+            wait_s = to if need_pub else busy_wait
+            if need_pub:
+                self.client.publish(self._cmd_topic(kind, name),
+                                    json.dumps(payload), qos=1)
+                self.stats.cmd_sent()
+                pubs += 1
+            need_pub = False
+            result, note = self._wait_ack(kind, name, job_id, wait_s)
+            if result == "ok":
+                self.stats.cmd_ack(True, time.perf_counter() - t_start,
+                                   republished > 0)
                 return True, note
-        return False, note or "ack_timeout"
+            if result == "fault":
+                self.stats.cmd_ack(False, time.perf_counter() - t_start,
+                                   republished > 0)
+                return False, note or "fault"
+            if result == "busy":
+                exts += 1
+                if exts > max_ext:
+                    self.stats.cmd_ack(False, time.perf_counter() - t_start,
+                                       republished > 0)
+                    return False, note or "busy 超出等待窗口"
+                saw_busy = True
+                continue          # 不重发, 继续等 busy_wait_s
+            # result is None: 窗口内无应答
+            if saw_busy:
+                # 设备已声明正在执行本 job (busy-ack), 只是还没做完
+                # -> 按延长处理, 绝不重发
+                exts += 1
+                if exts > max_ext:
+                    self.stats.cmd_ack(False, time.perf_counter() - t_start,
+                                       republished > 0)
+                    return False, note or "busy 超出等待窗口"
+                continue
+            if pubs > retries:
+                self.stats.cmd_ack(False, time.perf_counter() - t_start,
+                                   republished > 0)
+                return False, note or "ack_timeout"
+            need_pub = True
+            republished += 1
 
     def _conveyor_cmd(self, job, action, required=True):
         payload = {"job_id": job["job_id"], "action": action, "ts": _now()}
@@ -477,8 +532,12 @@ class SortGateway:
     def _divert_cmd(self, job, sorter, action):
         payload = {"job_id": job["job_id"], "action": "divert", "ts": _now(),
                    "material": action["material"], "qty": action["qty"]}
+        # 固件一件拨料 ≈ 0.9s, ack 在 qty 件全拨完才发 -> 超时随 qty 缩放
+        qty = int(action.get("qty", 1))
+        to = (float(self.cfg["ack_timeout_s"])
+              + float(self.cfg.get("divert_timeout_per_item_s", 1.0)) * qty)
         return self._send_with_retry("sorter", f"sorter{sorter}",
-                                       job["job_id"], payload)
+                                     job["job_id"], payload, timeout=to)
 
     def _batch_event(self, job, phase):
         self._publish("sort/event/batch",

@@ -8,7 +8,8 @@
 namespace sort {
 
 inline std::string tsIso() {
-    // 固件里用 RTC/网络时间; 主机单测里占位. 调用方可覆盖.
+    // 物理控制器无 RTC: 按契约 (docs/sort-mqtt.md 遥测节) 占位空字符串,
+    // 网关忽略 ts. 后续加 NTP 后在此返回网络时间.
     return "";
 }
 

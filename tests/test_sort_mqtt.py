@@ -101,12 +101,13 @@ def http_json(url, body=None, timeout=5):
             return e.code, {}
 
 
-def make_args(no_ack=False):
+def make_args(no_ack=False, item_ms=120):
     class A:  # 模拟 CLI 参数
         pass
     a = A()
     a.broker_host, a.broker_port = "127.0.0.1", BPORT
     a.latency_ms, a.fault_rate, a.no_ack = 20, 0.0, no_ack
+    a.item_ms = item_ms
     return a
 
 
@@ -119,6 +120,8 @@ def main():
         os.remove(ledger)
     cfg = {"broker": f"tcp://127.0.0.1:{BPORT}", "http_port": GPORT,
            "ack_timeout_s": 0.8, "ack_retries": 1, "stats_period_s": 1.0,
+           "divert_timeout_per_item_s": 1.0, "busy_wait_s": 3.0,
+           "busy_wait_max_ext": 3,
            "ledger_path": ledger}
     gw = sm.SortGateway(cfg).start()
     print(f"[test] broker :{BPORT}  gateway HTTP :{GPORT}  ledger={ledger}")
@@ -301,6 +304,49 @@ def main():
                   8, "视觉帧 -> divert 2 号分拣器")
     check("视觉帧 -> 2 号分拣器 divert", ok,
           f"diverted={s2c.diverted_total} disp={gw.stats.vision['dispatched']}")
+
+    # ---------- 8. divert 时序回归 (实机: ~0.9s/件, 旧固定 3s 超时必炸) ----------
+    print("\n== 8. divert 时序回归 (实机时序) ==")
+    saved_cfg = {k: gw.cfg.get(k) for k in ("ack_timeout_s", "ack_retries",
+                                            "busy_wait_s")}
+    try:
+        # 8a. 超时随 qty 缩放: 4 件 × 900ms = 3.6s > 旧固定 3.0s;
+        #     新超时 = 3.0 + 1.0×4 = 7.0s -> 应成功, 且设备不得重复拨料
+        gw.cfg["ack_timeout_s"], gw.cfg["ack_retries"] = 3.0, 2
+        s1.item_ms = 900
+        base8, base8d = gw.stats.batches["done"], s1.diverted_total
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                          {"source": "test",
+                           "actions": [{"yard": 1, "material": "red_apple", "qty": 4}]})
+        ok = wait_for(lambda: s1.diverted_total == base8d + 4, 15,
+                      "拨 4 件 (实际 3.6s)")
+        check("qty=4 超旧 3s 超时 -> 现在成功", ok and st == 202, f"st={st}")
+        time.sleep(0.3)
+        check("批次入账 done", gw.stats.batches["done"] > base8)
+        check("拨 4 件 (未重复拨)", s1.diverted_total == base8d + 4,
+              f"got +{s1.diverted_total - base8d}")
+
+        # 8b. 设备慢于首个超时窗口 -> 重发撞 busy -> busy-ack 延长等待 (不重发),
+        #     迟到的 ok-ack 仍入账
+        gw.cfg["ack_timeout_s"], gw.cfg["busy_wait_s"] = 1.5, 1.0
+        s2c.item_ms = 4000
+        base9, base9d = gw.stats.batches["done"], s2c.diverted_total
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                          {"source": "test",
+                           "actions": [{"yard": 2, "material": "banana", "qty": 1}]})
+        ok = wait_for(lambda: s2c.diverted_total == base9d + 1, 15,
+                      "busy 延长后完成")
+        check("设备慢 (4s) + 重发撞 busy -> 仍完成", ok and st == 202, f"st={st}")
+        time.sleep(0.3)
+        check("批次入账 done", gw.stats.batches["done"] > base9)
+        check("只拨 1 件 (busy/重发不重复拨)", s2c.diverted_total == base9d + 1,
+              f"got +{s2c.diverted_total - base9d}")
+    finally:
+        for k, v in saved_cfg.items():
+            if v is not None:
+                gw.cfg[k] = v
+            else:
+                gw.cfg.pop(k, None)
 
     pc.loop_stop(); pc.disconnect()
     gw.stop()

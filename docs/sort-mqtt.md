@@ -28,16 +28,20 @@
 {"job_id": "j1732345-1", "action": "start", "speed_mps": 1.0, "ts": "..."}
 ```
 
-| action | 前置状态 | 说明 |
+| action | 目标态 | 说明 |
 |---|---|---|
-| `start` | stopped | 启动, 携带 `speed_mps` |
-| `resume` | paused |  | 恢复, 携带 `speed_mps` |
-| `pause` | running | 暂停 (网关故障安全时也会发) |
-| `stop` | running/paused | 停止 |
-| `reset` | fault | 故障复位到 stopped (人工介入后) |
+| `start` | running | 启动/恢复, 携带 `speed_mps`; 已 running 回 ok (只更新 speed) |
+| `resume` | running | 恢复; 已 running 回 ok; stopped 时回 busy |
+| `pause` | paused | 暂停 (网关故障安全时也会发); 已 paused 回 ok; stopped/fault 回 busy |
+| `stop` | stopped | 停止; 已 stopped 也回 ok |
+| `reset` | stopped | 故障复位 (人工介入后); 非故障 no-op ok |
+
+**幂等目标态语义**: 设备已处于目标态时必须回 `ok`, 不得回 `busy` ——
+网关把 `busy` 解释为「设备正在执行本 job」并延长等待, "已停" 回 busy 会让网关空等。
+fault 期间 start/stop/pause 回 busy, 只有 `reset` 可走。
 
 状态机: `stopped --start--> running --pause--> paused --resume--> running`;
-`running/paused --stop--> stopped`; 故障注入 → `fault --reset--> stopped`。
+`running/paused --stop--> stopped`; 故障 → `fault --reset--> stopped`。
 
 ### 分拣器 `sort/sorter{n}/cmd` (n = 1..3)
 
@@ -61,11 +65,19 @@ topic: `sort/line1/conveyor/ack/{job_id}` / `sort/sorter{n}/ack/{job_id}`
 {"job_id": "j1732345-1", "action": "divert", "result": "ok", "note": "", "ts": "..."}
 ```
 
-- `result`: `ok` (接受并执行) | `busy` (当前状态不允许该动作) | `fault` (设备故障)。
-- 时限: 网关在 `ack_timeout_s` (默认 3s) 内未收到应答视为超时, 重试
-  `ack_retries` (默认 2) 次; 仍失败 → **故障锁存**: 停止后续下发、暂停传送带,
-  需人工清除 (见下)。
-- 网关把 `busy`/`fault` 都当失败处理 (状态失步需要人工确认, 不自动重试状态)。
+- `result`: `ok` (接受并执行) | `busy` (设备正在执行中) | `fault` (设备故障)。
+- **三种应答, 三种网关行为**:
+  - `ok` → 命令成功, 进入下一步;
+  - `busy` → 设备正在做这件事: 网关**绝不重发** (重发 = 重复拨料), 只延长等待
+    `busy_wait_s` (默认 3s), 最多 `busy_wait_max_ext` (默认 3) 次, 迟到的 ok 仍入账;
+  - `fault` → 立即失败, 不重试。
+- **busy 只用于 "正在执行"**: 命令按幂等目标态语义, "已处于目标态" 必须回 `ok`。
+  例如同 `job_id` 的 divert 重发/重投: 设备若已拨完只补 `ok` 应答, 绝不重新拨料
+  (固件按 job_id 去重, 窗口 60s)。
+- **时限**: divert 实际执行 ≈ 0.9s/件, ok 应答在 `qty` 件全拨完才发, 故网关
+  divert 超时 = `ack_timeout_s` (默认 3s) + `divert_timeout_per_item_s` (默认 1s) × `qty`;
+  其他命令用 `ack_timeout_s`。整窗无应答 → 重发, 最多 `ack_retries` (默认 2) 次;
+  仍失败 → **故障锁存**: 停止后续下发、暂停传送带, 需人工清除 (见下)。
 
 ## 遥测 (设备 → 网关, QoS0, 2 Hz)
 
@@ -74,10 +86,15 @@ topic: `sort/line1/conveyor/ack/{job_id}` / `sort/sorter{n}/ack/{job_id}`
 topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 
 ```json
-{"state": "running", "speed_mps": 1.0, "items_in": 42, "ts": "..."}
-{"state": "busy", "diverted_total": 17, "last_material": "red_block", "ts": "..."}
+{"state": "running", "speed_mps": 1.0, "items_in": 42, "ts": "2026-10-30T12:00:00+08:00"}
+{"state": "busy", "diverted_total": 17, "last_material": "red_block", "ts": "2026-10-30T12:00:01+08:00"}
 ```
 
+- `state` 为必填 (网关状态机依赖); 其余为设备特有可选字段:
+  - 传送带: `items_in` (过件累计, 有计数传感器时); 物理控制器 (edge101) 无过件
+    计数, 发 `steps_total` (步进累计步数) —— 两者不同量纲, 契约均按可选对待;
+  - 分拣器: `diverted_total`, `last_material`;
+  - `ts`: ISO8601; 网关忽略该字段。物理控制器无 RTC (后续可 NTP), 可为 `""`。
 - 传送带 `state`: `stopped|running|paused|fault`
 - 分拣器 `state`: `ready|busy|fault`
 - 网关据此选择传送带动作 (running 跳过 / stopped→start / paused→resume /

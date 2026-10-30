@@ -11,6 +11,9 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_netif.h>
+#include "driver/rmt_tx.h"
+#include "driver/rmt_encoder.h"
+#include "driver/rmt_common.h"
 
 #include "config.h"
 #include "Conveyor.h"
@@ -52,9 +55,23 @@ static volatile bool ethUp = false;    // 链路可用 (静态 IP 已配好或 D
 static bool netifReady = false;        // 静态 IP 已设置 (幂等, 不重复设置)
 static esp_netif_t* findEthNetif();    // 定义见以太网节 (串口 eth 命令提前引用)
 
-// ================= 步进: 非阻塞步脉冲 =================
+// ================= 步进: RMT 硬件脉冲 (主循环旧路径作回退) =================
+// 主循环 digitalWrite 打 STEP 只能出 ~3kHz, 名义 320k pps (speed_mps=1)
+// 完全打不出来 -> 改用 RMT TX 通道: 写一个 [pulse, gap] 符号, loop_count=-1
+// 无限循环, 硬件按 APB 80MHz 时钟精确出 50% 占空比脉冲串; 主循环只负责
+// 在传送带离开 running 时 rmt_disable. 停带精度 = 主循环周期 (~1ms),
+// 1m/s 下 ±1mm 量级, 对"按件分拣"的带速无影响.
+static rmt_channel_handle_t stepChan = nullptr;
+static rmt_encoder_handle_t stepEnc = nullptr;
+static bool stepRmtReady = false;      // 通道/编码器创建成功
+static bool stepRmtFailed = false;     // 运行中 RMT 出错 -> 回退主循环打脉冲
+static bool stepRmtActive = false;
+static uint32_t stepRmtStartMs = 0;
+static double stepRmtPps = 0.0;
+
+// 回退路径: 主循环非阻塞单脉冲 (旧逻辑, 只保证 RMT 不可用时仍有带速)
 static uint32_t nextStepUs = 0;
-static void steerStepper() {
+static void steerStepperLegacy() {
     if (conv.st != sort::DevState::kRunning) return;
     double stepsPerSec = conv.speed_mps * 1000.0 * STEPS_PER_MM;
     if (stepsPerSec < 1.0) stepsPerSec = 1.0;
@@ -69,6 +86,57 @@ static void steerStepper() {
     }
 }
 
+static void stopStepRmt() {
+    if (!stepRmtActive || !stepChan) return;
+    stepRmtActive = false;
+    // 步数按 pps × 时长结算 (停带时刻误差 = 主循环周期)
+    conv.steps_total +=
+        (uint64_t)(stepRmtPps * (millis() - stepRmtStartMs) / 1000.0);
+    rmt_disable(stepChan);
+}
+
+static bool startStepRmt() {
+    double pps = conv.speed_mps * 1000.0 * STEPS_PER_MM;
+    if (pps < 1000.0) return false;   // <1 步/s 不起 RMT
+    uint32_t period = (uint32_t)(80000000.0 / pps);   // 80MHz 分辨率
+    if (period < 10 || period > 32766) return false;  // 每段 15bit
+    stopStepRmt();                    // 变速/重入: 先停旧的再按新速率起
+    rmt_symbol_word_t sym = {};
+    sym.duration0 = period / 2;       // 50% 占空比
+    sym.level0 = 1;
+    sym.duration1 = period - period / 2;
+    sym.level1 = 0;
+    rmt_transmit_config_t tc = {};
+    tc.loop_count = -1;               // 无限循环, 由 stopStepRmt() 收
+    if (rmt_enable(stepChan) != ESP_OK) { stepRmtFailed = true; return false; }
+    if (rmt_transmit(stepChan, stepEnc, &sym, sizeof(sym), &tc) != ESP_OK) {
+        rmt_disable(stepChan);
+        stepRmtFailed = true;
+        return false;
+    }
+    stepRmtStartMs = millis();
+    stepRmtPps = pps;
+    stepRmtActive = true;
+    return true;
+}
+
+// loop() 入口: RMT 正常时只看守门 (传送带离 running 即停), 否则回退旧路径
+static void steerStepper() {
+    if (stepRmtReady && !stepRmtFailed) {
+        if (conv.st != sort::DevState::kRunning && stepRmtActive) stopStepRmt();
+        return;
+    }
+    steerStepperLegacy();
+}
+
+// 遥测用的实时步数 (含 RMT 运行中的部分)
+static uint64_t stepsLive() {
+    uint64_t s = conv.steps_total;
+    if (stepRmtActive)
+        s += (uint64_t)(stepRmtPps * (millis() - stepRmtStartMs) / 1000.0);
+    return s;
+}
+
 // ================= 舵机扫掠任务 (非阻塞) =================
 // 一件物料 = 一次 拨出->归位 扫掠; qty=N 则 N 次, 件间 SERVO_ITEM_GAP_MS.
 // 与 sim_devices 语义一致: 全部拨完才发 ack ok.
@@ -80,6 +148,10 @@ struct SweepTask {
 };
 static SweepTask sweep;
 static String lastJobId[3] = {"", "", ""};   // 各分拣器当前 job_id (divert 完成时应答用)
+// 防重复执行: 最近一次完成的 divert 的 job_id. 网关重发/QoS1 重投同 job_id 时
+// 只补应答不重拨 (job_id 每个批次唯一, 窗口内重复必为重发).
+static std::string lastDoneJob[3];
+static uint32_t lastDoneAtMs[3] = {0, 0, 0};
 
 static void servoWrite(int n, int deg) {
     servos.setAngle(SERVO_CH[n - 1], deg);
@@ -115,6 +187,8 @@ static void sweepTick() {
             sweep.active = false;
             publishSorterAck(sweep.n, lastJobId[sweep.n - 1].c_str(), "divert",
                              "ok", sorters[sweep.n - 1].mat());
+            lastDoneJob[sweep.n - 1] = lastJobId[sweep.n - 1].c_str();
+            lastDoneAtMs[sweep.n - 1] = millis();
         } else {
             sweep.inEject = true;
             sweep.phaseAt = now;
@@ -140,11 +214,27 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
         auto r = conv.handleCmd(action, speed);
         if (r.handled)
             publishConveyorAck(job_id, action, r.ok ? "ok" : "busy", r.note.c_str());
+        if (r.handled && r.ok && action) {
+            // RMT 步进随带速起停 (start/resume 起, stop/pause 停; 变速自动重起)
+            if (!strcmp(action, "start") || !strcmp(action, "resume"))
+                startStepRmt();
+            else if (!strcmp(action, "stop") || !strcmp(action, "pause"))
+                stopStepRmt();
+        }
     } else {
         int n = 0;
         for (n = 1; n <= 3; n++) if (t == sort::sorterCmdTopic(n)) break;
         if (n > 3) return;
-        if (action && !strcmp(action, "divert")) lastJobId[n - 1] = job_id;
+        if (action && !strcmp(action, "divert")) {
+            // 防重复执行: 已完成 job 的同 job_id 重发 -> 只补应答, 不再拨料
+            if (!lastDoneJob[n - 1].empty() &&
+                job_id && !strcmp(job_id, lastDoneJob[n - 1].c_str()) &&
+                millis() - lastDoneAtMs[n - 1] < 60000) {
+                publishSorterAck(n, job_id, "divert", "ok", "duplicate job");
+                return;
+            }
+            lastJobId[n - 1] = job_id;
+        }
         const char* material = doc["material"] | "";
         int qty = doc["qty"] | 1;
         auto r = sorters[n - 1].handleCmd(action, material, qty);
@@ -202,7 +292,7 @@ static void onSerialCmd(const String& line) {
                       sorters[2].state(), (unsigned long)sorters[0].diverted_total,
                       (unsigned long)sorters[1].diverted_total,
                       (unsigned long)sorters[2].diverted_total,
-                      (unsigned long long)conv.steps_total);
+                      (unsigned long long)stepsLive());
     } else if (line.startsWith("stepper")) {
         int n = line.substring(8).toInt();
         if (mcpEn.present()) mcpEn.forceLevel(true);   // 手动脉冲: 临时使能
@@ -300,6 +390,26 @@ void setup() {
     pinMode(STEPPER_DIR_PIN, OUTPUT);
     digitalWrite(STEPPER_DIR_PIN, LOW);
 
+    // RMT 步进脉冲 (硬件 320k pps 级): APB 80MHz 分辨率, 1 个 [pulse,gap] 符号
+    {
+        rmt_tx_channel_config_t cc = {};
+        cc.gpio_num = (gpio_num_t)STEPPER_STEP_PIN;
+        cc.clk_src = RMT_CLK_SRC_APB;
+        cc.resolution_hz = 80000000;
+        cc.mem_block_symbols = 4;
+        cc.trans_queue_depth = 2;
+        cc.intr_priority = 0;
+        rmt_copy_encoder_config_t ec = {};
+        if (rmt_new_tx_channel(&cc, &stepChan) == ESP_OK &&
+            rmt_new_copy_encoder(&ec, &stepEnc) == ESP_OK) {
+            stepRmtReady = true;
+            Serial.printf("[step] RMT @GPIO%d 硬件脉冲就绪 (APB 80MHz)\n",
+                          STEPPER_STEP_PIN);
+        } else {
+            Serial.println("[step] RMT 初始化失败, 回退主循环打脉冲 (~3kHz)");
+        }
+    }
+
     servos.begin(SERVO_SDA_PIN, SERVO_SCL_PIN);
     for (int i = 0; i < 3; i++) servos.setAngle(SERVO_CH[i], SERVO_REST_DEG);
     Serial.printf("[servo] PCA9685 @0x%02X ch %d/%d/%d\n",
@@ -356,7 +466,7 @@ void loop() {
         lastTeleMs = millis();
         mqtt.publish(sort::conveyorTeleTopic().c_str(),
                      sort::conveyorTele(conv.state(), conv.speed_mps,
-                                        conv.steps_total).c_str(), false);
+                                        stepsLive()).c_str(), false);
         for (int n = 1; n <= 3; n++)
             mqtt.publish(sort::sorterTeleTopic(n).c_str(),
                          sort::sorterTele(sorters[n - 1].state(),

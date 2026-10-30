@@ -3,7 +3,7 @@
 每个设备 = 状态机 + 周期遥测 (2Hz):
   传送带: stopped --start--> running --pause--> paused --stop--> stopped
           故障注入 -> fault (reset 恢复)
-  分拣器: ready --divert--> busy --(act_ms)--> ready (diverted_total += qty)
+  分拣器: ready --divert--> busy --(item_ms × qty, 全拨完才回 ok)--> ready
           故障 -> fault (reset 恢复); --no-ack 时收到 divert 不回应 (测网关超时)
 
 真实 PLC/控制器实现时, 只需满足 docs/sort-mqtt.md 的 命令/应答/遥测 三组 topic,
@@ -11,6 +11,7 @@
 
 故障注入: --fault-rate 0.1 (随机故障) --no-ack (divert 永不响应)
           --latency-ms 200 (应答延迟) --fault-sorter 2 (指定分拣器固定故障)
+          --item-ms 900 (每件拨料耗时, 镜像固件 0.9s/件; 默认 900)
 
 Run: .venv/bin/python sim_devices.py [--broker tcp://127.0.0.1:1883] [--seed 7]
 """
@@ -112,24 +113,39 @@ class ConveyorSim(SimDevice):
     def handle_cmd(self, payload):
         action = payload.get("action")
         job_id = payload.get("job_id", "?")
-        if action == "start" and self.state == "stopped":
-            self.state = "running"
-            self.speed = float(payload.get("speed_mps", 1.0))
-            self._ack(job_id, action, "ok")
-        elif action == "stop" and self.state in ("running", "paused"):
-            self.state = "stopped"
-            self.speed = 0.0
-            self._ack(job_id, action, "ok")
-        elif action == "pause" and self.state == "running":
-            self.state = "paused"
-            self._ack(job_id, action, "ok")
-        elif action == "resume" and self.state == "paused":
-            self.state = "running"
-            self._ack(job_id, action, "ok")
-        elif action == "reset" and self.state == "fault":
-            self.state = "stopped"
-            self._ack(job_id, action, "ok")
-        elif action in ("start", "stop", "pause", "resume", "reset"):
+        # 幂等目标态语义 (与固件 Conveyor 一致): "已处于目标态" 回 ok.
+        # 网关把 busy-ack 解释为 "设备正在执行本 job" 并延长等待,
+        # stop 已停若回 busy 会让网关空等.
+        if action in ("start", "resume") and self.state != "fault":
+            if action == "resume" and self.state == "stopped":
+                self._ack(job_id, action, "busy", note="state=stopped")
+                return
+            if self.state != "running":
+                self.state = "running"
+            self.speed = float(payload.get("speed_mps", self.speed or 1.0))
+            self._ack(job_id, action, "ok", note=f"state={self.state}")
+            return
+        if action == "stop" and self.state != "fault":
+            if self.state != "stopped":
+                self.state = "stopped"
+                self.speed = 0.0
+            self._ack(job_id, action, "ok", note=f"state={self.state}")
+            return
+        if action == "pause":
+            if self.state == "running":
+                self.state = "paused"
+                self._ack(job_id, action, "ok", note=f"state={self.state}")
+                return
+            if self.state == "paused":
+                self._ack(job_id, action, "ok", note="state=paused")
+                return
+        if action == "reset":
+            if self.state == "fault":
+                self.state = "stopped"
+                self.speed = 0.0
+            self._ack(job_id, action, "ok", note=f"state={self.state}")
+            return
+        if action in ("start", "stop", "pause", "resume", "reset"):
             self._ack(job_id, action, "busy", note=f"state={self.state}")
         # 故障注入
         if self.fault_rate and self.rng.random() < self.fault_rate \
@@ -162,7 +178,7 @@ class SorterSim(SimDevice):
         self.state = "fault" if fixed_fault else "ready"
         self.diverted_total = 0
         self.last_material = None
-        self.act_ms = 150.0
+        self.item_ms = getattr(gw_args, "item_ms", 900)   # 每件拨料耗时 (ms)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         client.subscribe(self.topic, qos=1)
@@ -180,12 +196,16 @@ class SorterSim(SimDevice):
         if self.state == "fault":
             self._ack(job_id, action, "fault", note="sorter fault")
             return
+        if self.state == "busy":
+            # 与固件 Sorter::handleCmd 一致: busy 时只回 busy-ack, 不重复执行
+            self._ack(job_id, action, "busy", note="state=busy")
+            return
         qty = int(payload.get("qty", 1))
         self.last_material = payload.get("material")
         self.state = "busy"
 
         def finish():
-            time.sleep(self.act_ms / 1000.0)
+            time.sleep(self.item_ms * qty / 1000.0)   # qty 件全拨完才回 ok
             if self.rng.random() < self.fault_rate:
                 self.state = "fault"
                 self._ack(job_id, action, "fault", note="injected")
@@ -208,6 +228,8 @@ def parse_args():
     ap.add_argument("--fault-rate", type=float, default=0.0)
     ap.add_argument("--fault-sorter", type=int, default=0,
                     help="指定 1/2/3 号分拣器固定故障")
+    ap.add_argument("--item-ms", type=int, default=900,
+                    help="分拣器每件拨料耗时 ms (镜像固件: 拨出 400ms + 件间 500ms)")
     ap.add_argument("--no-ack", action="store_true",
                     help="分拣器 divert 永不回应 (测网关超时/重试)")
     ap.add_argument("--seed", type=int, default=7)

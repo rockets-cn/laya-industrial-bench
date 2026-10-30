@@ -25,13 +25,14 @@ struct CmdResult {
     std::string note;
 };
 
-// 下行命令 (网关 -> 设备):
-//   start  stopped -> running   (speed_mps)
-//   resume paused  -> running   (speed_mps)
-//   pause  running -> paused
-//   stop   running/paused -> stopped
-//   reset  fault   -> stopped
-//   其余状态组合 -> busy (note 带当前状态)
+// 下行命令 (网关 -> 设备). 幂等目标态语义:
+//   start/resume -> running (running 时 ok 只更新 speed; paused 时 start 等同 resume;
+//                   stopped 时 resume -> busy)
+//   stop         -> stopped (已停也 ok)
+//   pause        -> paused (已暂停 ok; stopped/fault -> busy)
+//   reset        -> stopped (fault 时执行; 非故障 no-op ok)
+// 注: 网关把 busy-ack 解释为 "设备正在执行本 job" 并延长等待, 因此
+// "已处于目标态" 必须回 ok, 否则网关会空等 busy_wait.
 class Conveyor {
  public:
     DevState st = DevState::kStopped;
@@ -40,25 +41,44 @@ class Conveyor {
 
     CmdResult handleCmd(const char* action, double speed) {
         CmdResult r;
-        if (action && !strcmp(action, "start") && st == DevState::kStopped) {
-            st = DevState::kRunning; speed_mps = speed; r.handled = r.ok = true;
-        } else if (action && !strcmp(action, "resume") && st == DevState::kPaused) {
-            st = DevState::kRunning; speed_mps = speed; r.handled = r.ok = true;
-        } else if (action && !strcmp(action, "pause") && st == DevState::kRunning) {
-            st = DevState::kPaused; r.handled = r.ok = true;
-        } else if (action && !strcmp(action, "stop") &&
-                   (st == DevState::kRunning || st == DevState::kPaused)) {
-            st = DevState::kStopped; speed_mps = 0.0; r.handled = r.ok = true;
-        } else if (action && !strcmp(action, "reset") && st == DevState::kFault) {
-            st = DevState::kStopped; speed_mps = 0.0; r.handled = r.ok = true;
-        } else if (action &&
-                   (!strcmp(action, "start") || !strcmp(action, "stop") ||
-                    !strcmp(action, "pause") || !strcmp(action, "resume") ||
-                    !strcmp(action, "reset"))) {
-            r.handled = true; r.ok = false;   // 已知 action: 回 busy ack
-            r.note = std::string("state=") + stateName(st);
+        if (!action) return r;
+        if (!strcmp(action, "start") || !strcmp(action, "resume")) {
+            if (st == DevState::kFault) {
+                r.handled = true; r.note = "state=fault"; return r;
+            }
+            if (!strcmp(action, "resume") && st == DevState::kStopped) {
+                r.handled = true; r.note = "state=stopped"; return r;
+            }
+            if (st != DevState::kRunning) st = DevState::kRunning;
+            speed_mps = speed;
+            r.handled = r.ok = true; r.note = "state=running";
+            return r;
         }
-        return r;
+        if (!strcmp(action, "stop")) {
+            if (st == DevState::kFault) {
+                r.handled = true; r.note = "state=fault"; return r;
+            }
+            if (st != DevState::kStopped) { st = DevState::kStopped; speed_mps = 0.0; }
+            r.handled = r.ok = true; r.note = "state=stopped";
+            return r;
+        }
+        if (!strcmp(action, "pause")) {
+            if (st == DevState::kRunning) st = DevState::kPaused;
+            else if (st != DevState::kPaused) {
+                r.handled = true;
+                r.note = std::string("state=") + stateName(st);
+                return r;
+            }
+            r.handled = r.ok = true; r.note = "state=paused";
+            return r;
+        }
+        if (!strcmp(action, "reset")) {
+            if (st == DevState::kFault) { st = DevState::kStopped; speed_mps = 0.0; }
+            r.handled = r.ok = true;
+            r.note = std::string("state=") + stateName(st);
+            return r;
+        }
+        return r;   // 未知 action: 不处理 (不回 busy)
     }
 
     void setFault() { st = DevState::kFault; speed_mps = 0.0; }

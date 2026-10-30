@@ -7,7 +7,7 @@ EDGE 101 (DFRobot, **ESP32 原版** — 非 S3; 板载 RJ45 以太网 + 4G CAT1)
 ```
 HuskyLens 2 (UART, GPIO5/12 @38400) ─┐
                                      ▼
-              EDGE 101  ◄── 步进 (传送带, STEP=14 DIR=15, EN=MCP23017 PA0)
+              EDGE 101  ◄── 步进 (传送带, STEP=14 DIR=15, EN=MCP23017 PA0, RMT 硬件脉冲)
                      │      3 舵机 (PCA9685 I2C @0x40, SDA=18 SCL=23)
                      │      MCP23017 I2C @0x27 (步进 EN + 15 路数字量预留)
                      │  MQTT: sort/line1/conveyor/*  sort/sorter{1,2,3}/*
@@ -46,11 +46,11 @@ pio run -t upload          # 烧录 (Type-C USB; 必要时按 BOOT 进下载模�
 pio device monitor         # 115200 串口监视
 
 # 主机单测 (验证纯逻辑, 无需硬件/无需 PIO)
-./tests/host/run_tests.sh  # 60 项: Conveyor/Sorter 状态机, HL2 帧+去重, 协议 JSON, MCP23017 EN
+./tests/host/run_tests.sh  # 66 项: Conveyor/Sorter 状态机, HL2 帧+去重, 协议 JSON, MCP23017 EN
 ```
 
-构建已验证 (2026-10-29): `pio run` SUCCESS,
-Flash 668KB/1.25MB (51%), RAM 34KB/320KB (10.4%), 无告警。
+构建已验证 (2026-10-30): `pio run` SUCCESS,
+Flash 682KB/1.25MB (52%), RAM 35KB/320KB (10.7%), 无告警 (含 RMT 步进)。
 
 实机以太网踩坑记录 (2026-10-29, 全部已修):
 
@@ -108,10 +108,15 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
 
 ## 行为要点 (与 sim_devices 对拍)
 
-- **传送带**: `start/resume/pause/stop/reset` 状态机 + 步进脉冲 (非阻塞,
-  `speed_mps × STEPS_PER_MM` 换算步频); busy 时回 `busy` ack。
+- **传送带**: `start/resume/pause/stop/reset` **幂等目标态**状态机
+  (已处于目标态回 `ok` 不回 busy — 网关把 busy 当"正在执行"会延长等待);
+  步进脉冲由 **RMT TX 通道硬件产生** (1 个 [pulse,gap] 符号 × 无限循环,
+  APB 80MHz 分辨率 → 320k pps 级带速; 主循环只在 start/stop 时
+  `rmt_transmit`/`rmt_disable`), RMT 初始化失败自动回退主循环打脉冲 (~3kHz)。
 - **分拣器**: `divert` 进 busy, PCA9685 每次完成一件 `stepOne()`, N 件拨完才回
   `ok` ack; `reset` 清 fault; fault 时任何 divert 回 `fault` ack。
+  **job_id 去重**: 完成窗 (60s) 内同 job_id 的 divert 重发/重投只补 `ok` 应答
+  不重新拨料 (防网关重发/QoS1 重投导致双拨)。
 - **视觉**: HL2 对象帧 (type=0x01) 解析 → `{object_type, ID} → material`
   映射表 (config.h `MATERIAL_MAP`, 可换) → 进画面去重 (同物料 500ms 滑动窗,
   离屏后重入才再报) → 发 `sort/inbound/vision`。

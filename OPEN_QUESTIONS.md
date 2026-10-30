@@ -1,7 +1,21 @@
 # 分拣线接入 · 未决问题 (待讨论)
 
-> 2026-10-29 夜。以下为自动推进时**没有结论、需要拍板**的部分；
-> 已实现内容见 `docs/sort-mqtt.md`、`edge101/` 与下方「本次已完成」。
+> 2026-10-30 更新。原 2026-10-29 夜自动推进时**没有结论、需要拍板**的部分保留在下方;
+> 已实现内容见 `docs/sort-mqtt.md`、`edge101/`。
+
+## 2026-10-30 修复记录 (用户提交的 5 个问题)
+
+| # | 问题 | 修法 | 验证 |
+|---|---|---|---|
+| ① | 网关 `ack_timeout_s=3.0` 与固件 divert 时长不匹配 (qty≥4 必超时 → 重发撞 busy → 故障锁存 + 账实差 + 可能双拨) | 三重修复: (a) 网关 divert 超时随 qty 缩放 `3s + 1s×qty`; (b) busy-ack 绝不重发、只延长等待 (busy_wait_s×max_ext); fault-ack 立即失败; (c) 固件按 job_id 去重 (完成窗 60s 内同 job_id 重发只补 ok 不重拨) | E2E 第 8 节 6 项回归 (qty=4 实机时序成功且未重复拨 / 慢设备 busy 延长仍完成且只拨 1 件); 主机单测 66 项 |
+| ①-附带 | 传送带 "stop 已停" 回 busy → 网关按 busy 语义空等 9s | 幂等目标态语义: sim + 固件 Conveyor 改为 "已处于目标态回 ok", busy 只表示正在执行 | E2E 全绿 + 主机单测 Conveyor 新增 8 项 |
+| ② | 主循环 digitalWrite 打 STEP 仅 ~3kHz (名义 320k pps) | RMT TX 硬件脉冲: 1 个 [pulse,gap] 符号 × loop_count=-1 无限循环, APB 80MHz 精确 50% 占空比; 主循环只做 start/stop 看门; 创建失败自动回退旧路径 | `pio run -e edge101/s3emu` 均 SUCCESS; 实机验证: 接电机后按 1m/s 跑 10s 量带速 (OPEN #6⑧) |
+| ③ | loop_ui /dispatch 把网关 202 压成 200 | `JSONResponse(..., status_code=r.status)` 透传 | TestClient + stub 网关: 202/409/422 全透传 |
+| ④ | 契约字段漂移 (ts 全 ""; steps_total vs items_in) | 契约明确: `state` 必填, 其余设备可选; `steps_total`/`items_in` 不同量纲并列; `ts` 无 RTC 可 `""` (网关忽略, 后续 NTP) | docs/sort-mqtt.md 命令/应答/遥测三节重写, 与代码行为一致 |
+| ⑤ | STEPS_PER_MM / 物料映射是假设 | 未修 (需现场): 新增 OPEN #6⑧ (RMT 下按 1m/s 实测带速反推 STEPS_PER_MM); 物料映射仍 OPEN #1 | — |
+
+同时: sim_devices 改为按件计时 (默认 900ms/件, 全拨完才回 ok, busy 守卫),
+E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
 
 ## 本次已完成 (过夜自动推进)
 
@@ -55,6 +69,12 @@
       "Phase Line Error!" 时断电重调。
    ⑦ 采购: **MCP23017 (DFR0626) ×1** — 5V 供电, 拨码全 1 (地址 0x27),
       PA0 → 驱动器 EN+; 余 15 路预留数字量 (光电/限位/急停)。
+   ⑧ **带速实测反推 STEPS_PER_MM** (RMT 硬件脉冲已就绪, 2026-10-30):
+      带电机按 speed_mps=1.0 跑 10s, 量实际带长 L → 实测步/米 =
+      10s×320000步/s (320k pps 为 1.0m/s 设定值) ÷ L×1000 → 与 320 步/mm
+      的偏差即导程/细分误差, 同步改 config.h STEPS_PER_MM 与网关
+      conveyor_speed_mps。驱动器闭环模式下丢步由编码器兜底, 但带速刻度
+      必须标对。
 7. **16MB Flash 确认**: 固件按 16MB flash 构建。板上芯片若实际是 4MB,
    改 `platformio.ini` 的 `board_build.flash_size` (固件体积远小于 4MB, 不影响)。
 8. **HL2 供电与电平**: 板 5V 直接带 HL2 (峰值 ~1.5W), TX 5V→3.3V 分压。
@@ -78,6 +98,6 @@
 
 - 实体闭环: 按 `edge101/docs/wiring.md` 接线 → `pio run -t upload` →
   串口 `state` / `sweep` / `stepper` 自测 → 网关 `POST /dispatch` 全链路。
-- 固件编译: ESP32 交叉编译已跑通 (pio run SUCCESS, Flash 668KB/1.25MB,
-  RAM 34KB/320KB, 2026-10-29); 主机单测
-  `./edge101/tests/host/run_tests.sh` 42/42 全绿。
+- 固件编译: ESP32 交叉编译已跑通 (pio run SUCCESS, Flash 682KB/1.25MB,
+  RAM 35KB/320KB, 2026-10-30, 含 RMT 步进); 主机单测
+  `./edge101/tests/host/run_tests.sh` 66/66 全绿; E2E 37/37 全绿。

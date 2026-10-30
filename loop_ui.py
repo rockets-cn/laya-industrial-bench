@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 os.environ.setdefault("LLM_MODEL", "qwen3.5:4b")  # bench_pipeline reads it at import time
@@ -347,7 +347,9 @@ async def dispatch(request: Request):
         headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read().decode())
+            # 透传网关状态码 (协议契约 202=入队; 用 dict return 会被 FastAPI 压成 200)
+            return JSONResponse(json.loads(r.read().decode()),
+                                 status_code=r.status)
     except urllib.error.HTTPError as e:
         try:
             detail = json.loads(e.read().decode() or "{}")
