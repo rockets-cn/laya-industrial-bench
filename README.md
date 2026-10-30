@@ -187,7 +187,7 @@ journalctl --user -u laya-loop-ui -f
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
 | `tests/test_sort_mqtt.py` | 分拣网关 E2E 52 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
-| `edge101/docs/gate_layout_anim.svg` | 分拣线光门安装示意（俯视 · 动画版）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环按真实时序驱动（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入），循环演示；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
+| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入），在线=按网关 `sort/line1/motion` 时间线实时还原；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
@@ -219,24 +219,37 @@ journalctl --user -u laya-loop-ui -f
   `python3 -c "import sqlite3; c=sqlite3.connect('data/yard_ledger.db'); c.execute('DELETE FROM moves'); c.commit(); c.execute('VACUUM')"`
   两者都等价于重建空库；删文件方式（`rm data/yard_ledger.db`）必须先停服务再重启, 不推荐。
 
-## 分拣线光门安装示意（动画版）
+## 分拣线光门运行示意（动画版 · 数字孪生双模式）
 
 `edge101/docs/gate_layout_anim.svg`（静态参考版 `gate_layout.svg` 仍在）：
 
 - **布局**：俯视 3 路分拣器，每路时序光门装在该推杆**前侧（上游）**；相机在带首，
   推料点→45° 料道拨入各仓库。
-- **动画**：SVG 内嵌 IIFE + `requestAnimationFrame` 循环（rAF 时钟 = 累计时间），
-  时序按固件口径取真实值再整体 2:1 放慢：带速 1.0 m/s（1px≈3.3mm）、
-  光门落沿（物品前沿触光束）→ 推杆 400ms 伸出 → 物品中心到达推料点
-  （D = 带速 × 500ms 对到）→ 45° 滑入料道（料道高亮）；相机扇形在物品过相机
-  0.5s 内闪烁；底部状态行随最近事件滚动；循环播放（周期 ≈14.2s）。
+- **双模式**（同一 SVG 内嵌脚本，按 `window.__gla` 钩子切换）：
+  - **循环演示**（默认/离线）：rAF 循环按固件口径取真实值再整体 2:1 放慢：
+    带速 1.0 m/s（1px≈3.3mm）、光门落沿（物品前沿触光束）→ 推杆 400ms 伸出 →
+    物品中心到达推料点（D = 带速 × 500ms 对到）→ 45° 滑入料道（料道高亮）；
+    相机扇形在物品过相机 0.5s 内闪烁；底部状态行随最近事件滚动；循环播放（周期 ≈14.2s）。
+  - **数字孪生同步**（网关在线）：页面轮询 `GET /twin`（`loop_ui` 代理解析网关
+    `:8123` 的 `/health`+`/motion`+`/stats`）→ `__gla.setTwin()` 切实时模式：
+    每分拣器按 `sort/line1/motion` 时间线最近事件还原状态
+    （armed=推杆推出中 450ms / busy=蓄能+推出拨入 ≈900ms / fault=光门红告警 /
+    ready=静止），传送带按 `belt_mps` 平移、有 job 在跑才动（网关批间停带, 忠实还原）；
+    状态行显示最后事件 + 时间。离线（网关不可达）自动回落循环演示，
+    页头状态条 `#gla-mode` 显示「实时同步/循环演示 + 带速 + 运行中/待机」。
+- **采样节奏**：在线时自适应轮询 — 有 job（active_job/queue>0）400ms, 待机 600ms,
+  离线 1500ms。任务窗口 ~1.3s（photo 时序: 光门等待 350ms + 拨件 900ms）,
+  固定 1.5s 轮询会整单漏掉 busy 态。`ts:""` 的事件（真机未实现时间戳时）不驱动时间线动画。
 - **尊重偏好**：`prefers-reduced-motion: reduce` 时停止动画，静态布局与文案有效。
 - **双合法**：同一文件既要是合法 XML（独立打开），也要能 HTML 内联进 `loop_ui`
   折叠区——因此内嵌脚本不用 CDATA、不写裸 `<`（比较一律反向 `x>=t`）、
   不写 `&`（逻辑与用嵌套 if）、注释内不出现 `--`。
 - **验证链**：`xml.etree.ElementTree` 解析 → 提取脚本 `node --check` →
   行为桩（`test_gate.js`：逐事件断言 传送带/相机/光门挡光/推杆伸出/45° 轨迹/循环回绕）
-  → 真浏览器 CDP 采样 DOM 确认动画在动。
+  → 真浏览器 CDP 采样 DOM 确认动画在动（离线循环 + 在线孪生两态）。
+- **注意**：若局域网真机（edge101）与 sim 同时连在同一 broker, 同一 job 会出两条
+  运动时间线（真机虚拟光门无视觉锚点时回退 `via:immediate`, 紧凑 JSON）——动画取
+  每分拣器最近事件, 状态不受影响, 但 busy 窗口可能双重表现。
 - 固件时序若调整（另一工作线），按本节口径同步更新本 SVG 的常量（`V/G/P/DT/TPU/CHV/CHL`）。
 
 ## 新增一个领域（LLM 离线贡献流程）

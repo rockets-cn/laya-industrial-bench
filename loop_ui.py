@@ -45,8 +45,10 @@ spec_yl.loader.exec_module(yard_ledger)
 import bench_pipeline  # noqa: E402  (already imported by bench_industrial)
 bench_pipeline.MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
-# 分拣线光门安装示意: 优先 动态版 (gate_layout_anim.svg, 按真实时序驱动: 带速 1.0m/s/
-# 光门落沿触发推杆 400ms 行程/D=v×500ms 对到推料点/拨入 45°料道, 循环演示, 尊重
+# 分拣线光门运行示意: 优先 动态版 (gate_layout_anim.svg, 双模式:
+# ① 数字孪生在线 → 按网关运动时间线实时还原 (推杆/光门/料道/带速);
+# ② 离线回落循环演示 (按真实时序: 带速 1.0m/s/光门落沿触发推杆 400ms 行程/
+# D=v×500ms 对到推料点/拨入 45°料道, 时间 2:1 放慢), 尊重
 # prefers-reduced-motion); 动态版缺失时回落 静态版 (gate_layout.svg, 打印/导出用)
 _gate_path = os.path.join(HERE, "edge101", "docs", "gate_layout_anim.svg")
 if not os.path.exists(_gate_path):
@@ -336,6 +338,11 @@ def ledger_reset():
 
 # MQTT 分拣网关 (sort_mqtt.py, 默认 :8123): 把 Laya 分类结果下发到分拣线
 GATEWAY_URL = os.environ.get("SORT_GATEWAY_URL", "http://127.0.0.1:8123")
+try:
+    _GATEWAY_CFG = json.load(open(os.path.join(HERE, "config", "sort_gateway.json"),
+                                  encoding="utf-8"))
+except Exception:
+    _GATEWAY_CFG = {}  # 配置缺失不致命: 带速按 1.0 m/s 显示
 
 
 @app.post("/dispatch")
@@ -366,6 +373,31 @@ async def dispatch(request: Request):
         raise HTTPException(e.code, detail.get("error", f"gateway error {e.code}"))
     except Exception as e:
         raise HTTPException(503, f"分拣网关不可达 ({GATEWAY_URL}): {e}")
+
+
+@app.get("/twin")
+async def twin():
+    """数字孪生状态 (代理 MQTT 网关 :8123 的 /health + /motion):
+    光门运行示图的实时同步数据源。孪生栈离线时返回 online:false,
+    页面回落循环演示 (安全降级, 不影响其他功能)。"""
+    out = {"online": False, "fault": None, "active_job": None, "queue": 0,
+           "belt_mps": _GATEWAY_CFG.get("conveyor_speed_mps", 1.0),
+           "events": [], "stats": None}
+    try:
+        with urllib.request.urlopen(GATEWAY_URL + "/health", timeout=0.4) as r:
+            h = json.loads(r.read().decode())
+        out["online"] = bool(h.get("broker_connected"))
+        out["fault"] = h.get("fault")
+        out["active_job"] = h.get("active_job")
+        out["queue"] = h.get("queue") or 0
+        with urllib.request.urlopen(GATEWAY_URL + "/motion", timeout=0.4) as r:
+            m = json.loads(r.read().decode())
+        out["events"] = list(m.get("motion", []))[-8:]
+        with urllib.request.urlopen(GATEWAY_URL + "/stats", timeout=0.4) as r:
+            out["stats"] = json.loads(r.read().decode())
+    except Exception:
+        pass  # 网关/ broker 任一不可达 → 保持 online:false
+    return out
 
 
 PAGE = """<!doctype html>
@@ -457,8 +489,12 @@ PAGE = """<!doctype html>
 <div id="ledger" style="display:none;margin:14px 0"></div>
 <div id="out"></div>
 <details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
-<details class="fold" id="gate"><summary>📐 分拣线光门安装布局（俯视 · 每路推杆前侧/上游 · 动态演示 · 物理参考, 装前必看）</summary>
+<details class="fold" id="gate"><summary>📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步）</summary>
 <div style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:8px 0;overflow-x:auto">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
+<span id="gla-mode" style="font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
+<span style="font-size:11.5px;color:#5b6270">孪生在线时: 推杆/光门/料道按网关运动时间线实时还原 (1.5s 轮询 /twin)</span>
+</div>
 @GATE_SVG@
 <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0 4px">
 <tr><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">光门</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">对应推杆</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">MCP23017</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">安装位置（俯视）</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">安装高度（侧视）</th></tr>
@@ -567,8 +603,44 @@ async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
   lastRun=null;setLastRun(null);
   $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued}) — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
+  refreshTwin(); // 下发立即刷一次, 光门运行示意尽快跟上真实时序
  }catch(e){lastRun=keep;setLastRun(keep);
   $('out').innerHTML=sec('📤 分拣下发')+`<pre style="color:#f87171">❌ ${e}</pre>`+$('out').innerHTML;}}
+// ---- 光门运行示意 · 数字孪生同步: 轮询 /twin (代理网关 health/motion/stats) ----
+// 在线 → SVG 切实时模式 (推杆/光门/料道按运动时间线还原); 离线 → 回落循环演示
+let twinSig='';
+let twinTimer=null;
+function scheduleTwin(ms){if(twinTimer)clearTimeout(twinTimer);twinTimer=setTimeout(refreshTwin,ms);}
+async function refreshTwin(){
+ const chip=$('gla-mode');
+ let d=null;
+ try{d=await (await fetch('/twin')).json();}catch(e){}
+ const gla=window.__gla;
+ if(!d||!d.online){
+  if(twinSig){twinSig='';if(gla)gla.demo();}
+  if(chip)chip.textContent='数字孪生离线 · 循环演示';
+  scheduleTwin(1500);
+  return;
+ }
+ const st=[{state:'ready',ts_ms:0},{state:'ready',ts_ms:0},{state:'ready',ts_ms:0}];
+ (d.events||[]).forEach(ev=>{
+  if(!ev||ev.state==null)return; // reset/cancel 只记 via 无 state, 不改状态
+  const n=ev.sorter;
+  if(n>=1&&n<=3)st[n-1]={state:ev.state,ts_ms:Date.parse(ev.ts)||0};
+ });
+ const evs=d.events||[],last=evs[evs.length-1];
+ const beltOn=!!d.active_job||d.queue>0;
+ const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})`
+  :'数字孪生在线 · 等待事件…';
+ const sig=JSON.stringify([beltOn,d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
+ if(sig!==twinSig){
+  twinSig=sig;
+  if(gla)gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
+   status:(d.fault?'⚠ 故障锁存 '+d.fault+' · ':'')+line});
+ }
+ if(chip)chip.textContent=`数字孪生在线 · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':' · 待机'})`;
+ scheduleTwin(beltOn?400:600); // 有活时加密集采; 在线待机也 600ms — 任务窗口 ~1.3s, 1.5s 轮询会整单漏掉
+}
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 async function render(d){
  drawFlow(d);
@@ -840,9 +912,10 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 })();
 refreshState();
 refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
+refreshTwin(); // 光门运行示意: 加载即探测数字孪生 (在线切实时模式, 离线循环演示)
 </script></div></body></html>"""
 
-# 光门安装示意图嵌入 (edge101/docs/gate_layout.svg 独立资产, 改图不用动本页代码)
+# 光门运行示意图嵌入 (edge101/docs/gate_layout_anim.svg 独立资产, 改图不用动本页代码)
 PAGE = PAGE.replace("@GATE_SVG@", GATE_SVG)
 
 

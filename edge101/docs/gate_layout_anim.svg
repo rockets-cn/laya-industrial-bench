@@ -1,4 +1,4 @@
-<svg id="gla-svg" viewBox="0 0 1180 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分拣线光门安装示意图 (推杆版, 动态演示)"
+<svg id="gla-svg" viewBox="0 0 1180 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分拣线光门运行示意 (俯视 · 推杆版 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步)"
  style="width:100%;height:auto;display:block">
   <!-- 颜色: gate-* CSS 变量 (宿主可覆盖, 深色回退内置). 动态版: 内嵌脚本按 真实时序 驱动,
        静态参考版见 gate_layout.svg; 尊重 prefers-reduced-motion. -->
@@ -270,24 +270,84 @@
     get('gla-cam').setAttribute('stroke',camOn?'var(--gate-acc,#fb923c)':'var(--gate-bd,#262b36)');
     get('gla-status').textContent=bmsg;
   }
+  // ---- 数字孪生同步模式: 页面轮询网关(health/motion)注入真实状态; 离线回落循环演示 ----
+  var twinMode=false, twinData=null;
+  var PXM=303.0; // 1px≈3.3mm → 1m≈303px
+  function twinFrame(now){
+    var td=twinData||{};
+    var beltOn=!!td.belt_on, bps=td.belt_mps||1;
+    var tx=beltOn?((now/1000*bps*PXM)%80):0;
+    get('gla-treads').setAttribute('transform','translate('+tx.toFixed(2)+',0)');
+    var ang=beltOn?(((now/1000*bps)/16*57.2958)%360):0;
+    get('gla-spoke-1').setAttribute('transform','rotate('+ang.toFixed(1)+' 70 400)');
+    get('gla-spoke-2').setAttribute('transform','rotate('+ang.toFixed(1)+' 1110 400)');
+    for(var i=0;3>i;i++){
+      var si=td.sorters?(td.sorters[i]||{}):{};
+      var st=si.state||'ready', ts=si.ts_ms||0;
+      var p=0; if(ts){p=(now+td.t0-ts)/900; if(p>1)p=1;} // 350ms 蓄能 + 推出拨入 ≈ 900ms
+      var rod=get('gla-rod-'+(i+1));
+      if('armed'===st){ // 光门已触发, 推杆推出中 (450ms)
+        var ex=ease(Math.min(1,(now+td.t0-ts)/450));
+        rod.setAttribute('y2',(438-36*ex).toFixed(1));
+        rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
+        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.55');
+        get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
+        get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+        get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+      } else if('busy'===st){ // 推出完成, 物品滑入料道
+        rod.setAttribute('y2','402.0');
+        rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
+        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.75');
+        get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
+        get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+        var cc=Math.max(0,(p-0.35))*CHL/0.65; if(cc>CHL)cc=CHL;
+        var op2=cc>=CHL-8?Math.max(0,(CHL-cc)/8):1;
+        get('gla-obj-'+(i+1)).setAttribute('opacity',op2.toFixed(2));
+        get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(P[i]+C45*cc).toFixed(1)+','+(400+C45*cc).toFixed(1)+')');
+      } else if('fault'===st){ // 故障: 光门红色告警, 推杆不动作
+        rod.setAttribute('y2','438.0');
+        rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
+        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
+        get('gla-gate-'+(i+1)).setAttribute('opacity','0.90');
+        get('gla-gate-'+(i+1)).setAttribute('stroke','#f87171');
+        get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+      } else { // ready: 静止
+        rod.setAttribute('y2','438.0');
+        rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
+        get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
+        get('gla-gate-'+(i+1)).setAttribute('opacity','0');
+        get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+        get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+      }
+    }
+    get('gla-status').textContent=td.status||'数字孪生在线 · 等待事件…';
+  }
   var mqr=null;
   if(window.matchMedia){mqr=window.matchMedia('(prefers-reduced-motion: reduce)');}
+  var motionOff=false;
   if(mqr){
     if(mqr.matches){
-      get('gla-status').textContent='（系统偏好「减少动态效果」: 动画已停用, 静态布局有效）';
-      return;
+      motionOff=true;
+      get('gla-status').textContent='（系统偏好「减少动态效果」: 循环演示停用; 数字孪生在线时仍逐帧更新状态）';
     }
   }
-  window.__gla={render:render,TEND:TEND,S:S,TC:TC,TG:TG,TD:TD}; // 测试钩子 (桩驱动)
+  window.__gla={render:render,twinFrame:twinFrame,
+    setTwin:function(d){ twinData=d; twinMode=true;
+      if(motionOff){twinFrame(performance?performance.now():Date.now());} },
+    demo:function(){ twinMode=false; twinData=null; start=null; },
+    TEND:TEND,S:S,TC:TC,TG:TG,TD:TD}; // 测试钩子 (桩驱动)
   var start=null;
   function step(now){
-    if(null==start)start=now;
-    var t=(now-start)/1000;
-    if(0>t)t=0;
-    render(t%TEND);
+    if(twinMode){ twinFrame(now); }
+    else {
+      if(null==start)start=now;
+      var t=(now-start)/1000;
+      if(0>t)t=0;
+      render(t%TEND);
+    }
     requestAnimationFrame(step);
   }
-  requestAnimationFrame(step);
+  if(!motionOff)requestAnimationFrame(step);
 })();
 </script>
 </svg>
