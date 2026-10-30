@@ -45,9 +45,13 @@ spec_yl.loader.exec_module(yard_ledger)
 import bench_pipeline  # noqa: E402  (already imported by bench_industrial)
 bench_pipeline.MODEL = os.environ.get("LLM_MODEL", "qwen3.5:4b")
 
-# 分拣线光门安装示意 (edge101/docs/gate_layout.svg): 页面「光门安装布局」折叠区参考图
-GATE_SVG = open(os.path.join(HERE, "edge101", "docs", "gate_layout.svg"),
-                encoding="utf-8").read()
+# 分拣线光门安装示意: 优先 动态版 (gate_layout_anim.svg, 按真实时序驱动: 带速 1.0m/s/
+# 光门落沿触发推杆 400ms 行程/D=v×500ms 对到推料点/拨入 45°料道, 循环演示, 尊重
+# prefers-reduced-motion); 动态版缺失时回落 静态版 (gate_layout.svg, 打印/导出用)
+_gate_path = os.path.join(HERE, "edge101", "docs", "gate_layout_anim.svg")
+if not os.path.exists(_gate_path):
+    _gate_path = os.path.join(HERE, "edge101", "docs", "gate_layout.svg")
+GATE_SVG = open(_gate_path, encoding="utf-8").read()
 
 app = FastAPI(title="Laya 工业决策回路")
 
@@ -367,7 +371,7 @@ async def dispatch(request: Request):
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 仓库分拣回路 v12</title>
+<title>Laya 仓库分拣回路 v13</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -453,7 +457,7 @@ PAGE = """<!doctype html>
 <div id="ledger" style="display:none;margin:14px 0"></div>
 <div id="out"></div>
 <details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
-<details class="fold" id="gate"><summary>📐 分拣线光门安装布局（俯视 · 每路推杆前侧/上游 · 物理参考, 装前必看）</summary>
+<details class="fold" id="gate"><summary>📐 分拣线光门安装布局（俯视 · 每路推杆前侧/上游 · 动态演示 · 物理参考, 装前必看）</summary>
 <div style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:8px 0;overflow-x:auto">
 @GATE_SVG@
 <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0 4px">

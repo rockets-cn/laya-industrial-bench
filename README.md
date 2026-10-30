@@ -16,7 +16,8 @@
 (`vision_input.py`, HSV 像素层识别; 或实体 HuskyLens 2) 发物料事件到同一网关,
 网关按 `config/material_map.json` 映射并下发。无硬件时 `sim_devices.py`
 模拟器闭环; 实体硬件用 **EDGE 101 固件** (`edge101/`, 与模拟器行为等价,
-对网关零改动; RMT 硬件脉冲 + 拨料器前侧光门时序触发见 `edge101/README.md`)。
+对网关零改动; RMT 硬件脉冲 + 推杆前侧光门时序触发 (未接线走虚拟光门预测)
+见 `edge101/README.md`)。
 E2E 见 `tests/test_sort_mqtt.py`, 固件单测
 `edge101/tests/host/run_tests.sh`。
 
@@ -177,15 +178,16 @@ journalctl --user -u laya-loop-ui -f
 | `deploy/` | 开机自启：systemd 用户服务 ×3 + 浏览器 autostart |
 | `scripts/open_loop_ui.sh` | 开机时等服务就绪后开浏览器 |
 | `VOICE_DECISION_BENCH.md` / `TEACHER_REPORT.md` / `DEPLOY_SENSEVOICE.md` | 链路设计报告 / 教师报告 / 部署记录 |
-| `sort_mqtt.py` | MQTT 分拣网关: 入站 (loop_ui /dispatch · SCADA `sort/inbound/command` · 视觉 `sort/inbound/vision`) → 白名单校验 → 顺序执行 → 统计分发 (JSONL 台账 + `sort/stats/summary`); 命令超时重试 → 故障锁存 → 人工清除; HTTP :8123 (`/health` `/stats` `/dispatch` `/fault/clear`) |
+| `sort_mqtt.py` | MQTT 分拣网关: 入站 (loop_ui /dispatch · SCADA `sort/inbound/command` · 视觉 `sort/inbound/vision`) → 白名单校验 → 顺序执行 → 统计分发 (JSONL 台账 + `sort/stats/summary`); 命令超时重试 → 故障锁存 → 人工清除; HTTP :8123 (`/health` `/stats` `/motion` `/dispatch` `/fault/clear`) |
 | `yard_ledger.py` | 料场出入库台账 (SQLite, `data/yard_ledger.db`): 分拣下发自动记入, 页面手动记出, 库存=入-出; `record_in/record_out/stock/recent` |
-| `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机 (按件计时, 真实时序), 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`), 光门模式 (`--photo-wait/--photo-timeout/--photo-dead-sorter`); 真实 PLC 接入时的行为参照 |
+| `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机 (按件计时, 真实时序), 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`), 光门模式 (`--photo-wait/--photo-timeout/--photo-dead-sorter`), 运动事件 (`sort/line1/motion`, 与固件契约一致); 真实 PLC 接入时的行为参照 |
 | `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
 | `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
-| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, RMT 硬件脉冲, EN 走 MCP23017) + PCA9685 I2C 3 舵机 + 3 路光门 (拨料时序触发, MCP23017 PB0/1/2); 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (104 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
+| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, RMT 硬件脉冲, EN 走 MCP23017) + PCA9685 I2C 3 舵机 + 3 路光门 (推杆推出时序触发, MCP23017 PB0/1/2; 未接线时虚拟光门按带面位置预测); 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (141 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
-| `tests/test_sort_mqtt.py` | 分拣网关 E2E 44 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传) |
+| `tests/test_sort_mqtt.py` | 分拣网关 E2E 52 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
+| `edge101/docs/gate_layout_anim.svg` | 分拣线光门安装示意（俯视 · 动画版）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环按真实时序驱动（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入），循环演示；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
@@ -216,6 +218,26 @@ journalctl --user -u laya-loop-ui -f
   或命令行（服务运行中均可, 无需停止）:
   `python3 -c "import sqlite3; c=sqlite3.connect('data/yard_ledger.db'); c.execute('DELETE FROM moves'); c.commit(); c.execute('VACUUM')"`
   两者都等价于重建空库；删文件方式（`rm data/yard_ledger.db`）必须先停服务再重启, 不推荐。
+
+## 分拣线光门安装示意（动画版）
+
+`edge101/docs/gate_layout_anim.svg`（静态参考版 `gate_layout.svg` 仍在）：
+
+- **布局**：俯视 3 路分拣器，每路时序光门装在该推杆**前侧（上游）**；相机在带首，
+  推料点→45° 料道拨入各仓库。
+- **动画**：SVG 内嵌 IIFE + `requestAnimationFrame` 循环（rAF 时钟 = 累计时间），
+  时序按固件口径取真实值再整体 2:1 放慢：带速 1.0 m/s（1px≈3.3mm）、
+  光门落沿（物品前沿触光束）→ 推杆 400ms 伸出 → 物品中心到达推料点
+  （D = 带速 × 500ms 对到）→ 45° 滑入料道（料道高亮）；相机扇形在物品过相机
+  0.5s 内闪烁；底部状态行随最近事件滚动；循环播放（周期 ≈14.2s）。
+- **尊重偏好**：`prefers-reduced-motion: reduce` 时停止动画，静态布局与文案有效。
+- **双合法**：同一文件既要是合法 XML（独立打开），也要能 HTML 内联进 `loop_ui`
+  折叠区——因此内嵌脚本不用 CDATA、不写裸 `<`（比较一律反向 `x>=t`）、
+  不写 `&`（逻辑与用嵌套 if）、注释内不出现 `--`。
+- **验证链**：`xml.etree.ElementTree` 解析 → 提取脚本 `node --check` →
+  行为桩（`test_gate.js`：逐事件断言 传送带/相机/光门挡光/推杆伸出/45° 轨迹/循环回绕）
+  → 真浏览器 CDP 采样 DOM 确认动画在动。
+- 固件时序若调整（另一工作线），按本节口径同步更新本 SVG 的常量（`V/G/P/DT/TPU/CHV/CHL`）。
 
 ## 新增一个领域（LLM 离线贡献流程）
 
