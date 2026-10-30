@@ -107,11 +107,15 @@ def _qty_before(text, pos):
     return _cn_num(m.group(1))
 
 
-_QTY_AFTER = re.compile(r"\s*([一两二三四五六七八九十\d]+)\s*(?:个|块|条)?\s*(?=[，、。！!?,;；\s]|$)")
+_QTY_AFTER = re.compile(
+    r"\s*(?:放?(?:到|入|进))?\s*"
+    r"(?:[1-9一二两三四五六七八九十幺壹]+号\s*(?:仓库|料场|场地|库|位置|区)?\s*)?"
+    r"([一两二三四五六七八九十\d]+)\s*(?:个|块|条)?\s*(?=[，、。！!?,;；\s]|$)")
 
 
 def _qty_after(text, end):
-    """后置数量: "红色方块三个" (ASR 语序). 只在边界处认, 避免吞下一项的数量."""
+    """后置数量: "红色方块三个" (ASR 语序), 以及 料场号夹在中间的后置
+    "把香蕉放到一号仓库两个" / "香蕉放进2号库三个". 只在边界处认, 避免吞下一项的数量."""
     m = _QTY_AFTER.match(text[end:])
     return _cn_num(m.group(1)) if m else None
 
@@ -137,8 +141,13 @@ def _materials_in(seg):
     """全文 (否定剥离后): 水果/方块 提及+数量, 按位置排序. 返回 [(pos, end, mention)]"""
     found = []
     for m in FRUIT_RE.finditer(seg):
+        qty = _qty_before(seg, m.start())
+        if qty == 1:
+            q2 = _qty_after(seg, m.end())
+            if q2:
+                qty = q2
         found.append((m.start(), m.end(), {"material": _fruit_action(m.group(0)),
-                                           "qty": _qty_before(seg, m.start())}))
+                                           "qty": qty}))
     for m in BLOCK_RE.finditer(seg):
         color = _color_of(m.group(1) or m.group(2))
         qty = _qty_before(seg, m.start())
@@ -538,6 +547,9 @@ CASES = [
      [(2, "banana", 3)]),
     ("两个红苹果放二号仓库",
      [(2, "red_apple", 2)]),
+    # 后置数量且料场号夹在物料与数量之间 (真实语音语序: 先报物料再说放到哪几件)
+    ("把香蕉放到一号仓库两个",
+     [(1, "banana", 2)]),
     ("一号料场送1个梨，二号料场送2个香蕉",
      [(1, "pear", 1), (2, "banana", 2)]),
     # 无标点密集句 (真实语音): 料场分域, 不能按字符距离归属
