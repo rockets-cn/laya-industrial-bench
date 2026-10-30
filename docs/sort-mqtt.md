@@ -47,15 +47,36 @@ fault 期间 start/stop/pause 回 busy, 只有 `reset` 可走。
 
 ```json
 {"job_id": "j1732345-1", "action": "divert", "material": "red_block",
- "qty": 5, "ts": "..."}
+ "qty": 5, "trigger": "photo", "ts": "..."}
 ```
 
 | action | 说明 |
 |---|---|
 | `divert` | 从传送带分出 `qty` 件 `material` 到本分拣器料道 |
-| `reset` | 故障复位到 ready |
+| `reset` | 故障复位到 ready; armed 时取消预置 (不拨料, 回 ok "cancelled") |
 
-状态机: `ready --divert--> busy --(动作完成)--> ready`; 故障 → `fault --reset--> ready`。
+字段:
+
+- `trigger` (可选, 默认 `immediate`):
+  - `immediate`: 收到命令立即开始拨 (时序靠安装距离标定, 见「光门时序」节);
+  - `photo`: **光门触发** — 设备进入 `armed` 等待, 本分拣器前侧光门被物品
+    通过 (落沿) 才开始拨; `qty>1` 时每件各等一次光门 (拨完一件回 armed 等
+    下一件)。光门等待窗 (固件 5s) 内无物品 → 对 `job_id` 回 `fault`
+    `note="photo timeout"` (期望的件没到, 必须锁存); 光门未接线时设备
+    自动回退 `immediate` (串口日志说明), 不产生 armed 状态。
+
+状态机:
+
+```
+ready --divert(immediate)--> busy --(动作完成)--> ready
+ready --divert(photo)--> armed --(光门落沿, 一件)--> busy
+busy --(photo 且未完件)--> armed   ← 每件各等一次光门
+armed --reset--> ready (取消)      armed --(光门超时无物品)--> fault
+fault --reset--> ready
+```
+
+- 分拣器 `state` 值: `ready | armed | busy | fault` (armed = 光门预置中)。
+- `busy` 语义: 正在执行; `armed` 时收到新 divert 同样回 busy-ack。
 
 ## 上行应答 (设备 → 网关, QoS1, 按 job_id 关联)
 
@@ -76,6 +97,7 @@ topic: `sort/line1/conveyor/ack/{job_id}` / `sort/sorter{n}/ack/{job_id}`
   (固件按 job_id 去重, 窗口 60s)。
 - **时限**: divert 实际执行 ≈ 0.9s/件, ok 应答在 `qty` 件全拨完才发, 故网关
   divert 超时 = `ack_timeout_s` (默认 3s) + `divert_timeout_per_item_s` (默认 1s) × `qty`;
+  `trigger=photo` 时再加 `photo_margin_s` (默认 3s, 相机→光门行程预算);
   其他命令用 `ack_timeout_s`。整窗无应答 → 重发, 最多 `ack_retries` (默认 2) 次;
   仍失败 → **故障锁存**: 停止后续下发、暂停传送带, 需人工清除 (见下)。
 
@@ -96,7 +118,7 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
   - 分拣器: `diverted_total`, `last_material`;
   - `ts`: ISO8601; 网关忽略该字段。物理控制器无 RTC (后续可 NTP), 可为 `""`。
 - 传送带 `state`: `stopped|running|paused|fault`
-- 分拣器 `state`: `ready|busy|fault`
+- 分拣器 `state`: `ready|armed|busy|fault`
 - 网关据此选择传送带动作 (running 跳过 / stopped→start / paused→resume /
   fault→直接故障等人工 reset)。遥测丢失不阻塞命令路径, 只影响状态优化。
 
@@ -122,6 +144,9 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 - 未知物料 / 低置信 → 只计数统计, **不下发** (安全降级)。
 - 每个事件 = 1 件物料 (qty 固定 1)。多帧重复上报的防抖策略见
   `OPEN_QUESTIONS.md` 第 4 条 (未决)。
+- 坐标 `x/y/w/h` (传感器像素系, 固件 visionJson 已带): 网关**不下发**给设备,
+  但随 `sort/event/batch` 的 `vision` 字段与 JSONL 台账留痕 — 上游标定
+  (相机几何 → 物品在带上的实际位置) 与末端对账需要这份原始数据。
 
 ### `sort/human/fault_clear` (任意 payload)
 
@@ -139,7 +164,7 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 
 | topic | QoS/retain | 内容 |
 |---|---|---|
-| `sort/event/batch` | 0 (fault/done 时 retain) | `{phase: accepted\|done\|fault, job_id, source, actions, fault}` |
+| `sort/event/batch` | 0 (fault/done 时 retain) | `{phase: accepted\|done\|fault, job_id, source, actions, vision, fault}` (`vision` = 视觉入站的物料/置信度/x/y/w/h, 非视觉批次为 null) |
 | `sort/event/dispatch` | 0 | 每条 divert 成功一次: `{job_id, sorter, material, qty, ts}` |
 | `sort/event/fault` | 1, **retain** | 故障锁存详情 (人工清除前一直可见) |
 | `sort/event/cleared` | 1, **retain** | 故障清除确认 |
@@ -166,6 +191,63 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 另有 **JSONL 台账** `stats/sort_ledger.jsonl`: 每 job 一行
 (`ts, job_id, source, path, outcome, actions, fault, e2e_ms`), 供离线审计与对账。
 
+## 光门时序 (拨料器定位)
+
+> 分拣器「何时拨」的几何与标定。`divert_trigger=photo` (edge101 已实现,
+> 未接光门时固件自动回退 immediate)。
+
+### 触发光门 — 装【前侧 (上游)】, 不装拨料点正下方
+
+拨料动作 (舵机拨出 400ms + 归位) 必须在**物品到达拨料作用点之前完成**
+(推杆/摆臂要提前就位; 挡板式也要提前合好)。所以光门落沿只是「动作开始」
+的时刻, 不是「物品到位」的时刻。安装公式:
+
+```
+光门安装位置 = 拨料作用点 − 带速 × (拨料动作时间 + 余量)
+
+例: 带速 1.0 m/s, 拨出 400ms + 余量 100ms
+   → 光门装在拨料作用点前方 0.5 m
+```
+
+物品过光门 → 固件起舵机 → 0.4s 拨出完成, 物品 0.5s 后到达拨料点,
+留 0.1s 余量。现场标定: 放测试件跑, 打偏了前后挪安装支架 — 1m/s 下
+**1cm = 10ms**, 用串口 `gates` 命令确认每路光门有沿。
+
+- 每拨料器 1 路光门 (edge101: MCP23017 PB0/PB1/PB2 → 1/2/3 号),
+  透过式光电, NPN 开集 + 内部上拉 (无物品=HIGH, 挡光=LOW, 落沿=物品到达)。
+- **件距约束**: 相邻两件间距 ≥ 带速 × (拨出 400ms + 件间 500ms)
+  (1m/s → ≥0.9m), 否则第二件到光门时第一件还没拨完, 第二件漏拨。
+  上游 (Laya/SCADA 排产) 必须保证件距。
+- 光门等待窗 (固件 5s) < 带速 × 最大件距 时, 慢件流会 photo 超时误锁存 —
+  件距上限 = 5m @1m/s。
+
+### immediate 模式 (未装光门) 的等价标定
+
+`divert_trigger=immediate` 时, 时序 = 相机识别延迟 + MQTT 往返 + 网关处理,
+**总延迟是变量**。拨料器安装距离 = 检测点 + 带速 × 实测总延迟 (实测
+视觉链路 ~370ms @1m/s ≈ 37cm, 波动 ±几十ms → ±几cm)。对件宽有公差的
+物料可用, 精度要求高时上 photo。
+
+### 坐标标定 (x/y/w/h → 带面位置)
+
+HL2 对象帧带像素坐标, 经 `sort/inbound/vision` 透传并由网关随批次事件/
+台账留痕。像素 → 带面距离的换算需要相机几何标定:
+
+```
+带面 x 位置 ≈ (像素 X − 画面中心) / 画面宽度 × 视场宽度(FOV, 按安装高度算)
+            + 相机相对光门的安装偏移
+```
+
+用途: (a) 把「物品实际位置」从「检测时刻」修正到「物品本身」,
+减小 immediate 模式标定误差; (b) 预判物品到达拨料点时刻, 为未来
+编码器闭环对位预留。标定方法: 在带面贴 N 个已知位置标记, 记录
+(HL2 像素, 实际位置) 对, 线性拟合。
+
+### 区分: 后侧 (料道末端) 光电是「对账」, 不是时序
+
+料道入口/末端的光电用于**确认件真的进道了** (长期计数对账,
+OPEN_QUESTIONS 第 3 条), 与本次 3 路前侧触发光门职责不同, 互不替代。
+
 ## 安全降级 (与语音回路同一哲学)
 
 1. 命令超时 × (retries+1) → 故障锁存 → **暂停传送带** → 暂停一切下发。
@@ -185,8 +267,10 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 
 ## 配置
 
-- `config/sort_gateway.json`: broker / 端口 / 分拣器数 / ack 超时 / 重试 / 统计周期 /
-  批间停带 (`stop_conveyor_after_batch`) / 队列深度 / 台账路径。
+- `config/sort_gateway.json`: broker / 端口 / 分拣器数 / ack 超时 / 重试 /
+  拨料触发方式 (`divert_trigger`: immediate\|photo) / 光门行程预算
+  (`photo_margin_s`) / 统计周期 / 批间停带 (`stop_conveyor_after_batch`) /
+  队列深度 / 台账路径。
 - `config/material_map.json`: 物料→分拣器映射 (`fixed` 表或 `round_robin`) + 置信度下限。
   **当前映射是占位**, 待现场确认 (OPEN_QUESTIONS 第 1 条)。
 - 环境变量: `SORT_MQTT_BROKER` (默认 `tcp://127.0.0.1:1883`)、
@@ -202,7 +286,7 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
    .venv/bin/python broker_local.py        # 终端 1
    .venv/bin/python sim_devices.py         # 终端 2 (行为参照)
    .venv/bin/python sort_mqtt.py           # 终端 3 (网关)
-   .venv/bin/python tests/test_sort_mqtt.py  # E2E 31 项 (独立进程, 不需上面三个)
+   .venv/bin/python tests/test_sort_mqtt.py  # E2E 44 项 (独立进程, 不需上面三个)
    ```
 4. PLC 接入后, 用 `sim_devices.py --fault-rate/--no-ack` 的行为当故障测试参照。
 5. 认证/TLS: 当前网关 paho 客户端**未配置**用户名/密码/TLS — 若生产 broker 需要,

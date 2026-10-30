@@ -10,6 +10,9 @@ Run: .venv/bin/python tests/test_sort_mqtt.py
  5. 非法 actions 拒绝 (白名单)
  6. sort/stats/summary 周期/retain 统计发布
  7. 视觉传感器 E2E: 合成帧 -> HSVBlockVision -> vision 事件 -> divert
+ 8. divert 时序回归: 超时随 qty 缩放 / busy-ack 延长等待 / 不重复拨料
+ 9. 光门触发: divert trigger=photo (armed->光门->拨出) / 视觉坐标透传 /
+   photo 超时 fault 锁存
 """
 
 import asyncio
@@ -223,7 +226,6 @@ def main():
 
     # ---------- 4. SCADA 入站命令 ----------
     print("\n== 4. SCADA 入站 sort/inbound/command ==")
-    base_total = gw.stats.batches["total"]
     pub("sort/inbound/command",
         {"source": "scada-test", "path": "MQTT",
          "actions": [{"yard": 3, "material": "yellow_block", "qty": 2}]})
@@ -347,6 +349,94 @@ def main():
                 gw.cfg[k] = v
             else:
                 gw.cfg.pop(k, None)
+
+    # ---------- 9. 光门触发回归 (divert trigger=photo + 视觉坐标透传) ----------
+    print("\n== 9. 光门触发 (trigger=photo) ==")
+    saved_cfg9 = {k: gw.cfg.get(k) for k in ("divert_trigger", "photo_margin_s",
+                                             "ack_timeout_s")}
+    batch_events = []
+
+    def on_ev(c, u, msg):
+        try:
+            batch_events.append(json.loads(msg.payload.decode()))
+        except Exception:
+            pass
+
+    evc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="test-ev")
+    evc.on_message = on_ev
+    evc.connect("127.0.0.1", BPORT)
+    evc.subscribe("sort/event/batch", qos=1)
+    evc.loop_start()
+    time.sleep(0.3)
+    try:
+        gw.cfg["divert_trigger"] = "photo"
+        gw.cfg["photo_margin_s"] = 1.0
+        s3.photo_wait_s = 0.2     # 物品 相机->光门 行程
+        s3.photo_timeout_s = 2.0  # 光门等待窗 (模拟固件 5s)
+
+        # 9a. vision -> divert trigger=photo -> armed -> 光门 -> 拨出
+        base10, base10d = gw.stats.batches["done"], s3.diverted_total
+        seen_payloads = []
+        orig_handle = s3.handle_cmd
+
+        def spy_handle(payload):
+            seen_payloads.append(payload)
+            orig_handle(payload)
+
+        s3.handle_cmd = spy_handle
+        states_seen = set()
+
+        def sample_states():
+            end = time.time() + 1.5
+            while time.time() < end:
+                states_seen.add(s3.state)
+                time.sleep(0.02)
+
+        threading.Thread(target=sample_states, daemon=True).start()
+        pub("sort/inbound/vision", {"material": "yellow_block", "confidence": 0.9,
+                                     "frame_id": "t-gate", "x": 120, "y": 80,
+                                     "w": 40, "h": 40})
+        ok = wait_for(lambda: s3.diverted_total == base10d + 1, 10,
+                      "光门触发拨出")
+        check("photo 触发 -> 拨出 1 件", ok, f"diverted={s3.diverted_total}")
+        time.sleep(0.2)
+        check("批次入账 done", gw.stats.batches["done"] > base10)
+        check("命令携带 trigger=photo",
+              any(p.get("trigger") == "photo" for p in seen_payloads),
+              f"payloads={seen_payloads[:1]}")
+        check("设备状态经过 armed", "armed" in states_seen,
+              f"states={states_seen}")
+        s3.handle_cmd = orig_handle
+
+        # 9b. 视觉坐标 x/y/w/h 随批次事件透传 (上游标定/对账的原始数据)
+        ok = wait_for(lambda: any(e.get("phase") in ("done", "fault")
+                                  and (e.get("vision") or {}).get("x") == 120
+                                  for e in batch_events), 8, "批次事件带 vision.x")
+        ev = [e for e in batch_events if (e.get("vision") or {}).get("x") == 120]
+        check("批次事件透传视觉坐标", ok and ev and ev[0]["vision"]["y"] == 80
+              and ev[0]["vision"]["material"] == "yellow_block",
+              f"ev={ev[0] if ev else None}")
+
+        # 9c. 光门无物品 (期望的件没到) -> 设备 fault -> 网关锁存
+        s3.photo_dead = True
+        base11f = gw.stats.batches["fault"]
+        pub("sort/inbound/vision", {"material": "yellow_block", "confidence": 0.9,
+                                     "frame_id": "t-gate-2"})
+        ok = wait_for(lambda: gw.stats.batches["fault"] > base11f, 12,
+                      "photo 超时 -> 故障锁存")
+        check("光门超时 -> fault 锁存", ok and gw.fault is not None,
+              f"fault={gw.fault}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/fault/clear", {})
+        check("photo fault 可人工清除", st == 200 and gw.fault is None)
+        s3.photo_dead = False
+        time.sleep(0.3)
+    finally:
+        for k, v in saved_cfg9.items():
+            if v is not None:
+                gw.cfg[k] = v
+            else:
+                gw.cfg.pop(k, None)
+    evc.loop_stop(); evc.disconnect()
 
     pc.loop_stop(); pc.disconnect()
     gw.stop()

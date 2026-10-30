@@ -78,7 +78,7 @@ https://blog.csdn.net/gjy_skyblue/article/details/120565771
 | VDD (逻辑) | 3V3 | 模块有 VDDIO 跳线则拨 3.3V |
 | V+ (电机) | 5V 独立 | 舵机动力电源 (≥2A), **不要**用 I2C 3.3V |
 
-### MCP23017 I2C 数字 IO 扩展 (步进 EN + 预留数字量, DFR0626)
+### MCP23017 I2C 数字 IO 扩展 (步进 EN + 光门 ×3, DFR0626)
 
 与 PCA9685 **同一条 I2C 总线** (P18/P23), 地址不冲突: PCA9685 @0x40,
 MCP23017 @0x27。参考: https://wiki.dfrobot.com.cn/_SKU_DFR0626_MCP23017_IIC_to_16_digital_IO_expansion_module
@@ -91,13 +91,47 @@ MCP23017 @0x27。参考: https://wiki.dfrobot.com.cn/_SKU_DFR0626_MCP23017_IIC_t
 | D (SDA) | GPIO18 | 与 PCA9685 共线 |
 | A0/A1/A2 | 拨码全 1 | I2C 地址 0x27 (默认值) |
 | PA0 | 驱动器 EN+ | 高电平使能 (A4988/DRV8825 惯例; 若 SERVO42C 极性相反, 改 `McpEn.h kActiveLow`) |
+| PB0/PB1/PB2 | 光门 1/2/3 | 见下节 (拨料时序触发, 输入 + 内部上拉) |
 
 - **固件自动检测**: 启动日志 `[mcp] MCP23017 @0x27 在线, 步进 EN -> PA0
   (停带禁能)` 或 `[mcp] MCP23017 未检测到, 步进 EN 保持外部跳线 (5V 常使能)`。
 - EN 随传送带状态: `running`=使能, `stopped/paused/fault`=禁能 (停带断线圈电,
   替代原「EN 跳 5V 常使能」); 串口 `stepper <n>` 手动脉冲时临时使能、发完恢复。
-- **剩余 15 路预留** (PA1~PA7, PB0~PB7): 料道末端光电/限位/急停等数字量,
+- **剩余 13 路预留** (PA1~PA7, PB3~PB7): 料道末端对账光电/限位/急停等数字量,
   输入模式 + 内部上拉即可 (OPEN_QUESTIONS 3②)。
+
+### 光门 ×3 (拨料时序触发, 拨料器【前侧/上游】)
+
+3 个**透过式光电开关** (对射式, NPN 开集输出, 5V, 如 E3T-ST61 或同级;
+采购注意: 必须是 NPN 开集 + 支持 5V 供电, PNP 源型的不配内部上拉用不了):
+
+| 光门 | 安装位置 | MCP23017 | 触发对象 |
+|---|---|---|---|
+| 1 号 | 1 号拨料器**前方** | PB0 | 1 号分拣器 |
+| 2 号 | 2 号拨料器**前方** | PB1 | 2 号分拣器 |
+| 3 号 | 3 号拨料器**前方** | PB2 | 3 号分拣器 |
+
+```
+光门安装距离 = 拨料作用点 − 带速 × (拨料动作时间 + 余量)
+1 m/s, 动作 400ms + 余量 100ms → 拨料作用点前方 0.5 m
+```
+
+(为什么装前侧: 拨料动作必须在物品到达拨料作用点**之前**完成, 光门落沿
+是"动作开始"时刻。公式与标定全文见 `docs/sort-mqtt.md` 「光门时序」。)
+
+| 线 | 接 | 说明 |
+|---|---|---|
+| V+ | 5V | 光电工作电源 |
+| COM/GND | GND | 共地 |
+| OUT (NPN 开集) | PB0/PB1/PB2 | 无物品=HIGH (内部上拉), 物品挡光=LOW (开集拉低) |
+
+- 固件配置: `IODIR_B` 输入 + `GPPU_B` 内部上拉 (启动自动, 每 loop 轮询,
+  10ms 去抖, 落沿 = 物品到达)。光门未接 / MCP23017 未接时, 网关
+  `divert_trigger=photo` 的 divert 自动回退 immediate 执行。
+- 件距约束: 相邻件 ≥ 带速 × 0.9s (1m/s → ≥0.9m), 否则漏拨
+  (见 `docs/sort-mqtt.md` 光门时序节)。
+- 调试: 串口 `gates` → `gates: ok=1 s1=1 s2=1 s3=1` (通光);
+  用手/件挡光对应路变 `0`。三路全 1 且 ok=1 表示接线与供电正常。
 
 - 3 个舵机信号线接 PCA9685 的 **OUT0/OUT1/OUT2** (通道 0/1/2 = 1/2/3 号料道)。
 - 扫掠: 0°(归位) ↔ 90°(拨出), 一件 = 一次扫掠, qty=N 连拨 N 次。
@@ -130,12 +164,13 @@ USB 5V/2A (或 DC 9-26V 端子)
 1. 先不接电机/舵机, 只接 HL2: 串口 (115200, Type-C) 看
    `[hl2] ...` / `[eth] ...` / `[mqtt] connected`。
 2. 接 PCA9685 + 一个舵机到 OUT0, 串口发 `sweep 1` 验证扫掠方向与角度。
-3. 接步进, 串口发 `stepper 1000` (≈0.62m @1600步/米) 验证转向
-   (DIR=LOW 时 LED 亮 = 正转, 反过来就把 DIR 反相接线)。
-4. 全接上, 网关 `POST /dispatch` 走一次完整闭环。
+3. 接步进, 串口发 `stepper 1000` (≈3.1mm @320步/mm, 假设值, 见 OPEN #6⑧
+   带速标定) 验证转向 (DIR=LOW 时 LED 亮 = 正转, 反过来就把 DIR 反相接线)。
+4. 接光门 ×3 (各拨料器前侧), 串口 `gates` 确认三路上拉 HIGH、挡光变 LOW。
+5. 全接上, 网关 `POST /dispatch` 走一次完整闭环。
 
 ## 调试命令 (串口控制台)
 
 ```
-help | state | stepper <n> | sweep <n> | vision <material>
+help | state | gates | stepper <n> | sweep <n> | vision <material>
 ```

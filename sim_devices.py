@@ -179,6 +179,10 @@ class SorterSim(SimDevice):
         self.diverted_total = 0
         self.last_material = None
         self.item_ms = getattr(gw_args, "item_ms", 900)   # 每件拨料耗时 (ms)
+        # 光门触发模拟: 相机->光门行程 (s) / 光门等待窗 (s) / 该分拣器光门"无物品"
+        self.photo_wait_s = getattr(gw_args, "photo_wait", 0.35)
+        self.photo_timeout_s = getattr(gw_args, "photo_timeout", 3.0)
+        self.photo_dead = getattr(gw_args, "photo_dead", False)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         client.subscribe(self.topic, qos=1)
@@ -187,22 +191,28 @@ class SorterSim(SimDevice):
     def handle_cmd(self, payload):
         action = payload.get("action")
         job_id = payload.get("job_id", "?")
-        if action == "reset" and self.state == "fault":
-            self.state = "ready"
-            self._ack(job_id, action, "ok")
+        if action == "reset":
+            if self.state == "fault":
+                self.state = "ready"
+                self._ack(job_id, action, "ok")
+            elif self.state == "armed":
+                self.state = "ready"      # 取消光门预置: 不拨料
+                self._ack(job_id, action, "ok", note="cancelled")
+            else:
+                self._ack(job_id, action, "ok")   # 幂等目标态: no-op ok
             return
         if action != "divert":
             return
         if self.state == "fault":
             self._ack(job_id, action, "fault", note="sorter fault")
             return
-        if self.state == "busy":
-            # 与固件 Sorter::handleCmd 一致: busy 时只回 busy-ack, 不重复执行
-            self._ack(job_id, action, "busy", note="state=busy")
+        if self.state in ("busy", "armed"):
+            # 与固件 Sorter::handleCmd 一致: 执行中只回 busy-ack, 不重复执行
+            self._ack(job_id, action, "busy", note=f"state={self.state}")
             return
         qty = int(payload.get("qty", 1))
         self.last_material = payload.get("material")
-        self.state = "busy"
+        trigger = payload.get("trigger", "immediate")
 
         def finish():
             time.sleep(self.item_ms * qty / 1000.0)   # qty 件全拨完才回 ok
@@ -214,7 +224,32 @@ class SorterSim(SimDevice):
                 self.state = "ready"
                 self._ack(job_id, action, "ok", note=self.last_material)
 
-        threading.Thread(target=finish, daemon=True).start()
+        if trigger == "photo":
+            # 光门触发 (固件: 拨料器前侧光门, 每件各等一次落沿):
+            # 模拟"物品从相机行走到光门"的固定延迟; photo_dead 模拟
+            # "期望的物品没到光门" (超时 -> fault, 与固件 kPhotoTimeoutMs 对齐).
+            # qty>1 的逐件光门节奏在 E2E 里恒为 qty=1 (视觉单件), 此处
+            # 以单次等待近似.
+            self.state = "armed"
+
+            def arm_then_run():
+                if self.photo_dead:
+                    time.sleep(self.photo_timeout_s)
+                    if self.state == "armed":
+                        self.state = "fault"
+                        self._ack(job_id, action, "fault",
+                                  note="photo timeout")
+                    return
+                time.sleep(self.photo_wait_s)
+                if self.state != "armed":   # 等待期间被 reset 取消
+                    return
+                self.state = "busy"
+                finish()
+
+            threading.Thread(target=arm_then_run, daemon=True).start()
+        else:
+            self.state = "busy"
+            threading.Thread(target=finish, daemon=True).start()
 
     def tele_extra(self):
         return {"state": self.state, "diverted_total": self.diverted_total,
@@ -230,6 +265,12 @@ def parse_args():
                     help="指定 1/2/3 号分拣器固定故障")
     ap.add_argument("--item-ms", type=int, default=900,
                     help="分拣器每件拨料耗时 ms (镜像固件: 拨出 400ms + 件间 500ms)")
+    ap.add_argument("--photo-wait", type=float, default=0.35,
+                    help="trigger=photo 时物品相机->光门行程 s (模拟固定延迟)")
+    ap.add_argument("--photo-timeout", type=float, default=3.0,
+                    help="trigger=photo 时 armed 等待窗 s (模拟固件 5s 光门超时)")
+    ap.add_argument("--photo-dead-sorter", type=int, default=0,
+                    help="指定 1/2/3 号分拣器光门永远无物品 (测 photo 超时 fault)")
     ap.add_argument("--no-ack", action="store_true",
                     help="分拣器 divert 永不回应 (测网关超时/重试)")
     ap.add_argument("--seed", type=int, default=7)
@@ -247,9 +288,10 @@ def main():
     import random
     a = parse_args()
     rng = random.Random(a.seed)
-    devs = [ConveyorSim(a, rng)]
+    devs: list = [ConveyorSim(a, rng)]
     for n in (1, 2, 3):
         devs.append(SorterSim(a, rng, n, fixed_fault=(a.fault_sorter == n)))
+        devs[-1].photo_dead = (a.photo_dead_sorter == n)
     for d in devs:
         d.start()
     print(f"[sim] 就绪: 传送带 + 3 分拣器 "

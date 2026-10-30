@@ -18,10 +18,12 @@
 #include "config.h"
 #include "Conveyor.h"
 #include "Sorter.h"
+#include "Gate.h"
 #include "HuskyLens.h"
 #include "Proto.h"
 #include "ServoI2C.h"
 #include "McpEn.h"
+#include "McpGate.h"
 
 static sort::Conveyor conv;
 static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter(3)};
@@ -46,9 +48,20 @@ struct WireMcpBus : public sort::I2cReg {
         Wire.write(val);
         Wire.endTransmission();
     }
+    uint8_t readReg(uint8_t reg) override {
+        Wire.beginTransmission(sort::McpEn::kAddr);
+        Wire.write(reg);
+        if (Wire.endTransmission(false) != 0 ||
+            Wire.requestFrom(sort::McpEn::kAddr, 1) < 1)
+            return 0xFF;
+        return (uint8_t)Wire.read();
+    }
 };
 static WireMcpBus mcpBus;
 static sort::McpEn mcpEn;
+static sort::McpGate mcpGate;          // 光门 Port B (PB0/1/2 -> 1/2/3 号)
+static sort::PhotoGate gates[3];
+static bool gateOk = false;            // 光门通道在线 (MCP 在线 + 配置成功)
 
 // 以太网状态 (tryStaticIp/applyStaticIp 见下文以太网节; 提前声明供事件回调使用)
 static volatile bool ethUp = false;    // 链路可用 (静态 IP 已配好或 DHCP 拿到)
@@ -146,16 +159,17 @@ static uint64_t stepsLive() {
     return s;
 }
 
-// ================= 舵机扫掠任务 (非阻塞) =================
+// ================= 舵机扫掠任务 (非阻塞, 每分拣器 1 路, 可并发) =================
 // 一件物料 = 一次 拨出->归位 扫掠; qty=N 则 N 次, 件间 SERVO_ITEM_GAP_MS.
 // 与 sim_devices 语义一致: 全部拨完才发 ack ok.
+// 3 个分拣器各占 1 个 PCA9685 通道, 光门触发下可能同时拨, 各自独立任务.
 struct SweepTask {
     int n = 0;             // 分拣器 1..3
     bool active = false;
     bool inEject = false;
     uint32_t phaseAt = 0;
 };
-static SweepTask sweep;
+static SweepTask sweeps[3] = {};
 static String lastJobId[3] = {"", "", ""};   // 各分拣器当前 job_id (divert 完成时应答用)
 // 防重复执行: 最近一次完成的 divert 的 job_id. 网关重发/QoS1 重投同 job_id 时
 // 只补应答不重拨 (job_id 每个批次唯一, 窗口内重复必为重发).
@@ -178,30 +192,38 @@ static void publishConveyorAck(const char* job_id, const char* action,
 }
 
 static void sweepStart(int n) {
-    sweep.n = n; sweep.active = true; sweep.inEject = true;
-    sweep.phaseAt = millis();
+    SweepTask& t = sweeps[n - 1];
+    t.n = n; t.active = true; t.inEject = true;
+    t.phaseAt = millis();
     servoWrite(n, SERVO_EJECT_DEG);
 }
 static void sweepTick() {
-    if (!sweep.active) return;
-    uint32_t now = millis();
-    if (sweep.inEject) {
-        if (now - sweep.phaseAt >= SERVO_SWEEP_MS / 2) {
-            servoWrite(sweep.n, SERVO_REST_DEG);
-            sweep.inEject = false;
-            sweep.phaseAt = now;
-        }
-    } else if (now - sweep.phaseAt >= (uint32_t)(SERVO_ITEM_GAP_MS - SERVO_SWEEP_MS / 2)) {
-        if (sorters[sweep.n - 1].stepOne()) {      // 最后一件
-            sweep.active = false;
-            publishSorterAck(sweep.n, lastJobId[sweep.n - 1].c_str(), "divert",
-                             "ok", sorters[sweep.n - 1].mat());
-            lastDoneJob[sweep.n - 1] = lastJobId[sweep.n - 1].c_str();
-            lastDoneAtMs[sweep.n - 1] = millis();
-        } else {
-            sweep.inEject = true;
-            sweep.phaseAt = now;
-            servoWrite(sweep.n, SERVO_EJECT_DEG);
+    for (int i = 0; i < 3; i++) {
+        SweepTask& t = sweeps[i];
+        if (!t.active) continue;
+        sort::Sorter& s = sorters[t.n - 1];
+        uint32_t now = millis();
+        if (t.inEject) {
+            if (now - t.phaseAt >= SERVO_SWEEP_MS / 2) {
+                servoWrite(t.n, SERVO_REST_DEG);
+                t.inEject = false;
+                t.phaseAt = now;
+            }
+        } else if (now - t.phaseAt >= (uint32_t)(SERVO_ITEM_GAP_MS - SERVO_SWEEP_MS / 2)) {
+            if (s.stepOne(millis())) {            // 最后一件
+                t.active = false;
+                publishSorterAck(t.n, lastJobId[t.n - 1].c_str(), "divert",
+                                 "ok", s.mat());
+                lastDoneJob[t.n - 1] = lastJobId[t.n - 1].c_str();
+                lastDoneAtMs[t.n - 1] = millis();
+            } else if (s.state_str == "armed") {
+                // photo job 中间件: 等下一件的光门沿, 本扫掠到此为止
+                t.active = false;
+            } else {
+                t.inEject = true;                 // immediate: 连续拨下一件
+                t.phaseAt = now;
+                servoWrite(t.n, SERVO_EJECT_DEG);
+            }
         }
     }
 }
@@ -246,15 +268,25 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
         }
         const char* material = doc["material"] | "";
         int qty = doc["qty"] | 1;
-        auto r = sorters[n - 1].handleCmd(action, material, qty);
+        const char* trigger = doc["trigger"] | "immediate";
+        // 光门不可用 (未接 MCP23017/光门) 时 trigger=photo 自动回退 immediate,
+        // 保证未装光门也能跑通 (回退在 ack note 里说明).
+        bool wantPhoto = !strcmp(trigger, "photo");
+        bool photo = wantPhoto && gateOk;
+        if (wantPhoto && !gateOk)
+            Serial.println("[gate] trigger=photo 但光门不可用, 回退 immediate");
+        auto r = sorters[n - 1].handleCmd(action, material, qty,
+                                          photo ? "photo" : "immediate",
+                                          job_id, millis());
         if (!r.handled) return;
         if (action && !strcmp(action, "reset")) {
             publishSorterAck(n, job_id, "reset", r.ok ? "ok" : "busy",
                              r.note.c_str());
         } else if (r.ok) {
-            sweepStart(n);    // divert: 拨完才应答
+            if (std::strcmp(sorters[n - 1].state(), "armed") != 0)
+                sweepStart(n);    // immediate: 立即拨; photo: 等光门落沿再拨
         } else {
-            const char* res = r.note == "sorter fault" ? "fault" : "busy";
+            const char* res = (r.note == "sorter fault") ? "fault" : "busy";
             publishSorterAck(n, job_id, "divert", res, r.note.c_str());
         }
     }
@@ -294,7 +326,12 @@ static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
 static String consoleBuf;
 static void onSerialCmd(const String& line) {
     if (line == "help") {
-        Serial.println("help | state | eth | mqtt | stepstat | stepinit | reboot | stepper <n> | sweep <n> | vision <material>");
+        Serial.println("help | state | eth | mqtt | stepstat | stepinit | gates | reboot | stepper <n> | sweep <n> | vision <material>");
+    } else if (line == "gates") {
+        bool hi0 = true, hi1 = true, hi2 = true;
+        if (gateOk) mcpGate.poll(hi0, hi1, hi2);
+        Serial.printf("gates: ok=%d s1=%d s2=%d s3=%d (0=物品挡光, 1=通光; ok=0 为全默认 HIGH)\n",
+                      gateOk ? 1 : 0, hi0 ? 1 : 0, hi1 ? 1 : 0, hi2 ? 1 : 0);
     } else if (line == "state") {
         Serial.printf("conveyor=%s s1=%s s2=%s s3=%s diverted=%lu/%lu/%lu steps=%llu\n",
                       conv.state(), sorters[0].state(), sorters[1].state(),
@@ -368,11 +405,11 @@ static void onSerialCmd(const String& line) {
             esp_netif_get_ip_info(nif, &ip);
             char ipstr[16], gwstr[16];
             snprintf(ipstr, sizeof(ipstr), "%d.%d.%d.%d",
-                     (ip.ip.addr >> 24) & 0xFF, (ip.ip.addr >> 16) & 0xFF,
-                     (ip.ip.addr >> 8) & 0xFF, ip.ip.addr & 0xFF);
+                     (int)((ip.ip.addr >> 24) & 0xFF), (int)((ip.ip.addr >> 16) & 0xFF),
+                     (int)((ip.ip.addr >> 8) & 0xFF), (int)(ip.ip.addr & 0xFF));
             snprintf(gwstr, sizeof(gwstr), "%d.%d.%d.%d",
-                     (ip.gw.addr >> 24) & 0xFF, (ip.gw.addr >> 16) & 0xFF,
-                     (ip.gw.addr >> 8) & 0xFF, ip.gw.addr & 0xFF);
+                     (int)((ip.gw.addr >> 24) & 0xFF), (int)((ip.gw.addr >> 16) & 0xFF),
+                     (int)((ip.gw.addr >> 8) & 0xFF), (int)(ip.gw.addr & 0xFF));
             Serial.printf("eth: up=%d ip=%s gw=%s\n",
                           esp_netif_is_netif_up(nif) ? 1 : 0, ipstr, gwstr);
         }
@@ -462,6 +499,15 @@ void setup() {
     else
         Serial.println("[mcp] MCP23017 未检测到, 步进 EN 保持外部跳线 (5V 常使能)");
 
+    if (PHOTO_GATE_ENABLED) {
+        if (mcpEn.present() && mcpGate.begin(&mcpBus, PHOTO_GATE_MASK_B)) {
+            gateOk = true;
+            Serial.println("[gate] 光门 x3 -> MCP23017 PB0/1/2 (divert trigger=photo 时序触发)");
+        } else {
+            Serial.println("[gate] 光门不可用 (MCP23017 未在线或配置失败), trigger=photo 将回退 immediate");
+        }
+    }
+
     hlSerial.begin(HL2_BAUD, SERIAL_8N1, HL2_RX_PIN, HL2_TX_PIN);
     Serial.printf("[hl2] UART2 @%lu rx=GPIO%d tx=GPIO%d\n",
                   (unsigned long)HL2_BAUD, HL2_RX_PIN, HL2_TX_PIN);
@@ -490,6 +536,31 @@ void loop() {
     steerStepper();
     sweepTick();
     mcpEn.sync(conv.state());   // 步进 EN 随状态 (只有电平变化才写 I2C)
+
+    // 光门: 读电平 -> 落沿 (物品到达拨料器前侧) -> 触发 armed 分拣器拨料
+    if (gateOk) {
+        bool hi0, hi1, hi2;
+        mcpGate.poll(hi0, hi1, hi2);
+        for (int i = 0; i < 3; i++) {
+            bool hi = (i == 0) ? hi0 : (i == 1 ? hi1 : hi2);
+            if (gates[i].onItemEdge(hi, millis()) &&
+                sorters[i].onGateEdge(millis())) {
+                sweepStart(i + 1);
+                Serial.printf("[gate] 分拣器%d 光门触发, 开始拨料 (剩 %d 件)\n",
+                              i + 1, sorters[i].pendingQty());
+            }
+        }
+    }
+    // armed 光门等待超时 -> fault + 对 job_id 回 fault ack
+    for (int i = 0; i < 3; i++) {
+        if (sorters[i].tick(millis())) {
+            Serial.printf("[gate] 分拣器%d 光门等待超时 (%ums 无物品)\n",
+                          i + 1, (unsigned)sort::kPhotoTimeoutMs);
+            publishSorterAck(i + 1, sorters[i].pendingJobId().c_str(),
+                             "divert", "fault", "photo timeout");
+        }
+    }
+
     if (!ethUp && millis() - lastEthTryMs > 2000) {     // netif 晚到: 持续重试
         lastEthTryMs = millis();
         tryStaticIp();

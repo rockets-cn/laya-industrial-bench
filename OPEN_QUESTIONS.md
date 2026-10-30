@@ -13,6 +13,7 @@
 | ③ | loop_ui /dispatch 把网关 202 压成 200 | `JSONResponse(..., status_code=r.status)` 透传 | TestClient + stub 网关: 202/409/422 全透传 |
 | ④ | 契约字段漂移 (ts 全 ""; steps_total vs items_in) | 契约明确: `state` 必填, 其余设备可选; `steps_total`/`items_in` 不同量纲并列; `ts` 无 RTC 可 `""` (网关忽略, 后续 NTP) | docs/sort-mqtt.md 命令/应答/遥测三节重写, 与代码行为一致 |
 | ⑤ | STEPS_PER_MM / 物料映射是假设 | 未修 (需现场): 新增 OPEN #6⑧ (RMT 下按 1m/s 实测带速反推 STEPS_PER_MM); 物料映射仍 OPEN #1 | — |
+| ⑥ | 拨料时序: divert 收命令即执行, 物品位置无处安放 (分拣器对位置一无所知) | **光门触发** (方案 C): divert `trigger=photo` → 分拣器 `armed`, 拨料器**前侧 (上游)** 光门落沿才拨 (安装距离 = 带速×(动作时间+余量), 公式入 docs/sort-mqtt.md「光门时序」); qty>1 每件各等一次光门; 5s 无物品 → fault "photo timeout" + job_id 回 ack; 光门未接自动回退 immediate; 视觉坐标 x/y/w/h 随批次事件/台账透传 (方案 B) | 主机单测 104 项 (Gate 边沿去抖 + Sorter photo 全路径); E2E 第 9 节 7 项 (photo 触发拨出 / trigger 字段 / armed 状态 / 坐标透传 / photo 超时 fault 锁存 / 清除恢复); BOM 新增 光门 ×3 (OPEN #6⑨) |
 
 同时: sim_devices 改为按件计时 (默认 900ms/件, 全拨完才回 ok, busy 守卫),
 E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
@@ -68,13 +69,23 @@ E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
    ⑥ 磁环安装 (轴中间/水平) 与线序 A+A-B+B- 按文档第 2 部分做, 屏显
       "Phase Line Error!" 时断电重调。
    ⑦ 采购: **MCP23017 (DFR0626) ×1** — 5V 供电, 拨码全 1 (地址 0x27),
-      PA0 → 驱动器 EN+; 余 15 路预留数字量 (光电/限位/急停)。
+      PA0 → 驱动器 EN+; **PB0/PB1/PB2 → 3 路光门 (新, ⑨)**;
+      余 13 路预留数字量 (末端对账光电/限位/急停)。
    ⑧ **带速实测反推 STEPS_PER_MM** (RMT 硬件脉冲已就绪, 2026-10-30):
       带电机按 speed_mps=1.0 跑 10s, 量实际带长 L → 实测步/米 =
       10s×320000步/s (320k pps 为 1.0m/s 设定值) ÷ L×1000 → 与 320 步/mm
       的偏差即导程/细分误差, 同步改 config.h STEPS_PER_MM 与网关
       conveyor_speed_mps。驱动器闭环模式下丢步由编码器兜底, 但带速刻度
       必须标对。
+   ⑨ **光门 ×3 (新, 2026-10-30, 拨料时序触发, divert trigger=photo)**:
+      透过式光电开关, **NPN 开集**输出, 5V, 如 E3T-ST61 或同级
+      (必须 NPN 开集 — PNP 源型与 MCP23017 内部上拉不配)。每拨料器 1 路,
+      装拨料器**前侧 (上游)**: 距拨料作用点 = 带速 × (拨料动作时间 + 余量)
+      (公式与标定: docs/sort-mqtt.md「光门时序」)。OUT → MCP23017
+      PB0/PB1/PB2 (内部上拉, 挡光=LOW 落沿=物品到达)。装好后把网关
+      `config/sort_gateway.json` 的 `divert_trigger` 改 `"photo"`;
+      未装时保持 `"immediate"` (固件对 photo 自动回退 immediate, 不影响)。
+      接线调试: 串口 `gates`。件距约束 ≥ 带速 × 0.9s。
 7. **16MB Flash 确认**: 固件按 16MB flash 构建。板上芯片若实际是 4MB,
    改 `platformio.ini` 的 `board_build.flash_size` (固件体积远小于 4MB, 不影响)。
 8. **HL2 供电与电平**: 板 5V 直接带 HL2 (峰值 ~1.5W), TX 5V→3.3V 分压。
@@ -98,6 +109,6 @@ E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
 
 - 实体闭环: 按 `edge101/docs/wiring.md` 接线 → `pio run -t upload` →
   串口 `state` / `sweep` / `stepper` 自测 → 网关 `POST /dispatch` 全链路。
-- 固件编译: ESP32 交叉编译已跑通 (pio run SUCCESS, Flash 682KB/1.25MB,
-  RAM 35KB/320KB, 2026-10-30, 含 RMT 步进); 主机单测
-  `./edge101/tests/host/run_tests.sh` 66/66 全绿; E2E 37/37 全绿。
+- 固件编译: ESP32 交叉编译已跑通 (pio run SUCCESS, 2026-10-30, 含 RMT 步进
+  + 光门触发); 主机单测
+  `./edge101/tests/host/run_tests.sh` 104/104 全绿; E2E 44/44 全绿。

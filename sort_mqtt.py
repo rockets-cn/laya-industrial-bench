@@ -64,6 +64,12 @@ DEFAULT_CFG = {
     # busy-ack = 设备正在执行本 job: 绝不重发 (重发=重复拨料), 只延长等待.
     "busy_wait_s": 3.0,
     "busy_wait_max_ext": 3,
+    # 拨料触发方式: immediate=收到命令即拨 (默认, 时序靠安装距离标定);
+    # photo=设备等拨料器前侧光门被物品通过才拨 (时序与网络延迟解耦,
+    # 需固件侧 MCP23017 PB0/1/2 接光门; 未接时固件自动回退 immediate).
+    "divert_trigger": "immediate",
+    # photo 模式的额外超时预算: 相机->光门的物品行程 + 光门反应时间.
+    "photo_margin_s": 3.0,
     "stats_period_s": 5.0,
     "stop_conveyor_after_batch": True,
     "queue_max": 16,
@@ -305,9 +311,19 @@ class SortGateway:
         if sorter is None:
             self.stats.vision_event("unknown")
             return
+        # 视觉坐标 (HL2 像素系) 随批次留痕: 网关目前不消费, 但上游标定
+        # (相机几何 -> 物品在带上的实际位置, 见 docs/sort-mqtt.md "标定")
+        # 与料道末端对账需要这份原始数据, 不能在这里丢掉.
+        vision = {"material": material, "confidence": conf}
+        if payload.get("frame_id") is not None:
+            vision["frame_id"] = payload.get("frame_id")
+        for k in ("x", "y", "w", "h"):
+            v = payload.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                vision[k] = v
         job = self.enqueue_job(
             [{"yard": sorter, "material": material, "qty": 1}],
-            source="vision", path="VISION")
+            source="vision", path="VISION", extra=vision)
         if job:
             self.stats.vision_event("dispatched")
 
@@ -330,8 +346,11 @@ class SortGateway:
             self._job_seq += 1
             return "j%d-%d" % (int(time.time() * 1000) % 10**8, self._job_seq)
 
-    def enqueue_job(self, actions, source="http", path=None):
-        """白名单校验 + 入队. 返回 job dict (成功) 或 None (故障锁存/非法)."""
+    def enqueue_job(self, actions, source="http", path=None, extra=None):
+        """白名单校验 + 入队. 返回 job dict (成功) 或 None (故障锁存/非法).
+
+        extra: 入站附带的元数据 (如视觉事件的 x/y/w/h 坐标), 随批次事件/台账留痕.
+        """
         with self.fault_lock:
             if self.fault:
                 return None
@@ -348,6 +367,8 @@ class SortGateway:
                 return None
         job = {"job_id": self._new_job_id(), "actions": actions,
                "source": source, "path": path or "HTTP", "t0": time.time()}
+        if extra:
+            job["vision"] = extra
         with self.queue_lock:
             if len(self.job_queue) >= self.cfg["queue_max"]:
                 with self.stats._lock:
@@ -536,6 +557,10 @@ class SortGateway:
         qty = int(action.get("qty", 1))
         to = (float(self.cfg["ack_timeout_s"])
               + float(self.cfg.get("divert_timeout_per_item_s", 1.0)) * qty)
+        # 光门触发: 设备等到物品过光门才拨, 加上相机->光门行程预算
+        if self.cfg.get("divert_trigger") == "photo":
+            payload["trigger"] = "photo"
+            to += float(self.cfg.get("photo_margin_s", 3.0))
         return self._send_with_retry("sorter", f"sorter{sorter}",
                                      job["job_id"], payload, timeout=to)
 
@@ -544,6 +569,7 @@ class SortGateway:
                        {"ts": _now(), "job_id": job["job_id"], "phase": phase,
                         "source": job.get("source"),
                         "actions": job.get("actions"),
+                        "vision": job.get("vision"),
                         "fault": job.get("fault")},
                        retain=(phase in ("fault", "done")))
 

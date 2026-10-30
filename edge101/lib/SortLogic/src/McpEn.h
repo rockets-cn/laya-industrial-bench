@@ -21,6 +21,7 @@ class I2cReg {
     virtual ~I2cReg() = default;
     virtual bool alive() = 0;          // 总线探测 (地址应答)
     virtual void writeReg(uint8_t reg, uint8_t val) = 0;
+    virtual uint8_t readReg(uint8_t reg) = 0;   // 读失败返回 0xFF
 };
 
 // 传送带状态 -> EN 是否应使能 (纯策略, 主机可测)

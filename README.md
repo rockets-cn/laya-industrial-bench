@@ -16,7 +16,8 @@
 (`vision_input.py`, HSV 像素层识别; 或实体 HuskyLens 2) 发物料事件到同一网关,
 网关按 `config/material_map.json` 映射并下发。无硬件时 `sim_devices.py`
 模拟器闭环; 实体硬件用 **EDGE 101 固件** (`edge101/`, 与模拟器行为等价,
-对网关零改动)。E2E 见 `tests/test_sort_mqtt.py`, 固件单测
+对网关零改动; RMT 硬件脉冲 + 拨料器前侧光门时序触发见 `edge101/README.md`)。
+E2E 见 `tests/test_sort_mqtt.py`, 固件单测
 `edge101/tests/host/run_tests.sh`。
 
 三条设计原则（完整论证见 [`VOICE_DECISION_BENCH.md`](VOICE_DECISION_BENCH.md)）：
@@ -178,12 +179,12 @@ journalctl --user -u laya-loop-ui -f
 | `VOICE_DECISION_BENCH.md` / `TEACHER_REPORT.md` / `DEPLOY_SENSEVOICE.md` | 链路设计报告 / 教师报告 / 部署记录 |
 | `sort_mqtt.py` | MQTT 分拣网关: 入站 (loop_ui /dispatch · SCADA `sort/inbound/command` · 视觉 `sort/inbound/vision`) → 白名单校验 → 顺序执行 → 统计分发 (JSONL 台账 + `sort/stats/summary`); 命令超时重试 → 故障锁存 → 人工清除; HTTP :8123 (`/health` `/stats` `/dispatch` `/fault/clear`) |
 | `yard_ledger.py` | 料场出入库台账 (SQLite, `data/yard_ledger.db`): 分拣下发自动记入, 页面手动记出, 库存=入-出; `record_in/record_out/stock/recent` |
-| `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机, 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`); 真实 PLC 接入时的行为参照 |
+| `sim_devices.py` | 设备模拟器: 传送带 + 3 分拣器状态机 (按件计时, 真实时序), 2Hz 遥测, 故障注入 (`--fault-rate` `--no-ack`), 光门模式 (`--photo-wait/--photo-timeout/--photo-dead-sorter`); 真实 PLC 接入时的行为参照 |
 | `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
 | `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
-| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, EN 走 MCP23017) + PCA9685 I2C 3 舵机; 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (60 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
+| `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, RMT 硬件脉冲, EN 走 MCP23017) + PCA9685 I2C 3 舵机 + 3 路光门 (拨料时序触发, MCP23017 PB0/1/2); 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (104 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
-| `tests/test_sort_mqtt.py` | 分拣网关 E2E 31 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计 |
+| `tests/test_sort_mqtt.py` | 分拣网关 E2E 44 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 

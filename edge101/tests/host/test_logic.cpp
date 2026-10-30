@@ -3,13 +3,16 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 #include "Conveyor.h"
 #include "Sorter.h"
+#include "Gate.h"
 #include "HuskyLens.h"
 #include "Proto.h"
 #include "McpEn.h"
+#include "McpGate.h"
 
 using namespace sort;
 
@@ -101,7 +104,7 @@ static void testConveyor() {
 static void testSorter() {
     printf("\n== Sorter 状态机 (对拍 sim_devices) ==\n");
     Sorter s(2);
-    check("初始 ready", s.state() == std::string("ready"));
+    check("初始 ready", std::string(s.state()) == std::string("ready"));
     auto r = s.handleCmd("divert", "blue_block", 5);
     check("ready->divert ok (busy)", r.handled && r.ok && std::string(s.state()) == "busy");
     check("pending qty=5", s.pend_qty == 5);
@@ -199,8 +202,16 @@ static void testProto() {
 struct FakeI2c : public sort::I2cReg {
     bool alive_ok = true;
     std::vector<std::pair<uint8_t, uint8_t>> writes;
+    std::map<uint8_t, uint8_t> regs;   // writeReg 记账, readReg 回读
     bool alive() override { return alive_ok; }
-    void writeReg(uint8_t r, uint8_t v) override { writes.push_back({r, v}); }
+    void writeReg(uint8_t r, uint8_t v) override {
+        writes.push_back({r, v});
+        regs[r] = v;
+    }
+    uint8_t readReg(uint8_t r) override {
+        auto it = regs.find(r);
+        return it == regs.end() ? 0xFF : it->second;
+    }
 };
 
 static void testMcpEn() {
@@ -254,12 +265,150 @@ static void testMcpEn() {
     }
 }
 
+// ---- 光门边沿检测 ----
+static void testGate() {
+    printf("\n== PhotoGate (光门边沿+去抖) ==\n");
+    using sort::PhotoGate;
+
+    // 全程通光: 无沿
+    {
+        PhotoGate g;
+        check("通光无沿", !g.onItemEdge(true, 0) && !g.onItemEdge(true, 100));
+        check("通光 itemPresent=false", !g.itemPresent());
+    }
+    // 正常落沿: H -> L(第1次) -> L(>=10ms) 确认
+    {
+        PhotoGate g;
+        g.onItemEdge(true, 0);
+        check("L 第1次不报", !g.onItemEdge(false, 10));
+        check("L 持续 10ms 报 1 沿", g.onItemEdge(false, 20));
+        check("L 持续中不重复报", !g.onItemEdge(false, 30) && !g.onItemEdge(false, 500));
+        check("挡光中 itemPresent=true", g.itemPresent());
+        g.onItemEdge(true, 600);
+        check("离开复位", !g.itemPresent() && !g.onItemEdge(false, 610));
+    }
+    // 短脉冲 (振动): H L H L ...  单次 LOW 不足 10ms 不报沿
+    {
+        PhotoGate g;
+        g.onItemEdge(true, 0);
+        g.onItemEdge(false, 100);    // L 起点
+        g.onItemEdge(true, 103);     // 3ms 后回 H (短脉冲, 未确认)
+        g.onItemEdge(false, 200);    // 新 LOW 序列
+        check("短脉冲后新序列第 1 次不报", !g.onItemEdge(false, 205));
+        check("短脉冲不产生伪沿 (之前 0 沿)", true);
+    }
+    // 两次确认跨 10ms 才报
+    {
+        PhotoGate g;
+        g.onItemEdge(true, 0);
+        g.onItemEdge(false, 10);
+        check("仅 5ms 持续不报", !g.onItemEdge(false, 15));
+        check("10ms 持续报", g.onItemEdge(false, 20));
+    }
+    // McpGate: 寄存器配置 + 读电平
+    {
+        FakeI2c bus;
+        sort::McpGate gate;
+        check("McpGate.begin 配 IODIR/GPPU", gate.begin(&bus, 0x07)
+              && bus.writes.size() == 2
+              && bus.writes[0].first == sort::McpGate::kIodirB
+              && bus.writes[0].second == 0x07
+              && bus.writes[1].first == sort::McpGate::kGppuB);
+        bus.regs[sort::McpGate::kGpioB] = 0x06;   // PB0=0(挡光) PB1=1 PB2=1
+        bool hi0, hi1, hi2;
+        gate.poll(hi0, hi1, hi2);
+        check("poll 解析 PB0/1/2", !hi0 && hi1 && hi2);
+        FakeI2c off; off.alive_ok = false;
+        sort::McpGate g2;
+        check("芯片离线 poll 全 HIGH (不误报)",
+              !g2.begin(&off, 0x07) && (g2.poll(hi0, hi1, hi2), hi0 && hi1 && hi2));
+    }
+}
+
+// ---- 分拣器: 光门触发 (trigger=photo) ----
+static void testSorterPhoto() {
+    printf("\n== Sorter photo trigger (光门预置拨料) ==\n");
+
+    // 基本: 未预置时沿无效; photo divert -> armed, 光门沿 -> busy -> 拨完 -> ready
+    {
+        sort::Sorter s(1);
+        check("ready 时(未预置)光门沿无效", !s.onGateEdge(900));
+        auto r = s.handleCmd("divert", "red_block", 1, "photo", "j1", 1000);
+        check("photo divert -> armed", r.handled && r.ok && std::string(s.state()) == "armed");
+        check("armed 时未拨料", s.diverted_total == 0 && s.pendingQty() == 1);
+        check("armed 光门沿 -> busy", s.onGateEdge(1500) && std::string(s.state()) == "busy");
+        check("拨完 -> ready + 计数", s.stepOne(2000) && std::string(s.state()) == "ready"
+              && s.diverted_total == 1);
+    }
+    // 多件: 每件各等一次光门
+    {
+        sort::Sorter s(2);
+        s.handleCmd("divert", "green_block", 3, "photo", "j2", 1000);
+        check("qty=3 -> armed 剩 3", std::string(s.state()) == "armed" && s.pendingQty() == 3);
+        s.onGateEdge(2000);
+        check("第 1 件光门 -> busy", std::string(s.state()) == "busy");
+        check("第 1 件拨完回 armed", !s.stepOne(3000) && std::string(s.state()) == "armed"
+              && s.pendingQty() == 2);
+        s.onGateEdge(4000);
+        check("第 2 件光门 -> busy", std::string(s.state()) == "busy");
+        check("第 2 件拨完回 armed", !s.stepOne(5000) && std::string(s.state()) == "armed");
+        s.onGateEdge(6000);
+        s.stepOne(7000);
+        check("第 3 件拨完 -> ready", std::string(s.state()) == "ready" && s.diverted_total == 3
+              && s.last_material == "green_block");
+    }
+    // busy 时不接光门 (正在拨, 新物品按件距约束不会同时到)
+    {
+        sort::Sorter s(3);
+        s.handleCmd("divert", "red_apple", 2, "photo", "j3", 100);
+        s.onGateEdge(200);
+        check("busy 中光门沿不触发", !s.onGateEdge(300) && std::string(s.state()) == "busy");
+    }
+    // armed 时其他 divert -> busy-ack; reset -> 取消
+    {
+        sort::Sorter s(1);
+        s.handleCmd("divert", "red_block", 1, "photo", "j4", 100);
+        auto r2 = s.handleCmd("divert", "red_apple", 1, "immediate", "j5", 200);
+        check("armed 时 divert -> busy-ack", r2.handled && !r2.ok
+              && std::string(s.state()) == "armed" && s.diverted_total == 0);
+        auto r3 = s.handleCmd("reset", nullptr, 0, "immediate", "j6", 300);
+        check("armed 时 reset -> 取消回 ready", r3.handled && r3.ok
+              && std::string(s.state()) == "ready" && s.pendingQty() == 0);
+        check("取消后未拨料", s.diverted_total == 0);
+    }
+    // 光门等待超时 -> fault, 对 job_id 可回 ack
+    {
+        sort::Sorter s(2);
+        s.handleCmd("divert", "blue_block", 1, "photo", "j7", 5000);
+        check("窗口内 tick 不 fault", !s.tick(9000) && std::string(s.state()) == "armed");
+        check("超时 tick -> fault", s.tick(5000 + sort::kPhotoTimeoutMs)
+              && std::string(s.state()) == "fault");
+        check("超时 note=photo timeout", std::strcmp(s.note(), "photo timeout") == 0);
+        check("超时 job_id 保留", s.pendingJobId() == "j7");
+        auto r = s.handleCmd("divert", "blue_block", 1, "photo", "j8", 20000);
+        check("fault 后 divert -> fault-ack", r.handled && !r.ok);
+        auto r2 = s.handleCmd("reset", nullptr, 0, "immediate", "j9", 21000);
+        check("fault reset -> ready", r2.handled && r2.ok && std::string(s.state()) == "ready");
+    }
+    // immediate 回归: 行为不变 (不 armed, 连拨)
+    {
+        sort::Sorter s(3);
+        auto r = s.handleCmd("divert", "red_block", 2, "immediate", "j10", 100);
+        check("immediate 直接 busy", r.handled && r.ok && std::string(s.state()) == "busy");
+        check("immediate 拨 1 件保持 busy", !s.stepOne(200) && std::string(s.state()) == "busy");
+        check("immediate 拨完 -> ready", s.stepOne(300) && std::string(s.state()) == "ready"
+              && s.diverted_total == 2);
+    }
+}
+
 int main() {
     testConveyor();
     testSorter();
     testHuskyLens();
     testProto();
     testMcpEn();
+    testGate();
+    testSorterPhoto();
     printf("\n%s\n", FAIL ? "有失败 ✗" : "全部通过 ✔");
     printf("PASS %d  FAIL %d\n", PASS, FAIL);
     return FAIL ? 1 : 0;

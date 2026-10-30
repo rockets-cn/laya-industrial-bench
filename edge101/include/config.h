@@ -20,6 +20,7 @@
 //   GPIO23 = I2C SCL -> PCA9685 + MCP23017 (共总线, 地址 0x40 / 0x27)
 //   步进 EN: 6 路输出全用 → MCP23017 PA0 接管 (I2C 数字扩展, 固件自动检测);
 //            未接 MCP23017 时回退: 驱动器端 EN 跳线 5V (常使能)
+//   光门 ×3: 拨料时序触发 (divert trigger=photo) → MCP23017 PB0/PB1/PB2
 #pragma once
 
 #include <cstdint>
@@ -47,9 +48,21 @@ static const uint8_t STEPPER_DIR_PIN  = 15;   // 复用板载 LED (DIR=LOW -> LE
 static const double  STEPS_PER_MM = 320.0;
 
 // ---------- MCP23017 (I2C 数字 IO 扩展, 与 PCA9685 共 P18/P23 总线) ----------
-// DFR0626, 默认地址 0x27 (拨码 A2A1A0 全 1); PA0 -> 步进驱动器 EN。
+// DFR0626, 默认地址 0x27 (拨码 A2A1A0 全 1); PA0 -> 步进驱动器 EN,
+// PB0/PB1/PB2 -> 3 路光门 (拨料时序触发)。
 // 地址/极性常量在 lib/SortLogic/src/McpEn.h (kAddr/kActiveLow), 改动需两处同步。
-// 剩余 15 路 (PA1..PA7, PB0..PB7) 预留: 料道末端光电/限位/急停等数字量。
+// 剩余 13 路 (PA1..PA7, PB3..PB7) 预留: 料道末端对账光电/限位/急停等数字量。
+
+// ---------- 光门 ×3 (拨料器前方, 拨料时序触发) ----------
+// 透过式光电, NPN 开集输出 + 内部上拉 (McpGate 配 GPPU_B):
+// 无物品=HIGH, 物品挡光=LOW。每拨料器 1 路: 物品过光门 = "到达拨料器"。
+// 固件语义: divert 命令带 trigger=photo 时, 分拣器进入 armed 等光门;
+// 光门落沿触发拨料; 5s (Sorter.h kPhotoTimeoutMs) 无物品 -> fault
+// "photo timeout"。光门未接 / MCP23017 未接时 trigger=photo 自动回退
+// immediate 执行 (ack note 说明), 保证未装光门也能跑通。
+static const bool     PHOTO_GATE_ENABLED = true;
+static const uint8_t  PHOTO_GATE_MASK_B  = 0x07;   // PB0+PB1+PB2 -> 1/2/3 号分拣器
+static const uint8_t  PHOTO_GATE_BIT[3]  = {0x01, 0x02, 0x04};
 
 // ---------- 舵机 ×3 (PCA9685 I2C @0x40, 通道 0/1/2) ----------
 static const uint8_t SERVO_SDA_PIN  = 18;
