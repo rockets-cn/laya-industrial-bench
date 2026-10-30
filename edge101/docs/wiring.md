@@ -91,7 +91,7 @@ MCP23017 @0x27。参考: https://wiki.dfrobot.com.cn/_SKU_DFR0626_MCP23017_IIC_t
 | D (SDA) | GPIO18 | 与 PCA9685 共线 |
 | A0/A1/A2 | 拨码全 1 | I2C 地址 0x27 (默认值) |
 | PA0 | 驱动器 EN+ | 高电平使能 (A4988/DRV8825 惯例; 若 SERVO42C 极性相反, 改 `McpEn.h kActiveLow`) |
-| PB0/PB1/PB2 | 光门 1/2/3 | 见下节 (拨料时序触发, 输入 + 内部上拉) |
+| PB0/PB1/PB2 | 光门 1/2/3 | 见下节 (推杆推出时序触发, 输入 + 内部上拉) |
 
 - **固件自动检测**: 启动日志 `[mcp] MCP23017 @0x27 在线, 步进 EN -> PA0
   (停带禁能)` 或 `[mcp] MCP23017 未检测到, 步进 EN 保持外部跳线 (5V 常使能)`。
@@ -100,7 +100,7 @@ MCP23017 @0x27。参考: https://wiki.dfrobot.com.cn/_SKU_DFR0626_MCP23017_IIC_t
 - **剩余 13 路预留** (PA1~PA7, PB3~PB7): 料道末端对账光电/限位/急停等数字量,
   输入模式 + 内部上拉即可 (OPEN_QUESTIONS 3②)。
 
-### 光门 ×3 (拨料时序触发, 拨料器【前侧/上游】)
+### 光门 ×3 (推杆推出时序触发, 推杆【前侧/上游】)
 
 3 个**透过式光电开关** (对射式, NPN 开集输出, 5V, 如 E3T-ST61 或同级;
 采购注意: 必须是 NPN 开集 + 支持 5V 供电, PNP 源型的不配内部上拉用不了):
@@ -130,11 +130,36 @@ loop_ui「Laya 工业决策回路」页「📐 分拣线光门安装布局」折
 
 - 固件配置: `IODIR_B` 输入 + `GPPU_B` 内部上拉 (启动自动, 每 loop 轮询,
   10ms 去抖, 落沿 = 物品到达)。光门未接 / MCP23017 未接时, 网关
-  `divert_trigger=photo` 的 divert 自动回退 immediate 执行。
+  `divert_trigger=photo` 的 divert 先走**虚拟光门** (按带面位置预测,
+  见下节), 再回退 immediate (串口日志说明原因)。
 - 件距约束: 相邻件 ≥ 带速 × 0.9s (1m/s → ≥0.9m), 否则漏拨
   (见 `docs/sort-mqtt.md` 光门时序节)。
 - 调试: 串口 `gates` → `gates: ok=1 s1=1 s2=1 s3=1` (通光);
   用手/件挡光对应路变 `0`。三路全 1 且 ok=1 表示接线与供电正常。
+
+### 虚拟光门标定 (光门未接线前: 让 photo 时序照样成立)
+
+未装物理光门时, 固件用「HL2 检测锚点 + 带速匀速外推」预测物品过光门线
+时刻 (`Track.h`), 到点推出 — 时序与 `gate_layout.svg` 一致。需要标定
+`config.h` 三个量 (沿带面量, 卷尺量即可):
+
+| 标定项 | 含义 | 测量方法 |
+|---|---|---|
+| `GATE_DIST_MM[3]` | 相机参考平面 → 1/2/3 号光门安装位 | 相机正下方带面点作 0 点, 沿带面量到各推杆前方光门位 (= 安装公式: 推料点 − 带速×(400ms+余量)) |
+| `VIEW_WIDTH_MM` | 相机视野在带面平面的宽度 | 带面贴两个相距已知的标记, 量出它们各自占画面宽的比例 → FOV = 标记间距 ÷ 比例差 |
+| `ITEM_PITCH_MM` | photo job 件距 (第 k 件在首件后 k 件距/v) | 按上游排产的实际件距 (≥ 带速×0.9s) |
+
+验证 (不依赖光门硬件):
+```
+串口: vision red_apple          # 注入检测锚点 (p0=0, 视为在相机中心)
+网关: divert trigger=photo      # -> 串口 [vgate] 预测 ~500ms 后过光门线
+串口: track                     # 查看锚点/带速/标定值
+```
+运动事件时间线 (网关 `GET /motion` 或 `sort/event/motion`):
+`armed(via=virtual 前) -> busy(via=virtual) -> ready(via=done)`。
+光门硬件到位后**自动优先物理光门**, 虚拟光门仅在 `gateOk=false` 时启用。
+
+### 推杆 (3 个舵机) 接线要点
 
 - 3 个舵机信号线接 PCA9685 的 **OUT0/OUT1/OUT2** (通道 0/1/2 = 1/2/3 号料道,
   各驱动 1 条**推杆**)。
@@ -171,11 +196,16 @@ USB 5V/2A (或 DC 9-26V 端子)
 2. 接 PCA9685 + 一个舵机到 OUT0, 串口发 `sweep 1` 验证扫掠方向与角度。
 3. 接步进, 串口发 `stepper 1000` (≈3.1mm @320步/mm, 假设值, 见 OPEN #6⑧
    带速标定) 验证转向 (DIR=LOW 时 LED 亮 = 正转, 反过来就把 DIR 反相接线)。
-4. 接光门 ×3 (各拨料器前侧), 串口 `gates` 确认三路上拉 HIGH、挡光变 LOW。
+4. 接光门 ×3 (各推杆前侧), 串口 `gates` 确认三路上拉 HIGH、挡光变 LOW;
+   未接光门时可用 `vision <material>` + `track` 验证虚拟光门时序。
 5. 全接上, 网关 `POST /dispatch` 走一次完整闭环。
 
 ## 调试命令 (串口控制台)
 
 ```
-help | state | gates | stepper <n> | sweep <n> | vision <material>
+help | state | eth | mqtt | stepstat | stepinit | gates | track | reboot
+     | stepper <n> | sweep <n> | vision <material>
 ```
+
+- `track`: 虚拟光门状态 — 当前带速 / 检测锚点 (物料 + p0 + 时效) /
+  标定值 (光门距离 ×3, 件距, 视野宽度)。

@@ -9,6 +9,10 @@
 //                                          kPhotoTimeoutMs 内无物品 -> fault
 //                                          note="photo timeout")
 //   armed --光门沿--> busy (一次落沿 = 一件)
+//   armed --虚拟光门--> busy (setVirtual 设置了预测时刻后, now >= 预测时刻
+//                              即触发; 件距节奏由 virt_pitch_ms 控制: 第 k 件
+//                              在 first + (k-1)×pitch 触发. 无物理光门时的
+//                              替代时序, 见 Track.h / gate_layout.svg)
 //   reset  fault -> ready;  armed -> ready (取消预置, 不拨料)
 //   其余 -> busy-ack (设备正在执行中)
 //
@@ -42,6 +46,10 @@ class Sorter {
     std::string pend_job_id;    // 关联的网关 job_id (超时 fault 时回 ack 用)
     uint32_t armed_at_ms = 0;   // trigger=photo 时记录 arm 时刻
     bool pend_photo = false;    // 本 job 是否光门触发 (多件时每件等一次光门)
+    // 虚拟光门 (无物理光门时): 预测首件过光门线时刻 + 件距 (ms, 0=无预测).
+    // 由 main.cpp 用 Track::predictGateMs 计算后经 setVirtual() 设置.
+    uint32_t virt_first_ms = 0;
+    uint32_t virt_pitch_ms = 0;
 
     Sorter() = default;
     explicit Sorter(int n_) { n = n_; }
@@ -54,6 +62,7 @@ class Sorter {
             if (state_str == "fault") {
                 state_str = "ready";
                 pending = false;
+                virt_first_ms = virt_pitch_ms = 0;
                 r.handled = r.ok = true;
                 last_note.clear();
                 return r;
@@ -62,6 +71,7 @@ class Sorter {
                 // 取消光门预置: 不拨料, 回 ready
                 state_str = "ready";
                 pending = false;
+                virt_first_ms = virt_pitch_ms = 0;
                 r.handled = r.ok = true;
                 r.note = "cancelled";
                 return r;
@@ -93,6 +103,7 @@ class Sorter {
         pend_job_id = job_id ? job_id : "";
         bool photo = trigger && !strcmp(trigger, "photo");
         pend_photo = photo;
+        virt_first_ms = virt_pitch_ms = 0;   // 新 job 重新设置 (main.cpp setVirtual)
         if (photo) {
             state_str = "armed";   // 等光门
             armed_at_ms = now_ms;
@@ -103,6 +114,14 @@ class Sorter {
         return r;
     }
 
+    // 设置虚拟光门预测 (仅 armed 时有意义; main.cpp 在 handleCmd 后调用):
+    // first_ms = 预测首件过光门线时刻, pitch_ms = 件距 (0 = 首件之后无预测).
+    void setVirtual(uint32_t first_ms, uint32_t pitch_ms) {
+        if (state_str != "armed") return;
+        virt_first_ms = first_ms;
+        virt_pitch_ms = pitch_ms;
+    }
+
     // 光门被物品通过 (每分拣器 1 路, 由主循环喂). 仅 armed 时生效.
     // 返回 true = 本次沿触发了本分拣器 (ready->busy 迁移).
     bool onGateEdge(uint32_t now_ms) {
@@ -110,6 +129,20 @@ class Sorter {
         if (state_str != "armed") return false;
         state_str = "busy";
         return true;
+    }
+
+    // 虚拟光门: 到预测时刻即触发 (armed -> busy). 第 k 件在
+    // virt_first_ms + (k-1)×virt_pitch_ms 触发 (done_count 件已拨).
+    // 与 onGateEdge 一样仅 armed 时生效; 返回 true = 本次迁移发生.
+    bool onVirtualEdge(uint32_t now_ms) {
+        if (state_str != "armed" || virt_first_ms == 0) return false;
+        uint32_t due = virt_first_ms +
+                       done_count * virt_pitch_ms;
+        if (now_ms >= due) {
+            state_str = "busy";
+            return true;
+        }
+        return false;
     }
 
     // 主循环 tick: armed 超时无物品 -> fault. 返回 true = 本次进入 fault

@@ -13,6 +13,8 @@ Run: .venv/bin/python tests/test_sort_mqtt.py
  8. divert 时序回归: 超时随 qty 缩放 / busy-ack 延长等待 / 不重复拨料
  9. 光门触发: divert trigger=photo (armed->光门->拨出) / 视觉坐标透传 /
    photo 超时 fault 锁存
+ 10. 运动事件时间线: 设备状态迁移 sort/line1/motion -> 网关 GET /motion
+   + relay sort/event/motion / 视觉 pos_mm (带面位置) 透传批次事件
 """
 
 import asyncio
@@ -349,6 +351,8 @@ def main():
                 gw.cfg[k] = v
             else:
                 gw.cfg.pop(k, None)
+        s1.item_ms = 120        # 恢复模拟设备默认节奏 (后续节依赖)
+        s2c.item_ms = 120
 
     # ---------- 9. 光门触发回归 (divert trigger=photo + 视觉坐标透传) ----------
     print("\n== 9. 光门触发 (trigger=photo) ==")
@@ -437,6 +441,69 @@ def main():
             else:
                 gw.cfg.pop(k, None)
     evc.loop_stop(); evc.disconnect()
+
+    # ---------- 10. 运动事件时间线 (sort/line1/motion -> GET /motion + relay) ----------
+    print("\n== 10. 运动事件时间线 (/motion) ==")
+    motion_events = []
+    batch_events10 = []
+
+    def on_motion(c, u, msg):
+        try:
+            motion_events.append(json.loads(msg.payload.decode()))
+        except Exception:
+            pass
+
+    def on_batch10(c, u, msg):
+        try:
+            batch_events10.append(json.loads(msg.payload.decode()))
+        except Exception:
+            pass
+
+    mc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="test-motion")
+    mc.on_message = lambda c, u, msg: (
+        on_motion(c, u, msg) if msg.topic == "sort/event/motion"
+        else on_batch10(c, u, msg))
+    mc.connect("127.0.0.1", BPORT)
+    mc.subscribe("sort/event/motion", qos=0)
+    mc.subscribe("sort/event/batch", qos=1)
+    mc.loop_start()
+    time.sleep(0.3)
+    try:
+        s2c.item_ms = 120   # 确保 2 号分拣器按默认节奏 (防前节污染)
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/motion")
+        check("GET /motion 可用", st == 200 and "motion" in body and "count" in body,
+              f"st={st} body={str(body)[:80]}")
+        n_before = body.get("count", 0)
+        base12 = gw.stats.batches["done"]
+        # red_block -> 2 号分拣器 (s2c), immediate 时序: busy(via=immediate) -> done
+        pub("sort/inbound/vision", {"material": "red_block", "confidence": 0.9,
+                                    "frame_id": "t-motion", "x": 200, "y": 90,
+                                    "w": 40, "h": 30, "pos_mm": 25.5})
+        ok = wait_for(lambda: gw.stats.batches["done"] > base12, 10, "批次 done")
+        check("视觉批次 done", ok)
+        time.sleep(0.5)   # 等运动事件入时间线 (QoS0, 异步)
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/motion")
+        check("时间线有新增", st == 200 and body["count"] > n_before,
+              f"count={body.get('count')} before={n_before}")
+        evs = [e for e in body.get("motion", []) if e.get("sorter") == 2]
+        check("immediate 运动: busy(via=immediate)",
+              any(e["via"] == "immediate" and e["state"] == "busy" for e in evs),
+              f"evs={evs[-3:]}")
+        check("完成运动: ready(via=done)",
+              any(e["via"] == "done" and e["state"] == "ready" for e in evs))
+        check("运动事件含 ts/job_id",
+              all("ts" in e and "job_id" in e for e in body.get("motion", [])))
+        ok = wait_for(lambda: any(e.get("via") == "done" for e in motion_events),
+                      8, "relay sort/event/motion")
+        check("relay sort/event/motion", ok, f"events={motion_events[-3:]}")
+        # pos_mm 透传: 视觉事件带带面位置进批次事件 (上游标定/对账原始数据)
+        ok = wait_for(lambda: any((e.get("vision") or {}).get("pos_mm") == 25.5
+                                  and e.get("phase") in ("done", "fault")
+                                  for e in batch_events10), 8, "pos_mm 透传")
+        check("视觉 pos_mm 透传批次事件", ok,
+              f"ev={batch_events10[-1] if batch_events10 else None}")
+    finally:
+        mc.loop_stop(); mc.disconnect()
 
     pc.loop_stop(); pc.disconnect()
     gw.stop()

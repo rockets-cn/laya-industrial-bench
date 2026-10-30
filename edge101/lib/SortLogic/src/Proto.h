@@ -54,18 +54,38 @@ inline std::string sorterTele(const char* state, uint32_t diverted,
            ",\"ts\":" + jsonStr(ts) + "}";
 }
 
-// 视觉事件: {material, confidence, frame_id, bbox, source, ts}
+// 视觉事件: {material, confidence, frame_id, bbox, pos_mm, source, ts}
+// pos_mm >= 0 时输出: 物品在 t0 时刻的带面位置 (mm, 相机参考系, + 下游),
+// 由 Track::pixelToMm 从像素换算 (上游标定/对账 + 动画轨迹用).
 inline std::string visionJson(const char* material, double conf,
                               const char* frame_id, int x, int y, int w, int h,
-                              const char* ts = "") {
+                              double pos_mm = -1.0, const char* ts = "") {
     char conf_s[32];
     snprintf(conf_s, sizeof(conf_s), "%.3f", conf);
-    return "{\"material\":" + jsonStr(material) +
+    std::string out = "{\"material\":" + jsonStr(material) +
            ",\"confidence\":" + conf_s +
            ",\"frame_id\":" + jsonStr(frame_id ? frame_id : "") +
            ",\"bbox\":[" + std::to_string(x) + "," + std::to_string(y) +
-           "," + std::to_string(w) + "," + std::to_string(h) + "]" +
-           ",\"source\":" + jsonStr("huskylens2") +
+           "," + std::to_string(w) + "," + std::to_string(h) + "]";
+    if (pos_mm >= 0.0) {
+        char pos_s[32];
+        snprintf(pos_s, sizeof(pos_s), "%.1f", pos_mm);
+        out += ",\"pos_mm\":" + std::string(pos_s);
+    }
+    return out + ",\"source\":" + jsonStr("huskylens2") +
+               ",\"ts\":" + jsonStr(ts) + "}";
+}
+
+// 分拣器运动事件: 状态迁移时间线 (动画/台账还原"实际情况"用).
+// via = 迁移原因: immediate (收令即拨) / photo (物理光门沿) / virtual (虚拟光门
+// 预测时刻到) / timeout (光门等待超时 fault) / reset (人工复位) / done (job 完成)
+// / next (photo job 多件: 拨完一件回 armed 等下一件) / cancel (armed 被 reset 取消).
+inline std::string motionJson(int sorter, const char* state, const char* via,
+                              const char* job_id, const char* ts = "") {
+    return "{\"sorter\":" + std::to_string(sorter) +
+           ",\"state\":" + jsonStr(state ? state : "") +
+           ",\"via\":" + jsonStr(via ? via : "") +
+           ",\"job_id\":" + jsonStr(job_id ? job_id : "") +
            ",\"ts\":" + jsonStr(ts) + "}";
 }
 
@@ -83,5 +103,6 @@ inline std::string sorterTeleTopic(int n) {
     return "sort/sorter" + std::to_string(n) + "/telemetry";
 }
 inline std::string visionTopic() { return "sort/inbound/vision"; }
+inline std::string motionTopic() { return "sort/line1/motion"; }
 
 }  // namespace sort

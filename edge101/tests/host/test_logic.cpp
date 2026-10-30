@@ -1,6 +1,7 @@
 // 主机单测: SortLogic (Conveyor/Sorter/HuskyLens/Proto)
 // 与 sim_devices 语义对拍. 编译运行: ./run_tests.sh
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -9,6 +10,7 @@
 #include "Conveyor.h"
 #include "Sorter.h"
 #include "Gate.h"
+#include "Track.h"
 #include "HuskyLens.h"
 #include "Proto.h"
 #include "McpEn.h"
@@ -187,7 +189,17 @@ static void testProto() {
     std::string vis = visionJson("blue_block", 1.0, "hl2-1", 1, 2, 3, 4);
     check("vision JSON", vis.find("\"confidence\":1.000") != std::string::npos
                           && vis.find("\"bbox\":[1,2,3,4]") != std::string::npos
-                          && vis.find("\"source\":\"huskylens2\"") != std::string::npos);
+                          && vis.find("\"source\":\"huskylens2\"") != std::string::npos
+                          && vis.find("pos_mm") == std::string::npos);
+    std::string vis2 = visionJson("blue_block", 1.0, "hl2-2", 1, 2, 3, 4, 37.5);
+    check("vision JSON 带 pos_mm",
+          vis2.find("\"pos_mm\":37.5") != std::string::npos);
+
+    std::string motion = motionJson(2, "busy", "virtual", "j55");
+    check("motion JSON", motion.find("\"sorter\":2") != std::string::npos
+                           && motion.find("\"state\":\"busy\"") != std::string::npos
+                           && motion.find("\"via\":\"virtual\"") != std::string::npos
+                           && motion.find("\"job_id\":\"j55\"") != std::string::npos);
 
     check("conveyor cmd topic", conveyorCmdTopic() == "sort/line1/conveyor/cmd");
     check("conveyor ack topic",
@@ -196,6 +208,7 @@ static void testProto() {
     check("sorter2 ack topic", sorterAckTopic(2, "jX") == "sort/sorter2/ack/jX");
     check("sorter3 tele topic", sorterTeleTopic(3) == "sort/sorter3/telemetry");
     check("vision topic", visionTopic() == "sort/inbound/vision");
+    check("motion topic", motionTopic() == "sort/line1/motion");
 }
 
 // ---- MCP23017 fake I2C ----
@@ -401,6 +414,135 @@ static void testSorterPhoto() {
     }
 }
 
+// ---- Track: 带面位置跟踪 (虚拟光门) ----
+static void testTrack() {
+    printf("\n== Track 带面位置跟踪 (虚拟光门) ==\n");
+    // pixelToMm: 中心=0, 线性换算, 限幅 ±视野半宽
+    check("像素中心 -> 0mm", Track::pixelToMm(160, 160, 320, 200) == 0.0);
+    check("像素右移 80px -> +50mm",
+          std::fabs(Track::pixelToMm(240, 160, 320, 200) - 50.0) < 1e-9);
+    check("像素左移 40px -> -25mm",
+          std::fabs(Track::pixelToMm(120, 160, 320, 200) - (-25.0)) < 1e-9);
+    check("越界像素限幅 +100mm",
+          std::fabs(Track::pixelToMm(600, 160, 320, 200) - 100.0) < 1e-9);
+    check("越界像素限幅 -100mm",
+          std::fabs(Track::pixelToMm(0, 160, 320, 200) - (-100.0)) < 1e-9);
+    check("view_px<=0 -> 0mm", Track::pixelToMm(0, 160, 0, 200) == 0.0);
+
+    // predictGateMs: t_g = t0 + (gate − p0) / v
+    check("基础预测: 500mm@1m/s -> t0+500ms",
+          Track::predictGateMs(1000, 0.0, 500.0, 1.0) == 1500);
+    check("物品偏下游 100mm -> 提前 100ms",
+          Track::predictGateMs(1000, 100.0, 500.0, 1.0) == 1400);
+    check("物品偏上游 50mm -> 推后 50ms",
+          Track::predictGateMs(1000, -50.0, 500.0, 1.0) == 1550);
+    check("带速 0.5m/s -> 1000ms",
+          Track::predictGateMs(1000, 0.0, 500.0, 0.5) == 2000);
+    check("带停 (v=0) -> 0 (不可预测)",
+          Track::predictGateMs(1000, 0.0, 500.0, 0.0) == 0);
+    check("物品已在光门线外 (p0>gate) -> 0 (调用方按立即执行)",
+          Track::predictGateMs(1000, 600.0, 500.0, 1.0) == 0);
+
+    // onVision/match: 同物料覆盖, 窗口内命中, 超窗/异物料不命中
+    Track t;
+    t.onVision("red_block", 0.0, 1000);
+    t.onVision("green_block", 30.0, 1100);
+    double p0 = -1;
+    uint32_t t0 = 0;
+    check("匹配 red_block (100ms 内)",
+          t.match("red_block", 1050, 3000, &p0, &t0) && p0 == 0.0 && t0 == 1000);
+    check("匹配 green_block p0=30",
+          t.match("green_block", 1200, 3000, &p0, &t0)
+          && std::fabs(p0 - 30.0) < 1e-9 && t0 == 1100);
+    check("超窗不匹配", !t.match("red_block", 1000 + 3000 + 1, 3000));
+    check("异物料不匹配", !t.match("banana", 1100, 3000));
+    check("空物料不匹配", !t.match("", 1100, 3000));
+    // 同物料覆盖: 第二次检测刷新 t0/p0
+    t.onVision("red_block", 80.0, 2000);
+    check("同物料覆盖 (t0=2000 p0=80)",
+          t.match("red_block", 2100, 3000, &p0, &t0)
+          && std::fabs(p0 - 80.0) < 1e-9 && t0 == 2000);
+    // 满表: 8 个异物料后, 新异物料丢弃, 同物料仍可覆盖
+    Track t2;
+    for (int i = 0; i < 8; i++) {
+        char m[16];
+        snprintf(m, sizeof(m), "mat%d", i);
+        t2.onVision(m, 0.0, 100);
+    }
+    t2.onVision("mat_new", 0.0, 200);
+    check("满表新物料丢弃", !t2.match("mat_new", 210, 3000));
+    t2.onVision("mat0", 5.0, 300);
+    check("满表同物料覆盖", t2.match("mat0", 310, 3000, &p0)
+          && std::fabs(p0 - 5.0) < 1e-9);
+}
+
+// ---- Sorter 虚拟光门 (无物理光门的 photo 时序) ----
+static void testSorterVirtual() {
+    printf("\n== Sorter 虚拟光门 (位置预测触发) ==\n");
+    // 基础: armed 后到预测时刻才 busy (之前 tick 不触发)
+    {
+        sort::Sorter s(1);
+        s.handleCmd("divert", "red_block", 1, "photo", "vj1", 0);
+        s.setVirtual(1000, 0);
+        check("armed 等待", std::string(s.state()) == "armed");
+        check("到点前虚拟沿不触发", !s.onVirtualEdge(999)
+              && std::string(s.state()) == "armed");
+        check("到点虚拟沿 -> busy", s.onVirtualEdge(1000)
+              && std::string(s.state()) == "busy");
+    }
+    // 件距节奏: qty=3, 第 k 件在 first+(k-1)×pitch 触发
+    {
+        sort::Sorter s(2);
+        s.handleCmd("divert", "green_block", 3, "photo", "vj2", 0);
+        s.setVirtual(1000, 900);
+        check("第 1 件 @1000", s.onVirtualEdge(1000));
+        s.stepOne(1800);          // 拨出耗时 800ms 后完成第 1 件
+        check("拨完 1 件回 armed", std::string(s.state()) == "armed"
+              && s.done_count == 1);
+        check("第 2 件 @1900 前不触发", !s.onVirtualEdge(1899)
+              && std::string(s.state()) == "armed");
+        check("第 2 件 @1900 触发", s.onVirtualEdge(1900)
+              && std::string(s.state()) == "busy");
+        s.stepOne(2700);
+        check("第 3 件 @2800 触发", s.onVirtualEdge(2800));
+        s.stepOne(3600);
+        check("3 件拨完 -> ready", std::string(s.state()) == "ready"
+              && s.diverted_total == 3);
+    }
+    // 未 setVirtual 的 photo job: 虚拟沿无效 (走物理光门/超时)
+    {
+        sort::Sorter s(3);
+        s.handleCmd("divert", "blue_block", 1, "photo", "vj3", 0);
+        check("无预测时虚拟沿不触发", !s.onVirtualEdge(99999)
+              && std::string(s.state()) == "armed");
+        check("无预测仍受光门超时约束",
+              s.tick(sort::kPhotoTimeoutMs + 1)
+              && std::string(s.state()) == "fault");
+    }
+    // reset 清虚拟预测
+    {
+        sort::Sorter s(1);
+        s.handleCmd("divert", "red_block", 1, "photo", "vj4", 0);
+        s.setVirtual(5000, 0);
+        auto r = s.handleCmd("reset", nullptr, 0, "immediate", "vj5", 100);
+        check("armed reset 清虚拟预测", r.ok && s.virt_first_ms == 0
+              && s.virt_pitch_ms == 0);
+        s.handleCmd("divert", "red_block", 1, "photo", "vj6", 200);
+        s.setVirtual(9000, 0);
+        s.setFault();
+        auto r2 = s.handleCmd("reset", nullptr, 0, "immediate", "vj7", 300);
+        check("fault reset 清虚拟预测", r2.ok && s.virt_first_ms == 0);
+    }
+    // setVirtual 仅 armed 生效 (busy 时忽略)
+    {
+        sort::Sorter s(1);
+        s.handleCmd("divert", "red_block", 1, "immediate", "vj8", 0);
+        s.setVirtual(10, 10);
+        check("busy 时 setVirtual 无效", s.virt_first_ms == 0
+              && std::string(s.state()) == "busy");
+    }
+}
+
 int main() {
     testConveyor();
     testSorter();
@@ -409,6 +551,8 @@ int main() {
     testMcpEn();
     testGate();
     testSorterPhoto();
+    testTrack();
+    testSorterVirtual();
     printf("\n%s\n", FAIL ? "有失败 ✗" : "全部通过 ✔");
     printf("PASS %d  FAIL %d\n", PASS, FAIL);
     return FAIL ? 1 : 0;

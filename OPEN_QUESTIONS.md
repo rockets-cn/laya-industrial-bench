@@ -13,7 +13,8 @@
 | ③ | loop_ui /dispatch 把网关 202 压成 200 | `JSONResponse(..., status_code=r.status)` 透传 | TestClient + stub 网关: 202/409/422 全透传 |
 | ④ | 契约字段漂移 (ts 全 ""; steps_total vs items_in) | 契约明确: `state` 必填, 其余设备可选; `steps_total`/`items_in` 不同量纲并列; `ts` 无 RTC 可 `""` (网关忽略, 后续 NTP) | docs/sort-mqtt.md 命令/应答/遥测三节重写, 与代码行为一致 |
 | ⑤ | STEPS_PER_MM / 物料映射是假设 | 未修 (需现场): 新增 OPEN #6⑧ (RMT 下按 1m/s 实测带速反推 STEPS_PER_MM); 物料映射仍 OPEN #1 | — |
-| ⑥ | 拨料时序: divert 收命令即执行, 物品位置无处安放 (分拣器对位置一无所知) | **光门触发** (方案 C): divert `trigger=photo` → 分拣器 `armed`, 拨料器**前侧 (上游)** 光门落沿才拨 (安装距离 = 带速×(动作时间+余量), 公式入 docs/sort-mqtt.md「光门时序」); qty>1 每件各等一次光门; 5s 无物品 → fault "photo timeout" + job_id 回 ack; 光门未接自动回退 immediate; 视觉坐标 x/y/w/h 随批次事件/台账透传 (方案 B) | 主机单测 104 项 (Gate 边沿去抖 + Sorter photo 全路径); E2E 第 9 节 7 项 (photo 触发拨出 / trigger 字段 / armed 状态 / 坐标透传 / photo 超时 fault 锁存 / 清除恢复); BOM 新增 光门 ×3 (OPEN #6⑨) |
+| ⑥ | 拨料时序: divert 收命令即执行, 物品位置无处安放 (分拣器对位置一无所知) | **光门触发** (方案 C): divert `trigger=photo` → 分拣器 `armed`, 推杆**前侧 (上游)** 光门落沿才推 (安装距离 = 带速×(动作时间+余量), 公式入 docs/sort-mqtt.md「光门时序」); qty>1 每件各等一次光门; 5s 无物品 → fault "photo timeout" + job_id 回 ack; 视觉坐标 x/y/w/h + pos_mm 带面位置随批次事件/台账透传 (方案 B) | 主机单测 104 项 (Gate 边沿去抖 + Sorter photo 全路径); E2E 第 9 节 7 项 (photo 触发拨出 / trigger 字段 / armed 状态 / 坐标透传 / photo 超时 fault 锁存 / 清除恢复); BOM 新增 光门 ×3 (OPEN #6⑨) |
+| ⑦ | 光门未安装 (BOM ⑨ OPEN) 时 photo 时序无法成立 — 实机只能 immediate, 与 `gate_layout.svg` 时序不符; 且设备运动无遥测, 网页示意图无法反映实际 | **虚拟光门 + 运动事件时间线**: 无物理光门时按「HL2 检测锚点 (像素→带面位置) + 带速匀速外推」预测物品过光门线时刻, 到点推杆 (固件 `Track.h`, 纯逻辑可单测); 解析顺序 物理光门 → 虚拟光门 → immediate; 固件每次分拣器状态迁移广播 `sort/line1/motion` (via=immediate/photo/virtual/...), 网关环形缓冲 + relay `sort/event/motion` + `GET /motion`; 视觉事件带 `pos_mm` | 主机单测 141 项 (Track 位置跟踪/预测 + Sorter 虚拟光门全路径 + 协议); E2E 52 项 (第 10 节 8 项: 时间线顺序 via=photo/relay/缓冲/HTTP/pos_mm/取消/injected); `pio run` 双环境 SUCCESS; 文档: sort-mqtt.md 虚拟光门节 + wiring.md 标定方法 + README×2 |
 
 同时: sim_devices 改为按件计时 (默认 900ms/件, 全拨完才回 ok, busy 守卫),
 E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
@@ -78,15 +79,21 @@ E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
       的偏差即导程/细分误差, 同步改 config.h STEPS_PER_MM 与网关
       conveyor_speed_mps。驱动器闭环模式下丢步由编码器兜底, 但带速刻度
       必须标对。
-   ⑨ **光门 ×3 (新, 2026-10-30, 拨料时序触发, divert trigger=photo)**:
+   ⑨ **光门 ×3 (新, 2026-10-30, 推杆推出时序触发, divert trigger=photo)**:
       透过式光电开关, **NPN 开集**输出, 5V, 如 E3T-ST61 或同级
-      (必须 NPN 开集 — PNP 源型与 MCP23017 内部上拉不配)。每拨料器 1 路,
-      装拨料器**前侧 (上游)**: 距推料点 = 带速 × (拨料动作时间 + 余量)
+      (必须 NPN 开集 — PNP 源型与 MCP23017 内部上拉不配)。每推杆 1 路,
+      装推杆**前侧 (上游)**: 距推料点 = 带速 × (推出动作时间 + 余量)
       (公式与标定: docs/sort-mqtt.md「光门时序」)。OUT → MCP23017
       PB0/PB1/PB2 (内部上拉, 挡光=LOW 落沿=物品到达)。装好后把网关
-      `config/sort_gateway.json` 的 `divert_trigger` 改 `"photo"`;
-      未装时保持 `"immediate"` (固件对 photo 自动回退 immediate, 不影响)。
-      接线调试: 串口 `gates`。件距约束 ≥ 带速 × 0.9s。
+      `config/sort_gateway.json` 的 `divert_trigger` 改 `"photo"`。
+      **可选项 (2026-10-30 起)**: 虚拟光门已就绪 — 未装光门时固件按
+      HL2 检测锚点 + 带速预测过光门线时刻 (`divert_trigger=photo` 即可,
+      固件自动走虚拟光门), 网页动画时序照样成立; 光门仍建议安装
+      (实测精度 > 预测, 且带速波动时预测会漂移)。
+      接线调试: 串口 `gates` / `track`。件距约束 ≥ 带速 × 0.9s。
+      **需随装标定** (卷尺量, 改 config.h): `GATE_DIST_MM[3]` 相机参考平面→
+      各光门距离 / `VIEW_WIDTH_MM` 相机视野宽度 / `ITEM_PITCH_MM` photo job 件距
+      (方法: edge101/docs/wiring.md「虚拟光门标定」)。
 7. **16MB Flash 确认**: 固件按 16MB flash 构建。板上芯片若实际是 4MB,
    改 `platformio.ini` 的 `board_build.flash_size` (固件体积远小于 4MB, 不影响)。
 8. **HL2 供电与电平**: 板 5V 直接带 HL2 (峰值 ~1.5W), TX 5V→3.3V 分压。
@@ -111,5 +118,5 @@ E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
 - 实体闭环: 按 `edge101/docs/wiring.md` 接线 → `pio run -t upload` →
   串口 `state` / `sweep` / `stepper` 自测 → 网关 `POST /dispatch` 全链路。
 - 固件编译: ESP32 交叉编译已跑通 (pio run SUCCESS, 2026-10-30, 含 RMT 步进
-  + 光门触发); 主机单测
-  `./edge101/tests/host/run_tests.sh` 104/104 全绿; E2E 44/44 全绿。
+  + 光门触发 + 虚拟光门); 主机单测
+  `./edge101/tests/host/run_tests.sh` 141/141 全绿; E2E 52/52 全绿。

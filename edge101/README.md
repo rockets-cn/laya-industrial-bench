@@ -46,8 +46,9 @@ pio run -t upload          # 烧录 (Type-C USB; 必要时按 BOOT 进下载模�
 pio device monitor         # 115200 串口监视
 
 # 主机单测 (验证纯逻辑, 无需硬件/无需 PIO)
-./tests/host/run_tests.sh  # 104 项: Conveyor/Sorter 状态机 (含光门 photo 全路径),
-                           # HL2 帧+去重, 协议 JSON, MCP23017 EN, 光门边沿去抖
+./tests/host/run_tests.sh  # 141 项: Conveyor/Sorter 状态机 (含光门 photo 全路径
+                           # + 虚拟光门位置预测触发), HL2 帧+去重, 协议 JSON,
+                           # MCP23017 EN, 光门边沿去抖, 带面位置跟踪 Track
 ```
 
 构建已验证 (2026-10-30): `pio run` SUCCESS,
@@ -125,13 +126,22 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
   **光门触发** (`trigger=photo`): divert 先进 `armed` 预置, 推杆**前侧 (上游)**
   光门 (MCP23017 PB0/1/2, 透过式 NPN 开集 + 内部上拉, 每 loop 轮询, 10ms 去抖)
   被物品通过 (落沿) 才推; qty>1 每件推完回 `armed` 各等一次光门;
-  5s 无物品 → fault "photo timeout" + 对 job_id 回 fault ack; 光门未接线
-  (MCP23017 未在线) 时自动回退 immediate (启动日志说明)。安装公式:
+  5s 无物品 → fault "photo timeout" + 对 job_id 回 fault ack。
+  **光门解析顺序**: 物理光门 → **虚拟光门** (光门未接线时: HL2 检测锚点 +
+  带速匀速外推预测物品过光门线时刻, 到点推, `lib/SortLogic/src/Track.h`;
+  预测基于检测时刻, 网络延迟不影响; 标定项 `GATE_DIST_MM/VIEW_WIDTH_MM/
+  ITEM_PITCH_MM` 见 config.h) → 回退 immediate (串口日志说明原因)。
+  安装公式:
   光门 = 推杆推料点 − 带速×(推出动作时间+余量); 布局示意图
   `docs/gate_layout.svg`; 详见 `docs/wiring.md` 光门节与 `docs/sort-mqtt.md`「光门时序」。
 - **视觉**: HL2 对象帧 (type=0x01) 解析 → `{object_type, ID} → material`
   映射表 (config.h `MATERIAL_MAP`, 可换) → 进画面去重 (同物料 500ms 滑动窗,
-  离屏后重入才再报) → 发 `sort/inbound/vision`。
+  离屏后重入才再报) → 发 `sort/inbound/vision` (含 `pos_mm` 带面位置,
+  像素换算 `Track::pixelToMm`; 同时记位置锚点供虚拟光门)。
+- **运动事件**: 分拣器每次状态迁移发 `sort/line1/motion`
+  `{sorter, state, via: immediate|photo|virtual|timeout|reset|done|next|cancel, job_id}`
+  (QoS0) — 网关 `GET /motion` / relay `sort/event/motion`, 供动画还原
+  「推杆何时推出 / 光门何时触发」。
 - **遥测**: 2Hz 发 conveyor + 3×sorter 状态 (网关 5s 无遥测判离线)。
 - **步进 EN**: MCP23017 PA0 接管 (上电自动检测): running=使能,
   stopped/paused/fault=禁能 (停带断线圈电); 未接 MCP23017 时回退 EN 跳线 5V。
@@ -142,6 +152,7 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
 help                 # 列出命令
 state                # 打印 conveyor/sorters/diverted_total/steps
 gates                # 3 路光门: ok (MCP 在线) + s1/s2/s3 (1=通光, 0=挡光)
+track                # 虚拟光门: 带速 + 检测锚点 (物料/p0/时效) + 标定值
 stepstat             # RMT 状态: ready/failed/active/pps/steps_live
 stepinit             # boot 时 RMT 创建失败后, 运行时重试并恢复
 reboot               # 软重启 (esp_restart)

@@ -58,11 +58,31 @@ static const double  STEPS_PER_MM = 320.0;
 // 无物品=HIGH, 物品挡光=LOW。每推杆 1 路: 物品过光门 = "到达推杆前侧"。
 // 固件语义: divert 命令带 trigger=photo 时, 分拣器进入 armed 等光门;
 // 光门落沿触发拨料; 5s (Sorter.h kPhotoTimeoutMs) 无物品 -> fault
-// "photo timeout"。光门未接 / MCP23017 未接时 trigger=photo 自动回退
-// immediate 执行 (ack note 说明), 保证未装光门也能跑通。
+// "photo timeout"。光门未接 / MCP23017 未接时 trigger=photo 先走虚拟光门
+// (下一节), 再回退 immediate 执行 (ack note 说明), 保证未装光门也能跑通。
 static const bool     PHOTO_GATE_ENABLED = true;
 static const uint8_t  PHOTO_GATE_MASK_B  = 0x07;   // PB0+PB1+PB2 -> 1/2/3 号分拣器
 static const uint8_t  PHOTO_GATE_BIT[3]  = {0x01, 0x02, 0x04};
+
+// ---------- 虚拟光门 (带面位置跟踪): 无物理光门时的 photo 时序 ----------
+// 原理: HL2 检测得到 (t0, 像素位置) -> 物品带面位置 p0 (mm, 相机参考系,
+// + = 下游); 匀速外推 p(t) = p0 + v·(t−t0) (v = 传送带当前 speed_mps)。
+// divert trigger=photo 且物理光门未接时, 固件预测物品过各推杆光门线
+// (GATE_DIST_MM[n] = 相机参考平面 -> n 号光门安装位, 沿带面量) 的时刻,
+// 到点推出 -> 与 gate_layout.svg 的时序一致 (物品到光门位置才推)。
+// 解析顺序: 物理光门 -> 虚拟光门 (TRACK_ENABLED 且有同物料窗口内检测且
+// 带速 > 0) -> immediate 回退 (串口日志说明原因)。
+// 标定项 (现场实测, 方法见 edge101/docs/wiring.md "光门/虚拟光门标定"):
+//   VIEW_WIDTH_MM  相机视野在带面平面的宽度 (决定像素 -> mm 换算)
+//   GATE_DIST_MM   相机 -> 各光门的沿带距离 (安装公式见 gate_layout.svg)
+//   ITEM_PITCH_MM  photo job 件距 (>= 带速×单件推出周期, 默认 @1m/s)
+static const bool     TRACK_ENABLED         = true;
+static const uint16_t VIEW_CX_PX            = 160;   // 图像中心 x (HL2 ~320x240)
+static const double   VIEW_WIDTH_PX         = 320.0; // 帧宽 (px)
+static const double   VIEW_WIDTH_MM         = 200.0; // 视野在带面平面的宽度 (mm, 标定项)
+static const double   GATE_DIST_MM[3]       = {500.0, 500.0, 500.0}; // 相机->1/2/3 光门 (mm, 标定项)
+static const double   ITEM_PITCH_MM         = 900.0; // photo job 件距 (mm, 标定项)
+static const uint32_t TRACK_MATCH_WINDOW_MS = 3000;  // 视觉 -> divert 匹配窗 (ms)
 
 // ---------- 舵机 ×3 (PCA9685 I2C @0x40, 通道 0/1/2) ----------
 static const uint8_t SERVO_SDA_PIN  = 18;

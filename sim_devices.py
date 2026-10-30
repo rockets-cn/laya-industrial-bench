@@ -164,6 +164,7 @@ class SorterSim(SimDevice):
     """分拣器: divert -> busy -> ready (diverted_total += qty)."""
 
     def __init__(self, gw_args, rng, n, fixed_fault=False):
+        self.n = n
         self.broker_host, self.broker_port = gw_args.broker_host, gw_args.broker_port
         self.latency = gw_args.latency_ms / 1000.0
         self.no_ack = gw_args.no_ack
@@ -183,6 +184,18 @@ class SorterSim(SimDevice):
         self.photo_wait_s = getattr(gw_args, "photo_wait", 0.35)
         self.photo_timeout_s = getattr(gw_args, "photo_timeout", 3.0)
         self.photo_dead = getattr(gw_args, "photo_dead", False)
+        self.cur_job = None                       # 当前 job_id (运动事件关联)
+
+    def _motion(self, via, state=None):
+        """运动事件: 状态迁移时间线 (与固件 sort/line1/motion 契约一致).
+
+        via: immediate/photo/virtual/timeout/reset/done/next/cancel/injected
+        (injected = 模拟故障注入, 固件侧无对应). 网关维护 GET /motion 时间线,
+        供"让示意图动起来"的动画还原实际情况.
+        """
+        self.client.publish("sort/line1/motion", json.dumps(
+            {"sorter": self.n, "state": state or self.state, "via": via,
+             "job_id": self.cur_job or "", "ts": _now()}), qos=0)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         client.subscribe(self.topic, qos=1)
@@ -195,9 +208,11 @@ class SorterSim(SimDevice):
             if self.state == "fault":
                 self.state = "ready"
                 self._ack(job_id, action, "ok")
+                self._motion("reset")
             elif self.state == "armed":
                 self.state = "ready"      # 取消光门预置: 不拨料
                 self._ack(job_id, action, "ok", note="cancelled")
+                self._motion("cancel")
             else:
                 self._ack(job_id, action, "ok")   # 幂等目标态: no-op ok
             return
@@ -212,6 +227,7 @@ class SorterSim(SimDevice):
             return
         qty = int(payload.get("qty", 1))
         self.last_material = payload.get("material")
+        self.cur_job = job_id
         trigger = payload.get("trigger", "immediate")
 
         def finish():
@@ -219,10 +235,12 @@ class SorterSim(SimDevice):
             if self.rng.random() < self.fault_rate:
                 self.state = "fault"
                 self._ack(job_id, action, "fault", note="injected")
+                self._motion("injected", "fault")
             else:
                 self.diverted_total += qty
                 self.state = "ready"
                 self._ack(job_id, action, "ok", note=self.last_material)
+                self._motion("done", "ready")
 
         if trigger == "photo":
             # 光门触发 (固件: 拨料器前侧光门, 每件各等一次落沿):
@@ -231,6 +249,7 @@ class SorterSim(SimDevice):
             # qty>1 的逐件光门节奏在 E2E 里恒为 qty=1 (视觉单件), 此处
             # 以单次等待近似.
             self.state = "armed"
+            self._motion("photo", "armed")
 
             def arm_then_run():
                 if self.photo_dead:
@@ -239,16 +258,19 @@ class SorterSim(SimDevice):
                         self.state = "fault"
                         self._ack(job_id, action, "fault",
                                   note="photo timeout")
+                        self._motion("timeout", "fault")
                     return
                 time.sleep(self.photo_wait_s)
                 if self.state != "armed":   # 等待期间被 reset 取消
                     return
                 self.state = "busy"
+                self._motion("photo", "busy")
                 finish()
 
             threading.Thread(target=arm_then_run, daemon=True).start()
         else:
             self.state = "busy"
+            self._motion("immediate", "busy")
             threading.Thread(target=finish, daemon=True).start()
 
     def tele_extra(self):

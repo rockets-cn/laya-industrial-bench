@@ -19,6 +19,7 @@
 #include "Conveyor.h"
 #include "Sorter.h"
 #include "Gate.h"
+#include "Track.h"
 #include "HuskyLens.h"
 #include "Proto.h"
 #include "ServoI2C.h"
@@ -28,6 +29,7 @@
 static sort::Conveyor conv;
 static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter(3)};
 static sort::HuskyLens hl2(MATERIAL_MAP, MATERIAL_MAP_LEN, HL2_RETRIGGER_MS);
+static sort::Track track;         // 带面位置跟踪 (虚拟光门; 配置见 config.h)
 
 static HardwareSerial hlSerial(2);            // UART2 重映射到 GPIO5/12
 static NetworkClient ethClient;               // 3.x: 以太网客户端 (自动绑定默认 netif)
@@ -191,6 +193,15 @@ static void publishConveyorAck(const char* job_id, const char* action,
                  sort::ackJson(job_id, action, result, note).c_str(), true);
 }
 
+// 运动事件: 分拣器每次状态迁移广播一条 (sort/line1/motion, QoS0 非保留).
+// via = 迁移原因 (immediate/photo/virtual/timeout/reset/done/next/cancel).
+// 网关据此维护 GET /motion 时间线, 供"让示意图动起来"的动画还原实际情况.
+static void publishMotion(int n, const char* state, const char* via) {
+    mqtt.publish(sort::motionTopic().c_str(),
+                 sort::motionJson(n, state, via,
+                                  lastJobId[n - 1].c_str()).c_str(), false);
+}
+
 static void sweepStart(int n) {
     SweepTask& t = sweeps[n - 1];
     t.n = n; t.active = true; t.inEject = true;
@@ -214,11 +225,13 @@ static void sweepTick() {
                 t.active = false;
                 publishSorterAck(t.n, lastJobId[t.n - 1].c_str(), "divert",
                                  "ok", s.mat());
+                publishMotion(t.n, "ready", "done");
                 lastDoneJob[t.n - 1] = lastJobId[t.n - 1].c_str();
                 lastDoneAtMs[t.n - 1] = millis();
             } else if (s.state_str == "armed") {
                 // photo job 中间件: 等下一件的光门沿, 本扫掠到此为止
                 t.active = false;
+                publishMotion(t.n, "armed", "next");
             } else {
                 t.inEject = true;                 // immediate: 连续拨下一件
                 t.phaseAt = now;
@@ -269,22 +282,55 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
         const char* material = doc["material"] | "";
         int qty = doc["qty"] | 1;
         const char* trigger = doc["trigger"] | "immediate";
-        // 光门不可用 (未接 MCP23017/光门) 时 trigger=photo 自动回退 immediate,
-        // 保证未装光门也能跑通 (回退在 ack note 里说明).
+        // 光门解析顺序: 物理光门 -> 虚拟光门 (未装光门时, 用相机检测锚点 +
+        // 带速匀速外推预测物品过光门线时刻, 见 Track.h / config.h) -> immediate.
+        // 回退原因写串口日志, 保证未装光门也能跑通 (时序与 gate_layout.svg 对齐).
         bool wantPhoto = !strcmp(trigger, "photo");
         bool photo = wantPhoto && gateOk;
-        if (wantPhoto && !gateOk)
-            Serial.println("[gate] trigger=photo 但光门不可用, 回退 immediate");
+        bool useVirtual = false;
+        uint32_t virtAt = 0;
+        if (wantPhoto && !gateOk && TRACK_ENABLED &&
+            action && !strcmp(action, "divert")) {
+            double p0 = 0.0;
+            uint32_t t0 = 0;
+            if (track.match(material, millis(), TRACK_MATCH_WINDOW_MS,
+                            &p0, &t0)) {
+                virtAt = sort::Track::predictGateMs(
+                    t0, p0, GATE_DIST_MM[n - 1], conv.speed_mps);
+                if (virtAt > millis()) {
+                    photo = true;
+                    useVirtual = true;
+                    Serial.printf("[vgate] 分拣器%d 虚拟光门: 预测 %lums 后过光门线 (v=%.2f m/s p0=%+.0fmm)\n",
+                                  n, (unsigned long)(virtAt - millis()),
+                                  conv.speed_mps, p0);
+                }
+            }
+        }
+        if (wantPhoto && !photo)
+            Serial.println("[gate] trigger=photo 但物理光门不可用且虚拟光门未匹配 (无同物料窗口内检测/带停/物品已过光门线), 回退 immediate");
         auto r = sorters[n - 1].handleCmd(action, material, qty,
                                           photo ? "photo" : "immediate",
                                           job_id, millis());
         if (!r.handled) return;
+        if (useVirtual && r.ok &&
+            !strcmp(sorters[n - 1].state(), "armed")) {
+            // 件距 -> 件间时刻间隔 (ms): m/s 与 mm/ms 数值相等
+            uint32_t pitch_ms = conv.speed_mps > 0.0
+                ? (uint32_t)(ITEM_PITCH_MM / conv.speed_mps) : 0;
+            sorters[n - 1].setVirtual(virtAt, pitch_ms);
+        }
         if (action && !strcmp(action, "reset")) {
             publishSorterAck(n, job_id, "reset", r.ok ? "ok" : "busy",
                              r.note.c_str());
+            if (r.ok)
+                publishMotion(n, "ready", r.note == "cancelled" ? "cancel"
+                                                                 : "reset");
         } else if (r.ok) {
+            const char* via = useVirtual ? "virtual"
+                              : (photo ? "photo" : "immediate");
+            publishMotion(n, sorters[n - 1].state(), via);
             if (std::strcmp(sorters[n - 1].state(), "armed") != 0)
-                sweepStart(n);    // immediate: 立即拨; photo: 等光门落沿再拨
+                sweepStart(n);    // immediate: 立即拨; photo/虚拟: 等光门沿再拨
         } else {
             const char* res = (r.note == "sorter fault") ? "fault" : "busy";
             publishSorterAck(n, job_id, "divert", res, r.note.c_str());
@@ -315,18 +361,23 @@ static void mqttConnect() {
 static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
     char fid[24];
     snprintf(fid, sizeof(fid), "hl2-%lu", (unsigned long)ev.seq);
+    // 位置锚点: 像素横坐标 -> 带面 mm (相机参考系), 供虚拟光门预测
+    // 与动画轨迹还原 (pos_mm 随视觉事件透传网关, 见 Proto.h visionJson).
+    double p0 = sort::Track::pixelToMm(ev.x, VIEW_CX_PX, VIEW_WIDTH_PX,
+                                       VIEW_WIDTH_MM);
+    track.onVision(ev.material.c_str(), p0, now_ms);
     std::string p = sort::visionJson(ev.material.c_str(), 1.0, fid,
-                                     ev.x, ev.y, ev.w, ev.h);
+                                     ev.x, ev.y, ev.w, ev.h, p0);
     mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
-    Serial.printf("[vision] %s id=%s\n", ev.material.c_str(), fid);
-    (void)now_ms;
+    Serial.printf("[vision] %s id=%s pos=%+.0fmm\n",
+                  ev.material.c_str(), fid, p0);
 }
 
 // ================= 串口控制台 (调试) =================
 static String consoleBuf;
 static void onSerialCmd(const String& line) {
     if (line == "help") {
-        Serial.println("help | state | eth | mqtt | stepstat | stepinit | gates | reboot | stepper <n> | sweep <n> | vision <material>");
+        Serial.println("help | state | eth | mqtt | stepstat | stepinit | gates | track | reboot | stepper <n> | sweep <n> | vision <material>");
     } else if (line == "gates") {
         bool hi0 = true, hi1 = true, hi2 = true;
         if (gateOk) mcpGate.poll(hi0, hi1, hi2);
@@ -388,9 +439,31 @@ static void onSerialCmd(const String& line) {
     } else if (line.startsWith("vision")) {
         String m = line.substring(8);
         m.trim();
-        std::string p = sort::visionJson(m.c_str(), 1.0, "console", 0, 0, 0, 0);
+        // 注入视觉事件: 视为物品此刻在相机中心 (p0=0mm), 同时记位置锚点,
+        // 之后 trigger=photo 的 divert 可走虚拟光门 (真机时序验证用).
+        track.onVision(m.c_str(), 0.0, millis());
+        std::string p = sort::visionJson(m.c_str(), 1.0, "console",
+                                         0, 0, 0, 0, 0.0);
         mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
-        Serial.printf("vision %s published\n", m.c_str());
+        Serial.printf("vision %s published (pos anchor set, p0=0mm)\n", m.c_str());
+    } else if (line == "track") {
+        char buf[192] = {0};
+        int off = snprintf(buf, sizeof(buf),
+            "track: v=%.2f m/s (= %.2f mm/ms) pitch=%.0fmm win=%ums",
+            conv.speed_mps, conv.speed_mps, ITEM_PITCH_MM,
+            (unsigned)TRACK_MATCH_WINDOW_MS);
+        for (int i = 0; i < sort::Track::kMaxAnchors; i++) {
+            const sort::Track::Anchor& a = track.anchors[i];
+            if (a.valid)
+                off += snprintf(buf + off, sizeof(buf) - off,
+                                " | %s p0=%+.0fmm age=%lums", a.material,
+                                a.p0_mm,
+                                (unsigned long)(millis() - a.t0_ms));
+        }
+        Serial.printf("%s\n", buf);
+        Serial.printf("gates: s1=%.0fmm s2=%.0fmm s3=%.0fmm view=%.0fmm (config.h)\n",
+                      GATE_DIST_MM[0], GATE_DIST_MM[1], GATE_DIST_MM[2],
+                      VIEW_WIDTH_MM);
     } else if (line == "mqtt") {
         Serial.printf("mqtt: connected=%d server=%s:%d\n",
                       mqtt.connected() ? 1 : 0,
@@ -504,9 +577,13 @@ void setup() {
             gateOk = true;
             Serial.println("[gate] 光门 x3 -> MCP23017 PB0/1/2 (divert trigger=photo 时序触发)");
         } else {
-            Serial.println("[gate] 光门不可用 (MCP23017 未在线或配置失败), trigger=photo 将回退 immediate");
+            Serial.println("[gate] 光门不可用 (MCP23017 未在线或配置失败), trigger=photo 走虚拟光门或回退 immediate");
         }
     }
+    if (TRACK_ENABLED)
+        Serial.printf("[vgate] 虚拟光门已启用: 光门距离 %.0f/%.0f/%.0fmm 件距 %.0fmm 视野 %.0fmm (标定项见 config.h / wiring.md)\n",
+                      GATE_DIST_MM[0], GATE_DIST_MM[1], GATE_DIST_MM[2],
+                      ITEM_PITCH_MM, VIEW_WIDTH_MM);
 
     hlSerial.begin(HL2_BAUD, SERIAL_8N1, HL2_RX_PIN, HL2_TX_PIN);
     Serial.printf("[hl2] UART2 @%lu rx=GPIO%d tx=GPIO%d\n",
@@ -546,9 +623,19 @@ void loop() {
             if (gates[i].onItemEdge(hi, millis()) &&
                 sorters[i].onGateEdge(millis())) {
                 sweepStart(i + 1);
+                publishMotion(i + 1, "busy", "photo");
                 Serial.printf("[gate] 分拣器%d 光门触发, 开始拨料 (剩 %d 件)\n",
                               i + 1, sorters[i].pendingQty());
             }
+        }
+    }
+    // 虚拟光门: 无物理光门时, 到预测的过光门线时刻触发 (armed -> busy).
+    for (int i = 0; i < 3; i++) {
+        if (sorters[i].onVirtualEdge(millis())) {
+            sweepStart(i + 1);
+            publishMotion(i + 1, "busy", "virtual");
+            Serial.printf("[vgate] 分拣器%d 虚拟光门触发, 开始拨料 (剩 %d 件)\n",
+                          i + 1, sorters[i].pendingQty());
         }
     }
     // armed 光门等待超时 -> fault + 对 job_id 回 fault ack
@@ -558,6 +645,7 @@ void loop() {
                           i + 1, (unsigned)sort::kPhotoTimeoutMs);
             publishSorterAck(i + 1, sorters[i].pendingJobId().c_str(),
                              "divert", "fault", "photo timeout");
+            publishMotion(i + 1, "fault", "timeout");
         }
     }
 

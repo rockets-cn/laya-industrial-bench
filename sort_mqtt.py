@@ -8,13 +8,17 @@
 设备侧 MQTT 约定 (详见 docs/sort-mqtt.md, 模拟设备见 sim_devices.py):
   下行命令 (QoS1):
     sort/line1/conveyor/cmd     {"job_id","action":"start|stop|pause|resume","speed_mps"}
-    sort/sorter{n}/cmd          {"job_id","action":"divert|reset","material","qty"}
+    sort/sorter{n}/cmd          {"job_id","action":"divert|reset","material","qty","trigger"}
   上行应答 (QoS1, 网关按 job_id 关联):
     sort/line1/conveyor/ack/{job_id}  {"action","result":"ok|busy|fault","note"}
     sort/sorter{n}/ack/{job_id}       同上
   遥测 (设备周期发布, QoS1):
     sort/line1/conveyor/telemetry  {"state":"stopped|running|paused|fault","ts"}
-    sort/sorter{n}/telemetry       {"state":"ready|busy|fault","ts"}
+    sort/sorter{n}/telemetry       {"state":"ready|armed|busy|fault","ts"}
+  运动事件 (设备状态迁移时发, QoS0; 推杆何时推出/光门何时触发):
+    sort/line1/motion  {"sorter","state","via":"immediate|photo|virtual|
+                        timeout|reset|done|next|cancel","job_id","ts"}
+    网关维护时间线 GET /motion (保留最近 motion_keep 条) + relay sort/event/motion
   人工: sort/human/fault_clear 任意 payload -> 清除故障锁存
 
 统计 (统计分发): 内存计数 + JSONL 台账 (stats/sort_ledger.jsonl, 每 job 一行)
@@ -65,11 +69,15 @@ DEFAULT_CFG = {
     "busy_wait_s": 3.0,
     "busy_wait_max_ext": 3,
     # 拨料触发方式: immediate=收到命令即拨 (默认, 时序靠安装距离标定);
-    # photo=设备等拨料器前侧光门被物品通过才拨 (时序与网络延迟解耦,
-    # 需固件侧 MCP23017 PB0/1/2 接光门; 未接时固件自动回退 immediate).
+    # photo=设备等拨料器前侧光门被物品通过才拨 (时序与网络延迟解耦;
+    # 固件侧 MCP23017 PB0/1/2 接光门走物理光门, 未接时走虚拟光门
+    # (相机检测锚点+带速预测, 见固件 Track.h), 再无匹配才回退 immediate).
     "divert_trigger": "immediate",
     # photo 模式的额外超时预算: 相机->光门的物品行程 + 光门反应时间.
     "photo_margin_s": 3.0,
+    # 运动事件时间线 (sort/line1/motion): 保留最近 N 条, GET /motion 供
+    # "让示意图动起来"的动画还原实际情况 (推杆何时推出/光门何时触发).
+    "motion_keep": 100,
     "stats_period_s": 5.0,
     "stop_conveyor_after_batch": True,
     "queue_max": 16,
@@ -221,6 +229,9 @@ class SortGateway:
         self._rr_counter = {}                      # round_robin 每物料轮转计数
         self._rr_lock = threading.Lock()
         self._job_seq = 0
+        # 运动事件时间线 (设备 sort/line1/motion -> 环形缓冲 + relay):
+        # 动画还原"实际情况"用, 保留最近 motion_keep 条.
+        self.motion = deque(maxlen=int(self.cfg.get("motion_keep", 100)))
         self._seq_lock = threading.Lock()
         self._stop = threading.Event()
 
@@ -238,6 +249,7 @@ class SortGateway:
         # 注意: paho-mqtt 2.x 要求 + / # 独占一级, "sort/sorter+/..." 是非法过滤器
         return [f"sort/{c}/conveyor/telemetry", f"sort/{c}/conveyor/ack/+",
                 "sort/+/telemetry", "sort/+/ack/+",
+                f"sort/{c}/motion",
                 "sort/inbound/command", "sort/inbound/vision",
                 "sort/human/fault_clear"]
 
@@ -285,6 +297,21 @@ class SortGateway:
             self._on_vision(payload)
         elif t == "sort/human/fault_clear":
             self.clear_fault("mqtt")
+        else:
+            m = re.match(r"sort/([^/]+)/motion$", t)
+            if m and m.group(1) == self.cfg["conveyor_id"]:
+                self._on_motion(payload)
+
+    def _on_motion(self, payload):
+        """设备运动事件 (状态迁移时间线): 记环形缓冲 + relay 到
+        sort/event/motion (QoS0), 供动画/台账消费者还原实际情况."""
+        ev = {"ts": _now(),
+              "sorter": payload.get("sorter"),
+              "state": payload.get("state"),
+              "via": payload.get("via"),
+              "job_id": payload.get("job_id", "")}
+        self.motion.append(ev)
+        self._publish("sort/event/motion", ev)
 
     def _set_ack(self, kind, name, job_id, payload):
         with self._pending_lock:
@@ -311,13 +338,13 @@ class SortGateway:
         if sorter is None:
             self.stats.vision_event("unknown")
             return
-        # 视觉坐标 (HL2 像素系) 随批次留痕: 网关目前不消费, 但上游标定
-        # (相机几何 -> 物品在带上的实际位置, 见 docs/sort-mqtt.md "标定")
-        # 与料道末端对账需要这份原始数据, 不能在这里丢掉.
+        # 视觉坐标 (HL2 像素系 + 固件换算的带面位置 pos_mm) 随批次留痕:
+        # 网关目前不消费, 但上游标定 (相机几何 -> 物品在带上的实际位置,
+        # 见 docs/sort-mqtt.md "标定") 与料道末端对账需要这份原始数据.
         vision = {"material": material, "confidence": conf}
         if payload.get("frame_id") is not None:
             vision["frame_id"] = payload.get("frame_id")
-        for k in ("x", "y", "w", "h"):
+        for k in ("x", "y", "w", "h", "pos_mm"):
             v = payload.get(k)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 vision[k] = v
@@ -616,6 +643,11 @@ class SortGateway:
                     s = gw.stats.summary()
                     s["fault"] = gw.fault
                     self._send(200, s)
+                elif self.path == "/motion":
+                    # 运动事件时间线 (设备状态迁移: 推杆何时推出/光门何时触发):
+                    # "让示意图动起来"的动画据此还原实际情况.
+                    self._send(200, {"count": len(gw.motion),
+                                      "motion": list(gw.motion)})
                 else:
                     self._send(404, {"error": "not found"})
 
