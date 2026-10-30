@@ -442,7 +442,7 @@ PAGE = """<!doctype html>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
 <div id="cards" class="cards"></div>
-<div id="stockbar" style="margin:10px 0 4px;font-size:13px;color:#9aa3b2"></div>
+<div id="stockbar" style="margin:10px 0 4px;font-size:13px;color:#9aa3b2;background:#171a21;border:1px solid #262b36;border-radius:10px;padding:9px 14px"></div>
 <div id="yardcards" class="cards"></div>
 <div id="ledger" style="display:none;margin:14px 0"></div>
 <div id="out"></div>
