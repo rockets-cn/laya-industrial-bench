@@ -291,6 +291,12 @@ def presets():
 
 
 # ---- 出入库台账 (yard_ledger.py, SQLite: data/yard_ledger.db) ----
+@app.get("/stock")
+def stock_get():
+    """当前库存 (入-出, 不含流水) — 页面「常驻库存条」用, 比 /ledger 轻."""
+    return yard_ledger.stock()
+
+
 @app.get("/ledger")
 def ledger_get():
     """当前库存 (入-出) + 最近流水 — 页面「📦 仓库台账」面板用."""
@@ -404,7 +410,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v12 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite) · 失败降级 暂停+人工</span></h1>
+<h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v13 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite)+常驻库存条 · 失败降级 暂停+人工</span></h1>
 <svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
  <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
@@ -436,6 +442,7 @@ PAGE = """<!doctype html>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
 <div id="cards" class="cards"></div>
+<div id="stockbar" style="margin:10px 0 4px;font-size:13px;color:#9aa3b2"></div>
 <div id="yardcards" class="cards"></div>
 <div id="ledger" style="display:none;margin:14px 0"></div>
 <div id="out"></div>
@@ -453,6 +460,20 @@ function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div c
 function sec(t){return `<div class="sec">${t}</div>`}
 const domain='yard'; // 页面专属仓库分拣 (后端 API 仍支持 fruit/block/mixed 基准域; 域标识保持 yard 不变)
 const LEDGER_MAT={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
+// ---- 常驻库存条 (GET /stock; 仓库信息之上, 不用点台账面板就能看到总库存) ----
+async function refreshStock(){
+ try{
+  const d=await (await fetch('/stock')).json();
+  const agg={};[1,2,3].forEach(y=>Object.entries(d.yards[y].items).forEach(([m,v])=>{
+   if(v>0)agg[m]=(agg[m]||0)+v}));
+  const det=Object.entries(agg).sort((a,b)=>b[1]-a[1])
+   .map(([m,v])=>(LEDGER_MAT[m]||m)+' '+v).join(' · ');
+  const parts=[1,2,3].map(y=>{const t=d.yards[y].total;
+   return y+'号 '+(t>0?t+'件':(t<0?'负'+Math.abs(t):'空'))}).join(' · ');
+  $('stockbar').innerHTML='📦 库存 <b style="color:#e5e9f0">'+parts+'</b> · 共 '+d.grand_total+' 件'
+   +(det?' <span style="color:#6b7383">('+det+')</span>':'');
+ }catch(e){$('stockbar').textContent='📦 库存: 加载失败 '+(e.message||e)}
+}
 // ---- 仓库台账 (yard_ledger.py, SQLite): 库存=入-出; 分拣下发自动记入, 面板内可手动记出 ----
 let ledOpen=false;
 function toggleLedger(){ledOpen=!ledOpen;$('ledger').style.display=ledOpen?'block':'none';if(ledOpen)refreshLedger();}
@@ -475,7 +496,7 @@ async function refreshLedger(){
    +'<input id="loqty" type="number" min="1" max="999" value="1" style="width:72px">'
    +'<button onclick="ledgerOut()">出库</button>'
    +'<button onclick="ledgerReset()" style="margin-left:auto;color:#f87171" title="DELETE 全部流水, 库存归零 (服务无需停止)">🗑 清空台账</button></div>';
-  $('ledger').innerHTML=h;
+  $('ledger').innerHTML=h;refreshStock();
  }catch(e){$('ledger').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
 }
 async function ledgerOut(){
@@ -518,9 +539,10 @@ async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
  }catch(e){lastRun=keep;setLastRun(keep);
   $('out').innerHTML=sec('📤 分拣下发')+`<pre style="color:#f87171">❌ ${e}</pre>`+$('out').innerHTML;}}
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
-function render(d){
+async function render(d){
  drawFlow(d);
  setLastRun(d);
+ refreshStock(); // 常驻库存条: 每次运行后都刷新 (分拣自动记账 / 出库 / 清空 都保持同步)
  // 台账面板开着时, 每次产生可执行下发 (已自动记入) 就刷新
  if(ledOpen&&d.actions&&d.actions.length&&['FAST','EXPAND','PARTIAL'].includes(d.path))refreshLedger();
  const pcls='path-'+d.path;
@@ -786,6 +808,7 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
  }catch(e){ /* localStorage 不可用 (如隐私模式): 不记忆, 开关仍可用 */ }
 })();
 refreshState();
+refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
 </script></div></body></html>"""
 
 
