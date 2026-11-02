@@ -337,6 +337,15 @@
   var BEND=1140;                 // 带面右端 (下游出口): 无指令物品直通从此处离场
   var CAMX=150;                  // HuskyLens 2 相机 x (识别内容显示位置)
   var visLabel='', visUntil=0;   // 相机识别显示: 内容 + 墙钟截止
+  var gateLit=[false,false,false]; // 本帧: 各门是否有物品在过门时间窗 (多物品 OR, 循环后统一点亮)
+  function gateOr(j){ // 物品过门时间窗 (带面时间: 门前 200ms → 门后 900ms, 掉帧不丢)
+    for(var gk=0;3>gk;gk++){
+      if(G[gk]>=j.x0){
+        var tc=j.b0+(G[gk]-j.x0)/VJ*1000; // 过门时刻 (带面时间)
+        if(beltT>=tc-200){if(tc+900>=beltT)gateLit[gk]=true;}
+      }
+    }
+  }
   function startJourney(i,xFrom,now,kind){
     var jm=jobMats[i];
     var qty=jm?jm.qty:1;
@@ -384,19 +393,9 @@
     {m:'block',label:'黄色方块',color:'#facc15'},{m:'block',label:'蓝色方块',color:'#60a5fa'}];
   var nextAmb=0;
   function jmat(i){var jj=journey[i];return jj?(jj.mat?jj.mat:jobMats[i]):jobMats[i];} // 旅程物料: 供血项自带, 任务项取注入
-  function gateFlash(i,j){ // 光门虚线: 物品经过即亮 (带面时间窗: 门前 200ms → 门后 900ms, 掉帧不丢)
-    for(var gk=0;3>gk;gk++){
-      var gl='0';
-      if(G[gk]>=j.x0){
-        var tc=j.b0+(G[gk]-j.x0)/VJ*1000; // 过门时刻 (带面时间)
-        if(beltT>=tc-200){if(tc+900>=beltT)gl='0.80';}
-      }
-      get('gla-gate-'+(gk+1)).setAttribute('opacity',gl);
-      get('gla-gate-'+(gk+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
-    }
-  }
   function twinFrame(now){
     var td=twinData||{};
+    gateLit[0]=false;gateLit[1]=false;gateLit[2]=false; // 多物品 OR 聚合: 每帧从头累加
     // 推料窗口: 任一旅程处于 armed/busy (推杆推入中) → 全带停止, 推完才恢复
     var pushing=false;
     for(var pi=0;3>pi;pi++){
@@ -500,7 +499,7 @@
             get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
             if(!j.pass)showLabel(i);
           }
-          gateFlash(i,j); // 光门虚线: 物品经过即亮 (含本道与其他道, 时间窗防掉帧)
+          gateOr(j); // 光门虚线: 物品经过即亮 (本帧 OR 聚合, 循环后统一点亮, 多物品互不抹除)
           if(!msgJ){
             if(j.pass)msgJ=nm+' 沿带面行走 · 无下发指令直通';
             else msgJ=nm+' 沿带面行走 → '+(i+1)+'号仓 (HuskyLens 2 识别)';
@@ -510,8 +509,6 @@
           rod.setAttribute('y2',(438-36*ex).toFixed(1));
           rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.55');
-          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
-          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-obj-'+(i+1)).setAttribute('opacity','1');
           get('gla-obj-'+(i+1)).setAttribute('transform','translate('+P[i].toFixed(1)+',400)');
           showLabel(i);
@@ -522,8 +519,6 @@
           rod.setAttribute('y2','402.0');
           rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.75');
-          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
-          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           var cc=Math.max(0,(p2-0.35))*CHL/0.65; if(cc>CHL)cc=CHL;
           var op2=cc>=CHL-8?Math.max(0,(CHL-cc)/8):1;
           get('gla-obj-'+(i+1)).setAttribute('opacity',op2.toFixed(2));
@@ -540,8 +535,6 @@
           rod.setAttribute('y2','438.0');
           rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
-          get('gla-gate-'+(i+1)).setAttribute('opacity','0');
-          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-obj-'+(i+1)).setAttribute('opacity','0');
           showLabel(i);
           if(now-j.tWait>=700){
@@ -558,16 +551,12 @@
           rod.setAttribute('y2',(438-36*ex).toFixed(1));
           rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.55');
-          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
-          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-obj-'+(i+1)).setAttribute('opacity','0');
           showLabel(i);
         } else if('busy'===st){ // 推出完成, 物品滑入料道
           rod.setAttribute('y2','402.0');
           rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.75');
-          get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
-          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           var cc=Math.max(0,(p-0.35))*CHL/0.65; if(cc>CHL)cc=CHL;
           var op2=cc>=CHL-8?Math.max(0,(CHL-cc)/8):1;
           get('gla-obj-'+(i+1)).setAttribute('opacity',op2.toFixed(2));
@@ -577,20 +566,29 @@
           rod.setAttribute('y2','438.0');
           rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
-          get('gla-gate-'+(i+1)).setAttribute('opacity','0.90');
-          get('gla-gate-'+(i+1)).setAttribute('stroke','#f87171');
           get('gla-obj-'+(i+1)).setAttribute('opacity','0');
           hideLabel(i);
         } else { // ready: 静止
           rod.setAttribute('y2','438.0');
           rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
-          get('gla-gate-'+(i+1)).setAttribute('opacity','0');
-          get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-obj-'+(i+1)).setAttribute('opacity','0');
           hideLabel(i);
         }
       }
+    }
+    // 光门虚线: 逐道处理完后统一判定 — 全部物品"过门时间窗"OR + 本道推料保持点亮 +
+    // 故障红色告警. 多物品同时在带面时互不抹除 (任一物品在窗口内即亮, 掉帧不丢).
+    for(var gk=0;3>gk;gk++){
+      var gs=(td.sorters?(td.sorters[gk]||{}):{})||{};
+      var gst=gs.state||'ready';
+      var gj2=journey[gk];
+      var gOn=(('armed'===gst)||('busy'===gst));
+      if(gj2){if('armed'===gj2.phase){gOn=true;}else if('busy'===gj2.phase){gOn=true;}}
+      var gg=get('gla-gate-'+(gk+1));
+      if('fault'===gst){gg.setAttribute('opacity','0.90');gg.setAttribute('stroke','#f87171');}
+      else if(gOn||gateLit[gk]){gg.setAttribute('opacity','0.80');gg.setAttribute('stroke','var(--gate-acc,#fb923c)');}
+      else{gg.setAttribute('opacity','0');gg.setAttribute('stroke','var(--gate-acc,#fb923c)');}
     }
     // 相机识别显示 (HuskyLens 2 处: 物料名 + 去向; 模拟源过相机时出现, 真实源按事件出现)
     var visOn=false;

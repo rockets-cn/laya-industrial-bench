@@ -2,7 +2,8 @@
 // 用法: node tests/gate_anim_dom_test.js <gate_layout_anim.svg>
 // 覆盖: 直通不停推料点 / busy→推料点(非 G[i]-90) / sim armed→带首全旅程 /
 //       推时停带(beltT 冻结) / wait→下一件带首 / setSrc(device) 清全部旅程 /
-//       相机识别显示 / 光门随物品亮 / 无指令推杆绝不动作
+//       相机识别显示 / 光门随物品亮 / 无指令推杆绝不动作 /
+//       多物品在带时光门 OR 聚合 (后出现的物品不抹除先过门物品的亮灯)
 'use strict';
 const fs = require('fs');
 const svg = fs.readFileSync(process.argv[2], 'utf8');
@@ -142,6 +143,26 @@ for (let i = 0; i < 150; i++) { // 15s
 check('S5 无指令时推杆绝不动作', !rodMoved);
 check('S5 环境供血物品走满到带尾 (peakX=' + peakX.toFixed(0) + ')', peakX > 1000);
 check('S5 带纹持续前进', beltTx() !== before);
+
+// ===== S6: 多物品同时在带 — 光门 OR 聚合 (回归: 后来的物品不得抹除先过门物品的亮灯) =====
+// 旧实现 bug: 每条旅程各自把三道光门透明度全部重写, 多物品时最后处理的道获胜,
+// 后出现的上游物品会把先过门物品点亮的光门擦掉 → 表现为"第一个有反应, 后面的没反应".
+g().setSrc('device'); frames(2, 100);  // 清空带面
+g().setSrc('sim');
+g().setJob([{ yard: 1, material: 'red_apple', label: '红苹果 × 1', color: '#ef4444', qty: 1 },
+            { yard: 2, material: 'pear', label: '梨 × 1', color: '#a3d977', qty: 1 }]);
+const s6 = twinBase(); s6.sorters[0] = { state: 'armed', ts_ms: nowMs - 50 };
+g().setTwin(s6);
+frames(1, 100);  // 物品 A (1号道) 从带首 X0=40 出发
+for (let i = 0; i < 24; i++) g().twinFrame(nowMs += 100);  // A 走到 G[0]=380 附近 (过门窗口内)
+check('S6 物品 A 在光门 1 窗口内 (x≈380)', Math.abs(parsePos(1).x - 380) < 80 && parsePos(1).x > 250);
+check('S6 A 过门时光门 1 亮', parseFloat(el('gla-gate-1').getAttribute('opacity')) > 0.5);
+const s6b = twinBase(); s6b.sorters[1] = { state: 'armed', ts_ms: nowMs - 50 };
+g().setTwin(s6b);  // 物品 B (2号道) 此刻从带首出发 (远在所有光门上游)
+frames(3, 100);
+check('S6 两个物品同时在带', op(1) > 0.5 && op(2) > 0.5 && parsePos(2).x < 200);
+check('S6 B 上游行走时 A 的光门 1 保持亮 (多物品 OR, 互不抹除)',
+      parseFloat(el('gla-gate-1').getAttribute('opacity')) > 0.5);
 
 console.log(failures === 0 ? 'GATE_DOM_STUB_OK' : 'GATE_DOM_STUB_FAIL(' + failures + ')');
 process.exit(failures === 0 ? 0 : 1);
