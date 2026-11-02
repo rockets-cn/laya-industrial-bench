@@ -41,6 +41,11 @@
   <rect id="gla-cam" x="132" y="240" width="36" height="28" rx="4" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
   <circle cx="150" cy="254" r="5" fill="none" stroke="var(--gate-acc,#fb923c)"/>
   <polygon id="gla-fan" points="150,268 104,360 196,360" fill="var(--gate-acc,#fb923c)" opacity="0.10" stroke="var(--gate-acc,#fb923c)" stroke-opacity="0.45" stroke-dasharray="4 3"/>
+  <!-- 相机识别内容显示 (物品过视场 / 真实事件出现时): 物料名 + 去向 -->
+  <g id="gla-visiong" opacity="0">
+    <rect x="76" y="270" width="148" height="22" rx="11" fill="var(--gate-bg,#171a21)" stroke="var(--gate-acc,#fb923c)" stroke-opacity="0.65"/>
+    <text id="gla-vision" x="150" y="285" font-size="11" font-weight="600" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">识别 · --</text>
+  </g>
 
   <!-- 尺寸线: 相机->光门1 与 件距 光门1->光门2 -->
   <line x1="200" y1="288" x2="380" y2="288" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
@@ -318,18 +323,37 @@
     if(lb.textContent!==jm.label)lb.textContent=jm.label;
   }
   function hideLabel(i){get('gla-jlabel-'+(i+1)).setAttribute('opacity','0');}
-  // ---- 全旅程回放 (孪生模式): 下发 armed 事件触发 — 带首装料 → 沿带面缓行(过 HuskyLens 2 相机) → 光门落沿 → 推杆拨入料道 ----
-  // sim 每件 job 只发一组事件 (photo 单次等待近似, 见 sim_devices), 客户端按固件口径放慢的时间轴逐件回放
-  var journey=[null,null,null];   // 每分拣器 {phase:'travel'|'armed'|'busy'|'wait', t0, tArrive, tArmed, tBusy, tWait, qty, left}
+  // ---- 全旅程回放 (孪生模式): 推料期间停带, 推完恢复 (与固件 BeltHold 同口径) ----
+  // 带面时间轴 beltT: 只累计带子实际在转的时间 → 停带时带纹/物品/轮辐同步冻结,
+  // 恢复不跳帧. 物品位置由 beltT 导出 → 物品永远贴带面走 (无相对滑动/加速).
+  // 模拟源: 全旅程 (带首装料 → 过相机识别 → 光门 → 推杆拨入) + 环境供血
+  // (间距不均匀, 无指令直通不截留). 真实源: 事件驱动 — 物品按实际状态出现在
+  // 光门处 (armed 事件), 无事件 = 只有皮带按实际运行, 不虚构任何物品.
+  var journey=[null,null,null];   // 每分拣器 {phase:'travel'|'armed'|'busy'|'wait', x0, b0, tArmed, tBusy, tWait, qty, left, task, pass}
   var lastArmedMs=[0,0,0], lastBusyMs=[0,0,0], booted=false;
-  var VJ=140, TRAV=[0,0,0];      // 物品带面行走速度 (与演示模式 2:1 放慢口径一致)
-  TRAV[0]=(G[0]-X0)/VJ*1000; TRAV[1]=(G[1]-X0)/VJ*1000; TRAV[2]=(G[2]-X0)/VJ*1000;
+  var srcMode='sim';             // setSrc 注入: sim=本地孪生 / device=物理设备
+  var beltT=0, lastFrameMs=0;    // 带面时间轴 (ms)
+  var VJ=140;                    // 带面/物品行走速度 px/s (2:1 放慢口径; 带纹与物品同速)
   var BEND=1140;                 // 带面右端 (下游出口): 无指令物品直通从此处离场
-  function startJourney(i,phase,now,pre){
-    var qty=jobMats[i]?jobMats[i].qty:1;
-    journey[i]={phase:phase,t0:now,left:Math.max(0,(qty||1)-1),qty:qty||1};
-    if(phase==='travel')journey[i].tArrive=now+TRAV[i];
-    else journey[i].tArmed=now-pre;
+  var CAMX=150;                  // HuskyLens 2 相机 x (识别内容显示位置)
+  var visLabel='', visUntil=0;   // 相机识别显示: 内容 + 墙钟截止
+  function startJourney(i,xFrom,now,kind){
+    var jm=jobMats[i];
+    var qty=jm?jm.qty:1;
+    journey[i]={phase:'travel',x0:xFrom,b0:beltT,left:Math.max(0,qty-1),
+                qty:qty,task:!!jm,pass:(kind==='pass'),tArmed:0,tBusy:0,tWait:0};
+    if(kind==='gate'||kind==='push')setVision(i,now); // 相机已识别过 (任务物料): 视场处显示识别内容
+  }
+  function setVision(i,now){ // 相机处显示识别内容 (物料名 + 去向)
+    var jm=jmat(i);
+    var nm=jm?String(jm.label).split(' × ')[0]:'物品';
+    var j=journey[i], tag='';
+    if(j){
+      if(j.pass)tag=' · 无指令直通';
+      else if(j.task)tag=' → '+(i+1)+'号仓';
+    }
+    visLabel=nm+tag;
+    visUntil=now+2600;
   }
   var DEMOS=[{m:'banana',label:'香蕉',color:'#fbbf24'},
              {m:'pear',label:'梨',color:'#a3d977'},
@@ -358,89 +382,130 @@
     {m:'red_apple',label:'红苹果',color:'#ef4444'},{m:'green_apple',label:'绿苹果',color:'#4ade80'},
     {m:'block',label:'红色方块',color:'#ef4444'},{m:'block',label:'绿色方块',color:'#4ade80'},
     {m:'block',label:'黄色方块',color:'#facc15'},{m:'block',label:'蓝色方块',color:'#60a5fa'}];
-  var ambOn=false, nextAmb=0;
+  var nextAmb=0;
   function jmat(i){var jj=journey[i];return jj?(jj.mat?jj.mat:jobMats[i]):jobMats[i];} // 旅程物料: 供血项自带, 任务项取注入
+  function gateFlash(i,j){ // 光门虚线: 物品经过即亮 (带面时间窗: 门前 200ms → 门后 900ms, 掉帧不丢)
+    for(var gk=0;3>gk;gk++){
+      var gl='0';
+      if(G[gk]>=j.x0){
+        var tc=j.b0+(G[gk]-j.x0)/VJ*1000; // 过门时刻 (带面时间)
+        if(beltT>=tc-200){if(tc+900>=beltT)gl='0.80';}
+      }
+      get('gla-gate-'+(gk+1)).setAttribute('opacity',gl);
+      get('gla-gate-'+(gk+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
+    }
+  }
   function twinFrame(now){
     var td=twinData||{};
-    var beltOn=!!td.belt_on||ambOn, bps=td.belt_mps||1; // 供血激活时传送带持续运行
-    var tx=beltOn?((now/1000*bps*PXM)%80):0;
+    // 推料窗口: 任一旅程处于 armed/busy (推杆推入中) → 全带停止, 推完才恢复
+    var pushing=false;
+    for(var pi=0;3>pi;pi++){
+      var pj=journey[pi];
+      if(pj){
+        if('armed'===pj.phase||'busy'===pj.phase){pushing=true;break;}
+      }
+    }
+    var beltOn=true;
+    if(pushing)beltOn=false;
+    else{
+      if('device'===srcMode){if(!td.belt_on)beltOn=false;} // 真实源: 跟实际带态; 模拟源: 常开 (环境供血)
+    }
+    // 带面时间轴: 只在带子转时累加 (停带冻结, 恢复不跳帧; 物品由 beltT 导出, 贴带面走)
+    if(lastFrameMs){
+      var dtnow=now-lastFrameMs;
+      if(dtnow>100)dtnow=100;
+      if(beltOn)beltT+=dtnow;
+    }
+    lastFrameMs=now;
+    var tx=(beltT/1000*VJ)%80;
     get('gla-treads').setAttribute('transform','translate('+tx.toFixed(2)+',0)');
-    var ang=beltOn?(((now/1000*bps)/16*57.2958)%360):0;
+    var ang=((beltT/1000*3.6)%360); // 轮辐随带面时间缓慢旋转 (冻结即停)
     get('gla-spoke-1').setAttribute('transform','rotate('+ang.toFixed(1)+' 70 400)');
     get('gla-spoke-2').setAttribute('transform','rotate('+ang.toFixed(1)+' 1110 400)');
-    // 环境供血: 无真实任务时向空闲道随机放料 (间隔 2.5s~4s, 只进无旅程的道)
-    if(ambOn){
+    // 环境供血 (仅模拟源): 无真实任务时随机物料上带 — 间距不均匀 (1.5s~5.5s),
+    // 随机道, 直通到带尾离场 (推杆不动作, 任何仓库不截留)
+    if('sim'===srcMode){
       if(!td.active_job){
         if(now>=nextAmb){
-          var free=-1;
-          for(var fi=0;3>fi;fi++){if(!journey[fi]){free=fi;break;}}
-          if(free>=0){
+          var freeL=[];
+          for(var fi=0;3>fi;fi++){if(!journey[fi])freeL[freeL.length]=fi;}
+          if(freeL.length>0){
+            var fl=freeL[Math.floor(Math.random()*freeL.length)];
             var pm=POOL8[Math.floor(Math.random()*POOL8.length)];
-            startJourney(free,'travel',now,0);
-            journey[free].mat={m:pm.m,label:pm.label,color:pm.color};
-            journey[free].pass=true; // 无下发指令: 直通到带尾, 任何仓库不截留
-            nextAmb=now+2500+Math.floor(Math.random()*1500);
-            setVariant(free,pm.m);
+            startJourney(fl,X0,now,'pass');
+            journey[fl].mat={m:pm.m,label:pm.label,color:pm.color};
+            nextAmb=now+1500+Math.floor(Math.random()*4000); // 间隔随机 → 带面件距不均匀
+            setVariant(fl,pm.m);
           }
         }
       }
     }
-    var camNow=false, msgJ='';
+    var msgJ='';
     for(var i=0;3>i;i++){
       var si=td.sorters?(td.sorters[i]||{}):{};
       var st=si.state||'ready', ts=si.ts_ms||0;
       setVariant(i,jmat(i)?jmat(i).m:'block'); // 物品图标随旅程物料切换 (任务/供血)
       var rod=get('gla-rod-'+(i+1));
-      if('armed'===st){ // 光门落沿事件 (新的) → 启动全旅程回放
+      if('armed'===st){ // 光门落沿事件 (新的) → 启动回放
         if(ts>lastArmedMs[i]){
           lastArmedMs[i]=ts;
           if(journey[i]){if(journey[i].pass)journey[i]=null;} // 任务物品顶掉直通物品
-          if(!journey[i])startJourney(i,'travel',now,0);
+          if(!journey[i]){
+            // 模拟源: 全旅程 (带首装料); 真实源: 物品按实际状态出现在光门处 (事件驱动, 不虚构上游行程)
+            startJourney(i,('device'===srcMode)?G[i]:X0,now,'gate');
+          }
         }
-      } else if('busy'===st){ // 错过 armed 窗口时的兜底触发 (物品已到门)
+      } else if('busy'===st){ // 推杆已在动作 (错过 armed 窗口 / 旧固件只发 busy): 物品就在推料点, 不虚构上游行程
         if(ts>lastBusyMs[i]){
           lastBusyMs[i]=ts;
           if(journey[i]){if(journey[i].pass)journey[i]=null;}
-          if(!journey[i])startJourney(i,'armed',now,200);
+          if(!journey[i]){
+            startJourney(i,P[i],now,'push');
+            journey[i].phase='armed';
+            journey[i].tArmed=now; // 推杆正在推出: 物品已在推料点, 带面即停
+          }
         }
       }
       if('fault'===st){if(journey[i])journey[i]=null;}
       var j=journey[i];
-      if(j){ // 全旅程: 带首装料 → 缓行过相机 → 落沿 → 拨入 (时间 2:1 放慢)
-        var nm=(jmat(i)?jmat(i).label:'物品').split(' × ')[0];
-        if('travel'===j.phase){ // 沿带面行走
-          var ix=X0+VJ*(now-j.t0)/1000;
-          if(j.pass){ // 无下发指令: 直通 — 走满全程到带尾离场, 推杆全程不动作, 不截留
+      if(j){ // 全旅程: 带面时间轴走到推料点 → 停带 → 推杆推出 → 滑入料道 (时间 2:1 放慢)
+        var nm=jmat(i)?String(jmat(i).label).split(' × ')[0]:'物品';
+        if('travel'===j.phase){ // 沿带面行走 (随带面: 停带即停, 匀速到推料点, 无加速)
+          var ix=j.x0+VJ*(beltT-j.b0)/1000;
+          var gone=false;
+          var adv=j.pass?false:(ix>=P[i]); // 任务物品到推料点: 停带, 推杆开始推出; 直通物品不停, 走满到带尾
+          if(adv){ix=P[i];j.phase='armed';j.tArmed=now;}
+          else{
+            if(CAMX>j.x0){ // 物品经过 HuskyLens 2 视场: 相机处显示识别内容 (时间窗)
+              var tcCam=j.b0+(CAMX-j.x0)/VJ*1000;
+              if(beltT>=tcCam-150){if(tcCam+1200>=beltT)setVision(i,now);}
+            }
+          }
+          if(j.pass){
             if(ix>=BEND){
-              journey[i]=null;
+              get('gla-obj-'+(i+1)).setAttribute('opacity','0');
+              journey[i]=null;gone=true;
             } else {
-              var camT=j.t0+(150-X0)/VJ*1000; // 过 HuskyLens 2 (识别中, 无指令不触发拨料)
-              if(now>=camT){if(camT+500>=now)camNow=true;}
-              var opx=ix>(BEND-70)?(BEND-ix)/70:1; // 接近带尾淡出
+              var opx=1;
+              if(ix>(BEND-70))opx=(BEND-ix)/70; // 接近带尾淡出
               get('gla-obj-'+(i+1)).setAttribute('opacity',opx.toFixed(2));
-              get('gla-obj-'+(i+1)).setAttribute('transform','translate('+ix.toFixed(1)+',400)');
-              rod.setAttribute('y2','438.0');
-              rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
-              get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
-              if(!msgJ)msgJ=nm+' 沿带面行走 · 无下发指令直通 (HuskyLens 2 识别中)';
             }
           } else {
-            if(ix>=G[i]){ix=G[i];j.phase='armed';j.tArmed=now;}
-            else{
-              var camT=j.t0+(150-X0)/VJ*1000; // 物品中心过 HuskyLens 2 相机
-              if(now>=camT){if(camT+500>=now)camNow=true;}
-            }
             get('gla-obj-'+(i+1)).setAttribute('opacity','1');
+          }
+          if(!gone){
             get('gla-obj-'+(i+1)).setAttribute('transform','translate('+ix.toFixed(1)+',400)');
             rod.setAttribute('y2','438.0');
             rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
             get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
-            get('gla-gate-'+(i+1)).setAttribute('opacity','0.35');
-            get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
-            showLabel(i);
-            if(!msgJ)msgJ=nm+' 沿带面行走 → '+(i+1)+'号仓 · HuskyLens 2 识别';
+            if(!j.pass)showLabel(i);
           }
-        } else if('armed'===j.phase){ // 落沿: 推杆推出 450ms, 物品随带送至推料点
+          gateFlash(i,j); // 光门虚线: 物品经过即亮 (含本道与其他道, 时间窗防掉帧)
+          if(!msgJ){
+            if(j.pass)msgJ=nm+' 沿带面行走 · 无下发指令直通';
+            else msgJ=nm+' 沿带面行走 → '+(i+1)+'号仓 (HuskyLens 2 识别)';
+          }
+        } else if('armed'===j.phase){ // 推料中: 带面已停, 物品停在推料点, 推杆推出 450ms
           var ex=ease(Math.min(1,(now-j.tArmed)/450));
           rod.setAttribute('y2',(438-36*ex).toFixed(1));
           rod.setAttribute('stroke','var(--gate-acc,#fb923c)');
@@ -448,10 +513,10 @@
           get('gla-gate-'+(i+1)).setAttribute('opacity','0.80');
           get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-obj-'+(i+1)).setAttribute('opacity','1');
-          get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(G[i]+ex*(P[i]-G[i])).toFixed(1)+',400)');
+          get('gla-obj-'+(i+1)).setAttribute('transform','translate('+P[i].toFixed(1)+',400)');
           showLabel(i);
           if((now-j.tArmed)>=450){j.phase='busy';j.tBusy=now;}
-          if(!msgJ)msgJ='光门 '+(i+1)+' 落沿 → 推杆 '+(i+1)+' 推出 (行程 450ms)';
+          if(!msgJ)msgJ='带面已停 · 推杆 '+(i+1)+' 推出 (行程 450ms)';
         } else if('busy'===j.phase){ // 拨入: 物品沿 45° 滑入料道
           var p2=(now-j.tBusy)/900;
           rod.setAttribute('y2','402.0');
@@ -465,11 +530,13 @@
           get('gla-obj-'+(i+1)).setAttribute('transform','translate('+(P[i]+C45*cc).toFixed(1)+','+(400+C45*cc).toFixed(1)+')');
           showLabel(i);
           if(p2>=1){
-            if(j.left>0){j.left--;j.phase='wait';j.tWait=now;}
-            else journey[i]=null;
+            // 仅模拟源逐件回放内部推进; 真实源按后续事件推进 (每件一个旅程)
+            var adv=false;
+            if('sim'===srcMode){if(j.task){if(j.left>0){j.left--;j.phase='wait';j.tWait=now;adv=true;}}}
+            if(!adv)journey[i]=null;
           }
           if(!msgJ)msgJ='第 '+(j.qty-j.left)+' 件拨入 '+(i+1)+' 号料道 ✓';
-        } else { // wait: 件间间隙, 下一件待发
+        } else { // wait (模拟源逐件回放): 件间间隙, 带面恢复, 下一件带首装料
           rod.setAttribute('y2','438.0');
           rod.setAttribute('stroke','var(--gate-fg,#e6e6e6)');
           get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
@@ -477,7 +544,11 @@
           get('gla-gate-'+(i+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
           get('gla-obj-'+(i+1)).setAttribute('opacity','0');
           showLabel(i);
-          if(now-j.tWait>=700){j.phase='travel';j.t0=now;j.tArrive=now+TRAV[i];}
+          if(now-j.tWait>=700){
+            j.phase='travel';
+            j.x0=X0;
+            j.b0=beltT;
+          }
           if(!msgJ)msgJ=(i+1)+'号仓 · 下一件待发';
         }
       } else { // 无旅程: 原状态还原 (fault/ready/错过窗口兜底)
@@ -521,26 +592,14 @@
         }
       }
     }
-    // 直通物品: 经过每个光门口光门亮灯 (推杆不动作, 不截留); 已有真实旅程的道跳过
-    for(var gi=0;3>gi;gi++){
-      var gp=journey[gi];
-      if(gp){
-        if(gp.pass){
-          var gix=X0+VJ*(now-gp.t0)/1000;
-          for(var gk=0;3>gk;gk++){
-            if(gk!==gi){if(journey[gk])continue;}
-            var dg=gix-G[gk];
-            var gl='0';
-            if(24>=dg){if(dg>-24)gl='0.80';}
-            get('gla-gate-'+(gk+1)).setAttribute('opacity',gl);
-            get('gla-gate-'+(gk+1)).setAttribute('stroke','var(--gate-acc,#fb923c)');
-          }
-        }
-      }
-    }
-    get('gla-fan').setAttribute('opacity',camNow?'0.35':'0.10');
-    get('gla-cam').setAttribute('stroke',camNow?'var(--gate-acc,#fb923c)':'var(--gate-bd,#262b36)');
-    get('gla-status').textContent=msgJ||(ambOn?'模拟运行 · 物料无指令直通 (下发指令后按 HuskyLens 2 识别结果拨入指定仓库)':td.status||'数字孪生在线 · 等待事件…');
+    // 相机识别显示 (HuskyLens 2 处: 物料名 + 去向; 模拟源过相机时出现, 真实源按事件出现)
+    var visOn=false;
+    if(visUntil>now)visOn=true;
+    get('gla-visiong').setAttribute('opacity',visOn?'1':'0');
+    if(visOn)get('gla-vision').textContent=visLabel;
+    get('gla-fan').setAttribute('opacity',visOn?'0.35':'0.10');
+    get('gla-cam').setAttribute('stroke',visOn?'var(--gate-acc,#fb923c)':'var(--gate-bd,#262b36)');
+    get('gla-status').textContent=msgJ||('sim'===srcMode?'模拟运行 · 物料无指令直通 (下发指令后按 HuskyLens 2 识别结果拨入指定仓库)':td.status||'数字孪生在线 · 等待事件…');
   }
   var mqr=null;
   if(window.matchMedia){mqr=window.matchMedia('(prefers-reduced-motion: reduce)');}
@@ -563,9 +622,12 @@
       }
       if(motionOff){twinFrame(performance?performance.now():Date.now());} },
     beltBusy:function(){for(var i=0;3>i;i++){if(journey[i])return true;}return false;},
-    setSrc:function(s){ // 数据源: sim=本地孪生模拟器 (开环境供血) / device=物理设备 (不在真实事件上虚构物品)
-      ambOn=(s==='sim');
-      if(ambOn)nextAmb=0;
+    setSrc:function(s){ // 数据源: sim=本地孪生模拟器 (开环境供血, 全旅程) / device=物理设备 (事件驱动, 不在真实事件上虚构物品)
+      srcMode=(s==='sim')?'sim':'device';
+      if('sim'===srcMode)nextAmb=0;
+      else{ // 切到真实源: 清掉孪生视图在带面的一切物品 (事件驱动: 只有真实事件才让物品出现, 不虚构)
+        for(var i=0;3>i;i++){journey[i]=null;}
+      }
       if(motionOff){twinFrame(performance?performance.now():Date.now());}
     },
     demo:function(){ twinMode=false; twinData=null; start=null; demoPick(); },

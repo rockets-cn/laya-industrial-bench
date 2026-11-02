@@ -390,6 +390,7 @@ async def twin():
         out["fault"] = h.get("fault")
         out["active_job"] = h.get("active_job")
         out["queue"] = h.get("queue") or 0
+        out["conveyor"] = h.get("conveyor")  # 传送带实时态 (真实源按此显示带子运行)
         with urllib.request.urlopen(GATEWAY_URL + "/motion", timeout=0.4) as r:
             m = json.loads(r.read().decode())
         out["events"] = list(m.get("motion", []))[-8:]
@@ -645,11 +646,12 @@ async function refreshTwin(){
   if(n>=1&&n<=3)st[n-1]={state:ev.state,ts_ms:Date.parse(ev.ts)||0};
  });
  const evs=(d.events||[]).filter(ev=>{if(!ev)return false;return (ev.src||'device')===src;}),last=evs[evs.length-1];
- // 模拟源: 传送带持续运行 (孪生画面环境供血, 随机物料完整过相机/光门/拨入); 真实源按网关批间停带事实
- const beltOn=src==='sim'||!!d.active_job||d.queue>0||(gla&&gla.beltBusy?gla.beltBusy():false);
+ // 模拟源: 传送带持续运行 (孪生画面环境供血, 随机物料完整过相机/光门/拨入);
+// 真实源: 按带子实际态 (推料期间固件/sim 自动停带, 推完自动恢复)
+ const beltOn=src==='sim'?true:(d.conveyor==='running');
  const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})${(last.of>0&&last.item>0)?` · 第${last.item}/${last.of}件`:''}`
   :'数字孪生在线 · 等待事件…';
- const sig=JSON.stringify([src,beltOn,d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
+ const sig=JSON.stringify([src,beltOn,d.conveyor||'',d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
  if(sig!==twinSig){
   twinSig=sig;
   if(gla){gla.setSrc&&gla.setSrc(src);
@@ -658,7 +660,7 @@ async function refreshTwin(){
     status:(d.fault?'⚠ 故障锁存 '+d.fault+' · ':'')+line});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':' · 待机'})`;
- scheduleTwin(beltOn?400:600); // 有活时加密集采; 在线待机也 600ms — 任务窗口 ~1.3s, 1.5s 轮询会整单漏掉
+ scheduleTwin(src==='sim'?250:600); // 模拟源 250ms: sim armed 窗口仅 350ms, 轮询必须更密才不漏首件全旅程; 真实源 600ms
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',

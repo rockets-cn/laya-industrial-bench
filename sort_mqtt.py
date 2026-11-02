@@ -657,7 +657,9 @@ class SortGateway:
                                       "broker_connected": gw._connected.is_set(),
                                       "active_job": (gw.active_job or {}).get("job_id"),
                                       "queue": len(gw.job_queue),
-                                      "fault": gw.fault})
+                                      "fault": gw.fault,
+                                      # 传送带实时态 (running/stopped/paused/fault): 数字孪生按实际带态显示
+                                      "conveyor": gw.dev_state.get("conveyor", "unknown")})
                 elif self.path == "/stats":
                     s = gw.stats.summary()
                     s["fault"] = gw.fault

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "Conveyor.h"
+#include "BeltHold.h"
 #include "Sorter.h"
 #include "Gate.h"
 #include "Track.h"
@@ -549,6 +550,55 @@ static void testSorterVirtual() {
     }
 }
 
+// BeltHold: 推料期间停带, 扫掠结束自动恢复
+void testBeltHold() {
+    // 基础: 起带 -> 推料停带 -> 推完恢复
+    {
+        sort::BeltHold b;
+        check("默认不带", !b.beltOn());
+        check("start 起带", b.conveyorStart() && b.beltOn());
+        b.sweepStart();
+        check("扫掠开始即停带", !b.beltOn() && b.hold == 1);
+        check("扫掠结束恢复带速", b.sweepEnd() && b.beltOn());
+    }
+    // 并发扫掠: 全部结束才起带
+    {
+        sort::BeltHold b;
+        b.conveyorStart();
+        b.sweepStart();
+        b.sweepStart();
+        check("双扫掠 hold=2", b.hold == 2 && !b.beltOn());
+        check("第一件结束仍停带", !b.sweepEnd() && !b.beltOn());
+        check("第二件结束起带", b.sweepEnd() && b.beltOn());
+    }
+    // 网关 stop/pause 期间推料: 恢复不自动起带
+    {
+        sort::BeltHold b;
+        b.conveyorStart();
+        b.sweepStart();
+        b.conveyorStop();
+        check("stop 停带", !b.running && !b.beltOn());
+        check("推完不自动起 (带子已停)", !b.sweepEnd() && !b.beltOn());
+        check("再 start 立即起带", b.conveyorStart() && b.beltOn());
+    }
+    // 推料中收到 start: 挂起, 推完才起
+    {
+        sort::BeltHold b;
+        b.conveyorStart();
+        b.sweepStart();
+        b.conveyorStop();          // 先停
+        check("推料中 start 挂起", !b.conveyorStart() && !b.beltOn());
+        check("推完自动起", b.sweepEnd() && b.beltOn());
+    }
+    // 未起带时推料: 不产生"复活"的带速
+    {
+        sort::BeltHold b;
+        b.sweepStart();
+        check("未 running 推料不停带也无带", b.hold == 1 && !b.beltOn());
+        check("推完仍无带", !b.sweepEnd() && !b.beltOn());
+    }
+}
+
 int main() {
     testConveyor();
     testSorter();
@@ -559,6 +609,7 @@ int main() {
     testSorterPhoto();
     testTrack();
     testSorterVirtual();
+    testBeltHold();
     printf("\n%s\n", FAIL ? "有失败 ✗" : "全部通过 ✔");
     printf("PASS %d  FAIL %d\n", PASS, FAIL);
     return FAIL ? 1 : 0;

@@ -236,6 +236,8 @@ class SorterSim(SimDevice):
 
         def finish(sleep_ms=None):
             # sleep_ms: 拨料耗时 (immediate 路径整段计; photo 路径逐件已扫掠, 传 None)
+            # 推料期间带子实际停转 (镜像固件 BeltHold), 但 conveyor 状态机不变
+            # (真机: 步进暂停不改变 running 态; 动画侧按运动事件停带).
             if sleep_ms is not None:
                 time.sleep(sleep_ms / 1000.0)
             if self.rng.random() < self.fault_rate:
@@ -271,7 +273,7 @@ class SorterSim(SimDevice):
                         return
                     self.state = "busy"
                     self._motion("photo", "busy", item=k, of=qty)
-                    time.sleep(self.item_ms / 1000.0)   # 本件扫掠: 拨出->归位
+                    time.sleep(self.item_ms / 1000.0)   # 本件扫掠: 拨出->归位 (带面停转, 状态不变)
                     if k < qty:
                         self.state = "armed"   # 回 armed 等下一件光门落沿
                         self._motion("next", "armed", item=k, of=qty)

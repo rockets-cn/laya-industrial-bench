@@ -25,8 +25,10 @@
 #include "ServoI2C.h"
 #include "McpEn.h"
 #include "McpGate.h"
+#include "BeltHold.h"
 
 static sort::Conveyor conv;
+static sort::BeltHold beltHold;   // 推料期间停带 (扫掠中 hold, 扫掠结束自动恢复)
 static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter(3)};
 static sort::HuskyLens hl2(MATERIAL_MAP, MATERIAL_MAP_LEN, HL2_RETRIGGER_MS);
 static sort::Track track;         // 带面位置跟踪 (虚拟光门; 配置见 config.h)
@@ -88,6 +90,7 @@ static double stepRmtPps = 0.0;
 static uint32_t nextStepUs = 0;
 static void steerStepperLegacy() {
     if (conv.st != sort::DevState::kRunning) return;
+    if (beltHold.hold > 0) return;   // 推料期间停带 (扫掠结束 hold 归零即自动恢复)
     double stepsPerSec = conv.speed_mps * 1000.0 * STEPS_PER_MM;
     if (stepsPerSec < 1.0) stepsPerSec = 1.0;
     uint32_t interval = (uint32_t)(1000000.0 / stepsPerSec);
@@ -211,6 +214,8 @@ static void sweepStart(int n) {
     t.n = n; t.active = true; t.inEject = true;
     t.phaseAt = millis();
     servoWrite(n, SERVO_EJECT_DEG);
+    beltHold.sweepStart();   // 推料期间停带: 物品停在推料点被拨入料道
+    stopStepRmt();
 }
 static void sweepTick() {
     for (int i = 0; i < 3; i++) {
@@ -227,6 +232,7 @@ static void sweepTick() {
         } else if (now - t.phaseAt >= (uint32_t)(SERVO_ITEM_GAP_MS - SERVO_SWEEP_MS / 2)) {
             if (s.stepOne(millis())) {            // 最后一件
                 t.active = false;
+                if (beltHold.sweepEnd()) startStepRmt();   // 扫掠全结束: 恢复带速
                 publishSorterAck(t.n, lastJobId[t.n - 1].c_str(), "divert",
                                  "ok", s.mat());
                 publishMotion(t.n, "ready", "done", s.done_count, s.pend_qty);
@@ -235,6 +241,7 @@ static void sweepTick() {
             } else if (s.state_str == "armed") {
                 // photo job 中间件: 等下一件的光门沿, 本扫掠到此为止
                 t.active = false;
+                if (beltHold.sweepEnd()) startStepRmt();   // 本件拨完先走带, 下一件到门再停
                 publishMotion(t.n, "armed", "next", s.done_count, s.pend_qty);
             } else {
                 t.inEject = true;                 // immediate: 连续拨下一件
@@ -263,11 +270,14 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
         if (r.handled)
             publishConveyorAck(job_id, action, r.ok ? "ok" : "busy", r.note.c_str());
         if (r.handled && r.ok && action) {
-            // RMT 步进随带速起停 (start/resume 起, stop/pause 停; 变速自动重起)
-            if (!strcmp(action, "start") || !strcmp(action, "resume"))
-                startStepRmt();
-            else if (!strcmp(action, "stop") || !strcmp(action, "pause"))
+            // RMT 步进随带速起停 (start/resume 起, stop/pause 停; 变速自动重起);
+            // 推料进行中 (BeltHold hold>0) 则起带挂起, 扫掠结束由 sweepEnd 自动起
+            if (!strcmp(action, "start") || !strcmp(action, "resume")) {
+                if (beltHold.conveyorStart()) startStepRmt();
+            } else if (!strcmp(action, "stop") || !strcmp(action, "pause")) {
+                beltHold.conveyorStop();
                 stopStepRmt();
+            }
         }
     } else {
         int n = 0;
