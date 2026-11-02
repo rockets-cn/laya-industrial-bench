@@ -657,9 +657,9 @@ async function refreshTwin(){
   if(gla){gla.setSrc&&gla.setSrc(src);
    gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
     active_job:d.active_job||null,
-    status:(d.fault?'⚠ 故障锁存 '+d.fault+' · ':'')+line});}
+    status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line});}
  }
- if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':' · 待机'})`;
+ if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
  scheduleTwin(src==='sim'?250:600); // 模拟源 250ms: sim armed 窗口仅 350ms, 轮询必须更密才不漏首件全旅程; 真实源 600ms
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}

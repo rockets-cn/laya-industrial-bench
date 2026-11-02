@@ -28,7 +28,12 @@ edge101/
 │   ├── Sorter.h              # 分拣器状态机 (纯 C++)
 │   ├── HuskyLens.h           # HL2 UART 帧解析 + 进画面去重 (纯 C++)
 │   ├── Proto.h               # 协议 JSON 构造 (纯 C++)
-│   └── McpEn.h               # MCP23017 步进 EN (纯 C++, I2C 传输可注入)
+│   ├── Gate.h                # 光门去抖/沿检测 (纯 C++)
+│   ├── Track.h               # 带面位置跟踪/虚拟光门预测 (纯 C++)
+│   ├── BeltHold.h            # 推料期间停带引用计数 (纯 C++)
+│   ├── BeltWatch.h           # 带速估计 + 打滑/卡滞监测 (纯 C++)
+│   ├── McpEn.h               # MCP23017 步进 EN (纯 C++, I2C 传输可注入)
+│   └── McpGate.h             # MCP23017 光门 ×3 (纯 C++, I2C 传输可注入)
 ├── lib/ServoI2C/src/
 │   └── ServoI2C.h            # PCA9685 16ch I2C 舵机驱动 (50Hz PWM)
 ├── tests/host/
@@ -46,7 +51,7 @@ pio run -t upload          # 烧录 (Type-C USB; 必要时按 BOOT 进下载模�
 pio device monitor         # 115200 串口监视
 
 # 主机单测 (验证纯逻辑, 无需硬件/无需 PIO)
-./tests/host/run_tests.sh  # 141 项: Conveyor/Sorter 状态机 (含光门 photo 全路径
+./tests/host/run_tests.sh  # 172 项: Conveyor/Sorter 状态机 (含光门 photo 全路径
                            # + 虚拟光门位置预测触发), HL2 帧+去重, 协议 JSON,
                            # MCP23017 EN, 光门边沿去抖, 带面位置跟踪 Track
 ```

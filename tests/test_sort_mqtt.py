@@ -113,6 +113,7 @@ def make_args(no_ack=False, item_ms=120):
     a.broker_host, a.broker_port = "127.0.0.1", BPORT
     a.latency_ms, a.fault_rate, a.no_ack = 20, 0.0, no_ack
     a.item_ms = item_ms
+    a.belt_fault = None
     return a
 
 
@@ -502,6 +503,51 @@ def main():
                                   for e in batch_events10), 8, "pos_mm 透传")
         check("视觉 pos_mm 透传批次事件", ok,
               f"ev={batch_events10[-1] if batch_events10 else None}")
+
+        # ---------- 11. 带健康故障链路 (conveyor 遥测 fault -> 网关锁存) ----------
+        print("\n== 11. 带健康故障链路 (sim 注入 belt-slip/belt-jam) ==")
+        base13 = gw.stats.batches["done"]
+        conv.belt_fault = "jam"  # 带子一 running 就注入 (items_in 早已 >= 2)
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test",
+                              "actions": [{"yard": 2, "material": "banana",
+                                           "qty": 1}]})
+        check("注入期 dispatch 202", st == 202, f"st={st} body={body}")
+        ok = wait_for(lambda: gw.dev_state.get("conveyor") == "fault",
+                      8, "conveyor 遥测 fault")
+        check("conveyor 遥测 fault (sim 注入)", ok, f"dev={gw.dev_state}")
+        ok = wait_for(lambda: gw.fault
+                      and gw.fault.get("device") == "conveyor", 5, "网关锁存")
+        check("网关故障锁存 (device=conveyor)", ok, f"fault={gw.fault}")
+        check("锁存 note 含带健康原因",
+              gw.fault and "belt" in (gw.fault.get("error") or ""),
+              f"fault={gw.fault}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test",
+                              "actions": [{"yard": 1, "material": "banana",
+                                           "qty": 1}]})
+        check("锁存期 dispatch 409", st == 409, f"st={st} body={body}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/health")
+        check("/health 报 conveyor fault + 带健康 note",
+              st == 200 and body.get("conveyor") == "fault"
+              and "belt" in (body.get("conveyor_note") or ""),
+              f"body={body}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/fault/clear", {})
+        check("人工清除 200", st == 200 and body.get("cleared"),
+              f"st={st} body={body}")
+        check("fault 已清除", gw.fault is None)
+        conv.belt_fault = ""  # 不再注入; 清除时网关已尽力向设备发 reset
+        ok = wait_for(lambda: gw.dev_state.get("conveyor") == "stopped",
+                      5, "设备侧 reset 回 stopped")
+        check("清除后设备回 stopped (reset 下发)", ok, f"dev={gw.dev_state}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test",
+                              "actions": [{"yard": 1, "material": "red_apple",
+                                           "qty": 2}]})
+        check("清除后 dispatch 202", st == 202, f"st={st} body={body}")
+        ok = wait_for(lambda: gw.stats.batches["done"] > base13, 10,
+                      "恢复后批次 done")
+        check("恢复后批次 done", ok)
     finally:
         mc.loop_stop(); mc.disconnect()
 

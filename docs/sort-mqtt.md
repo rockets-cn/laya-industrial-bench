@@ -111,15 +111,28 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 
 ```json
 {"state": "running", "speed_mps": 1.0, "items_in": 42, "ts": "2026-10-30T12:00:00+08:00"}
+{"state": "fault", "speed_mps": 1.0, "steps_total": 18234, "note": "belt slip: measured 0.78 vs commanded 1.00 m/s", "ts": ""}
 {"state": "busy", "diverted_total": 17, "last_material": "red_block", "ts": "2026-10-30T12:00:01+08:00"}
 ```
 
 - `state` 为必填 (网关状态机依赖); 其余为设备特有可选字段:
   - 传送带: `items_in` (过件累计, 有计数传感器时); 物理控制器 (edge101) 无过件
     计数, 发 `steps_total` (步进累计步数) —— 两者不同量纲, 契约均按可选对待;
+    `note` (带健康监测原因, 固件 BeltWatch: `belt ok` / `belt slip: ...` /
+    `belt jam: ...`, 正常时 `belt ok`);
   - 分拣器: `diverted_total`, `last_material`;
   - `ts`: ISO8601; 网关忽略该字段。物理控制器无 RTC (后续可 NTP), 可为 `""`。
 - 传送带 `state`: `stopped|running|paused|fault`
+  - `fault` 的来源: ① 网关 fault 安全路径 (命令失败); ② 固件 **BeltWatch**
+    带健康监测 (带速估计 + 打滑/卡滞, 需人工 `reset` 恢复):
+    - **打滑**: 带面时间行程 (视觉锚点偏差 + 门门区间, 只计带子实际在转的时间,
+      推料停带窗口不计) 滑动均值超指令 25% (实际 < 0.8×指令) 持续 3 样本;
+    - **卡滞**: 物品过光门 g 后, 带面时间超 3× 期望仍未到光门 g+1
+      (该件若已在门 g 被拨出则不期望);
+    - 触发时: 锁存 conveyor `fault` + motion 事件 `{"state":"fault","via":"belt-slip"|"belt-jam"}`
+      + 遥测 `note` 带原因 → 网关锁存故障 (拒绝新批次, 页面 ⚠ 故障锁存横幅),
+      人工 `POST /fault/clear` 或 `sort/human/fault_clear` 清除 (清除时网关尽力
+      向设备下发 `reset`)。约束: 依赖**物理光门**; 虚拟光门模式无物理沿不采样。
 - 分拣器 `state`: `ready|armed|busy|fault`
 - 网关据此选择传送带动作 (running 跳过 / stopped→start / paused→resume /
   fault→直接故障等人工 reset)。遥测丢失不阻塞命令路径, 只影响状态优化。

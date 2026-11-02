@@ -224,6 +224,7 @@ class SortGateway:
         self.active_job = None
         self.active_lock = threading.Lock()
         self.dev_state = {}                        # {"conveyor": ..., "sorter1": ...}
+        self.conveyor_note = ""                    # 最近一次 conveyor 遥测 note (带健康监测原因)
         self._pending = {}                         # (kind, name, job_id) -> ack 槽位
         self._pending_lock = threading.Lock()
         self._rr_counter = {}                      # round_robin 每物料轮转计数
@@ -278,6 +279,9 @@ class SortGateway:
         if m:
             if m.group(2) == "telemetry":
                 self.dev_state["conveyor"] = payload.get("state", "unknown")
+                self.conveyor_note = payload.get("note") or ""
+                if self.dev_state["conveyor"] == "fault":
+                    self._latch_conveyor_fault()
             else:
                 self._set_ack("conveyor", self.cfg["conveyor_id"],
                               m.group(3) or "", payload)
@@ -502,10 +506,31 @@ class SortGateway:
         with self.fault_lock:
             had = self.fault
             self.fault = None
+        # 尽力向设备下发 reset: 固件 BeltWatch 锁存 (打滑/卡滞) 后 conveyor 处于
+        # fault 态, 需设备侧 reset 回 stopped 才能恢复下发 (幂等, 无应答不阻塞).
+        try:
+            self._conveyor_cmd({"job_id": "fault-clear"}, "reset", required=False)
+        except Exception:
+            pass
         self._publish("sort/event/cleared",
                        {"ts": _now(), "via": via, "had": had}, retain=True)
         print(f"[gateway] 故障已清除 (via={via})", flush=True)
         return had
+
+    def _latch_conveyor_fault(self):
+        """conveyor 遥测报 fault (固件 BeltWatch: 打滑/卡滞) -> 锁存网关故障.
+
+        锁存期拒绝新批次. 在途批次不在此处置 (跨线程改 job 有双结算风险):
+        带子已停, 其后续命令会自然超时/失败 -> 由 worker 自身流程记 fault.
+        清除: sort/human/fault_clear 或 POST /fault/clear (清除时网关尽力向
+        设备下发 reset)."""
+        with self.fault_lock:
+            if self.fault:
+                return
+            self.fault = {"device": "conveyor",
+                          "error": self.conveyor_note or "conveyor fault",
+                          "ts": _now(), "src": "conveyor telemetry"}
+            print(f"[gateway] 传送带故障锁存: {self.fault['error']}", flush=True)
 
     # ---------- 命令 + 应答 ----------
     def _cmd_topic(self, kind, name):
@@ -659,7 +684,9 @@ class SortGateway:
                                       "queue": len(gw.job_queue),
                                       "fault": gw.fault,
                                       # 传送带实时态 (running/stopped/paused/fault): 数字孪生按实际带态显示
-                                      "conveyor": gw.dev_state.get("conveyor", "unknown")})
+                                      "conveyor": gw.dev_state.get("conveyor", "unknown"),
+                                      # 带健康监测原因 (固件 BeltWatch: belt ok / belt slip / belt jam)
+                                      "conveyor_note": gw.conveyor_note})
                 elif self.path == "/stats":
                     s = gw.stats.summary()
                     s["fault"] = gw.fault

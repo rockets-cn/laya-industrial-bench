@@ -26,12 +26,16 @@
 #include "McpEn.h"
 #include "McpGate.h"
 #include "BeltHold.h"
+#include "BeltWatch.h"
 
 static sort::Conveyor conv;
 static sort::BeltHold beltHold;   // 推料期间停带 (扫掠中 hold, 扫掠结束自动恢复)
 static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter(3)};
 static sort::HuskyLens hl2(MATERIAL_MAP, MATERIAL_MAP_LEN, HL2_RETRIGGER_MS);
 static sort::Track track;         // 带面位置跟踪 (虚拟光门; 配置见 config.h)
+static sort::BeltWatch beltWatch(GATE_DIST_MM[0], GATE_DIST_MM[1],
+                                 GATE_DIST_MM[2], 1.0);  // 带速估计+打滑/卡滞 (物理光门)
+static bool beltFaultSent = false;
 
 static HardwareSerial hlSerial(2);            // UART2 重映射到 GPIO5/12
 static NetworkClient ethClient;               // 3.x: 以太网客户端 (自动绑定默认 netif)
@@ -215,6 +219,7 @@ static void sweepStart(int n) {
     t.phaseAt = millis();
     servoWrite(n, SERVO_EJECT_DEG);
     beltHold.sweepStart();   // 推料期间停带: 物品停在推料点被拨入料道
+    beltWatch.onDivert(n - 1);  // 该件在门 n-1 被拨出: 不再期望它过下一门
     stopStepRmt();
 }
 static void sweepTick() {
@@ -277,6 +282,9 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
             } else if (!strcmp(action, "stop") || !strcmp(action, "pause")) {
                 beltHold.conveyorStop();
                 stopStepRmt();
+            } else if (!strcmp(action, "reset")) {
+                beltWatch.clear();     // 人工 reset: 解除带速监测锁存
+                beltFaultSent = false;
             }
         }
     } else {
@@ -380,6 +388,7 @@ static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
     double p0 = sort::Track::pixelToMm(ev.x, VIEW_CX_PX, VIEW_WIDTH_PX,
                                        VIEW_WIDTH_MM);
     track.onVision(ev.material.c_str(), p0, now_ms);
+    beltWatch.onVision(p0, now_ms);  // 带速估计: 位置锚点
     std::string p = sort::visionJson(ev.material.c_str(), 1.0, fid,
                                      ev.x, ev.y, ev.w, ev.h, p0);
     mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
@@ -628,14 +637,26 @@ void loop() {
     sweepTick();
     mcpEn.sync(conv.state());   // 步进 EN 随状态 (只有电平变化才写 I2C)
 
+    // 带健康监测: 带面时间只在带子实际转时推进 (BeltHold 停带窗口不计),
+    // 评估卡滞/打滑; 异常 -> 锁存 conveyor fault (需人工 reset).
+    beltWatch.setSpeed(conv.speed_mps);
+    beltWatch.tick(millis(), beltHold.beltOn());
+    if (!beltWatch.ok() && !beltFaultSent) {
+        beltFaultSent = true;
+        conv.setFault();
+        publishMotion(1, "fault", beltWatch.via(), 0, 0);
+        Serial.printf("[belt] %s\n", beltWatch.reason());
+    }
+
     // 光门: 读电平 -> 落沿 (物品到达推杆前侧) -> 触发 armed 分拣器推出
     if (gateOk) {
         bool hi0, hi1, hi2;
         mcpGate.poll(hi0, hi1, hi2);
         for (int i = 0; i < 3; i++) {
             bool hi = (i == 0) ? hi0 : (i == 1 ? hi1 : hi2);
-            if (gates[i].onItemEdge(hi, millis()) &&
-                sorters[i].onGateEdge(millis())) {
+            if (gates[i].onItemEdge(hi, millis())) {
+                beltWatch.onGateEdge(i, millis());  // 带监测: 全部物理落沿 (与分拣 armed 态无关)
+                if (sorters[i].onGateEdge(millis())) {
                 sweepStart(i + 1);
                 publishMotion(i + 1, "busy", "photo",
                               sorters[i].done_count + 1, sorters[i].pend_qty);
@@ -683,7 +704,7 @@ void loop() {
         lastTeleMs = millis();
         mqtt.publish(sort::conveyorTeleTopic().c_str(),
                      sort::conveyorTele(conv.state(), conv.speed_mps,
-                                        stepsLive()).c_str(), false);
+                                        stepsLive(), "", beltWatch.reason()).c_str(), false);
         for (int n = 1; n <= 3; n++)
             mqtt.publish(sort::sorterTeleTopic(n).c_str(),
                          sort::sorterTele(sorters[n - 1].state(),

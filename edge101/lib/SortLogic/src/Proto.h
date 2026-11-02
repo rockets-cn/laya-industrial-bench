@@ -37,12 +37,14 @@ inline std::string ackJson(const char* job_id, const char* action,
 
 // 传送带遥测: {state, speed_mps, steps_total, ts}
 inline std::string conveyorTele(const char* state, double speed,
-                                uint64_t steps, const char* ts = "") {
+                                uint64_t steps, const char* ts = "",
+                                const char* note = "") {
     char speed_s[32];
     snprintf(speed_s, sizeof(speed_s), "%.2f", speed);
     return "{\"state\":" + jsonStr(state) + ",\"speed_mps\":" + speed_s +
            ",\"steps_total\":" + std::to_string(steps) +
-           ",\"ts\":" + jsonStr(ts) + "}";
+           ",\"ts\":" + jsonStr(ts) +
+           ",\"note\":" + jsonStr(note ? note : "") + "}";
 }
 
 // 分拣器遥测: {state, diverted_total, last_material, ts}

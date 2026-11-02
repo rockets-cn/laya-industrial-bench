@@ -109,6 +109,11 @@ class ConveyorSim(SimDevice):
         self.state = "stopped"
         self.items_in = 0
         self.speed = 0.0
+        # 带健康故障注入 (镜像固件 BeltWatch 的 SLIP/JAM 上报通道):
+        # belt_fault="slip"|"jam" 时, 带子 running 后报 conveyor 遥测 fault +
+        # motion fault 事件 (note 同固件 reason), 验证网关锁存/恢复链路.
+        self.belt_fault = getattr(gw_args, "belt_fault", None) or ""
+        self.belt_fault_fired = False
 
     def handle_cmd(self, payload):
         action = payload.get("action")
@@ -156,8 +161,28 @@ class ConveyorSim(SimDevice):
     def tele_extra(self):
         if self.state == "running":
             self.items_in += 1
-        return {"state": self.state, "speed_mps": self.speed,
-                "items_in": self.items_in}
+            if (self.belt_fault and not self.belt_fault_fired
+                    and self.items_in >= 2):
+                self._fire_belt_fault()
+        d = {"state": self.state, "speed_mps": self.speed,
+             "items_in": self.items_in}
+        if self.state == "fault" and self.belt_fault_fired:
+            d["note"] = ("belt slip: measured 0.72 vs commanded 1.00 m/s"
+                         if self.belt_fault == "slip"
+                         else "belt jam: item stalled between gates (simulated)")
+        return d
+
+    def _fire_belt_fault(self):
+        """带健康故障 (镜像固件 BeltWatch): 停带 + 锁存 + motion 事件."""
+        self.state = "fault"
+        self.speed = 0.0
+        self.belt_fault_fired = True
+        via = "belt-slip" if self.belt_fault == "slip" else "belt-jam"
+        self.client.publish("sort/line1/motion", json.dumps(
+            {"ts": _now(), "sorter": 1, "state": "fault", "via": via,
+             "job_id": "", "item": 0, "of": 0, "src": "sim"}), qos=0)
+        print(f"[sim:conveyor] 带健康故障注入: {via} (遥测 fault + motion)",
+              flush=True)
 
 
 class SorterSim(SimDevice):
@@ -309,6 +334,9 @@ def parse_args():
                     help="指定 1/2/3 号分拣器光门永远无物品 (测 photo 超时 fault)")
     ap.add_argument("--no-ack", action="store_true",
                     help="分拣器 divert 永不回应 (测网关超时/重试)")
+    ap.add_argument("--belt-fault", choices=["slip", "jam"], default=None,
+                    help="带健康故障注入 (镜像固件 BeltWatch): 带子 running 后 "
+                         "报 conveyor 遥测 fault + motion 事件 (slip=打滑, jam=卡滞)")
     ap.add_argument("--seed", type=int, default=7)
     a = ap.parse_args()
     m = re.match(r"tcp://([^:/]+):(\d+)$", a.broker)

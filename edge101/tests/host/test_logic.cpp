@@ -9,6 +9,7 @@
 #include <vector>
 #include "Conveyor.h"
 #include "BeltHold.h"
+#include "BeltWatch.h"
 #include "Sorter.h"
 #include "Gate.h"
 #include "Track.h"
@@ -599,6 +600,98 @@ void testBeltHold() {
     }
 }
 
+static void testBeltWatch() {
+    printf("-- BeltWatch (带速估计 + 打滑/卡滞) --\n");
+    // 门距 500/1000/1500mm, 指令 1.0 m/s -> 期望门门行程 500ms (带面时间)
+    auto run = [](BeltWatch& b, uint32_t to, bool on) {
+        // 带面时间推进: 从上次到 to (线性, 单段)
+        b.tick(to, on);
+    };
+
+    // A. 正常: 视觉锚点 + 门门区间, 实测 = 指令 -> OK
+    BeltWatch b(500, 1000, 1500, 1.0);
+    b.tick(0, true);
+    b.onVision(0.0, 0);
+    run(b, 500, true);  b.onGateEdge(0, 500);
+    run(b, 1000, true); b.onGateEdge(1, 1000);
+    run(b, 1500, true); b.onGateEdge(2, 1500);
+    check("正常: 状态 ok", b.ok(), b.reason());
+    char det[64];
+    snprintf(det, sizeof(det), "v_meas=%f", b.v_meas_mps());
+    check("正常: 实测带速≈1.0", std::abs(b.v_meas_mps() - 1.0) < 0.01, det);
+
+    // B. 打滑: 实际 0.8 m/s (行程慢 25%) -> 3 样本后 SLIP 锁存
+    BeltWatch s(500, 1000, 1500, 1.0);
+    s.tick(0, true);
+    s.onVision(0.0, 0);
+    run(s, 625, true);  s.onGateEdge(0, 625);
+    check("打滑: 1 样本未锁存", s.ok(), s.reason());
+    run(s, 1250, true); s.onGateEdge(1, 1250);  // 门门+偏差 -> 累计 3 样本
+    check("打滑: 3 样本后 SLIP", s.status() && !strcmp(s.status(), "slip"), s.reason());
+    check("打滑: via=belt-slip", !strcmp(s.via(), "belt-slip"), s.via());
+    snprintf(det, sizeof(det), "v_meas=%f", s.v_meas_mps());
+    check("打滑: 实测带速≈0.8", std::abs(s.v_meas_mps() - 0.8) < 0.02, det);
+
+    // C. 卡滞: 过门 0 后, 带面时间超 3× 期望未到门 1 -> JAM
+    BeltWatch j(500, 1000, 1500, 1.0);
+    j.tick(0, true);
+    run(j, 500, true); j.onGateEdge(0, 500);
+    check("卡滞: 未超时前 ok", j.ok());
+    run(j, 500 + 1501, true);  // 带面时间超 3×500ms
+    check("卡滞: 超时 JAM", !strcmp(j.status(), "jam"), j.reason());
+    check("卡滞: via=belt-jam", !strcmp(j.via(), "belt-jam"), j.via());
+
+    // D. 拨出: 过门 0 后被拨出 -> 不期望门 1, 长时间不报卡滞
+    BeltWatch d(500, 1000, 1500, 1.0);
+    d.tick(0, true);
+    run(d, 500, true); d.onGateEdge(0, 500);
+    d.onDivert(0);
+    run(d, 5000, true);
+    check("拨出: 不误报卡滞", d.ok(), d.reason());
+
+    // E. 停带窗口不计行程: 墙钟 3s 但带面只走 0.5s -> 不误报
+    BeltWatch h(500, 1000, 1500, 1.0);
+    h.tick(0, true);
+    run(h, 500, true); h.onGateEdge(0, 500);
+    h.tick(3000, false);          // 停带 2.5s (推料/paused)
+    h.tick(3500, true);           // 带面时间 = 500+500 = 1000
+    h.onGateEdge(1, 3500);        // 门门行程 500ms (带面) = 期望
+    check("停带窗口: 不误报卡滞/打滑", h.ok(), h.reason());
+
+    // F. 带停期间物品滞留 -> 不报卡滞 (带面时间冻结)
+    BeltWatch f(500, 1000, 1500, 1.0);
+    f.tick(0, true);
+    run(f, 500, true); f.onGateEdge(0, 500);
+    f.tick(60000, false);
+    check("带停滞留: 不误报卡滞", f.ok(), f.reason());
+
+    // G. 陈旧锚点: 锚点 4s 前, 后来的落沿不采样 (实际 4000 > 5×期望 2500)
+    BeltWatch g(500, 1000, 1500, 1.0);
+    g.tick(0, true);
+    g.onVision(0.0, 0);
+    run(g, 4000, true); g.onGateEdge(0, 4000);
+    check("陈旧锚点: 丢弃不误判", g.ok() && g.v_meas_mps() == 0.0, g.reason());
+
+    // H. 锁存 + clear: 打滑锁存后正常样本不解锁, clear 复位
+    BeltWatch c(500, 1000, 1500, 1.0);
+    c.tick(0, true);
+    c.onVision(0.0, 0);
+    run(c, 625, true);  c.onGateEdge(0, 625);
+    run(c, 1250, true); c.onGateEdge(1, 1250);
+    run(c, 1875, true); c.onGateEdge(2, 1875);
+    check("锁存: 打滑保持", !strcmp(c.status(), "slip"), c.reason());
+    c.clear();
+    check("clear: 复位 ok", c.ok() && c.v_meas_mps() == 0.0, c.reason());
+
+    // I. 指令带速变化: setSpeed 后按新带速评估
+    BeltWatch v(500, 1000, 1500, 1.0);
+    v.tick(0, true);
+    v.setSpeed(2.0);  // 指令提到 2 m/s: 期望门门行程 250ms
+    run(v, 250, true); v.onGateEdge(0, 250);
+    run(v, 500, true); v.onGateEdge(1, 500);
+    check("变速: 新带速下正常", v.ok(), v.reason());
+}
+
 int main() {
     testConveyor();
     testSorter();
@@ -610,6 +703,7 @@ int main() {
     testTrack();
     testSorterVirtual();
     testBeltHold();
+    testBeltWatch();
     printf("\n%s\n", FAIL ? "有失败 ✗" : "全部通过 ✔");
     printf("PASS %d  FAIL %d\n", PASS, FAIL);
     return FAIL ? 1 : 0;
