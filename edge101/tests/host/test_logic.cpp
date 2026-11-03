@@ -256,7 +256,7 @@ static void testMcpEn() {
         check("离线时 sync/force 不写 I2C", bus.writes.size() == n0);
     }
 
-    // 在线: begin 配 IODIR + 按状态初始化 (stopped -> EN 低)
+    // 在线: begin 配 IODIR + 按状态初始化 (active-low: stopped -> EN 线=高=禁能)
     {
         FakeI2c bus;
         sort::McpEn en;
@@ -264,25 +264,26 @@ static void testMcpEn() {
         check("begin 配 PA0 为输出", bus.writes.size() >= 1
               && bus.writes[0].first == sort::McpEn::kIodirA
               && bus.writes[0].second == sort::McpEn::kEnMask);
-        check("初始 stopped -> EN=低 (level_ 初值即低, 无需写)",
-              en.level() == false && bus.writes.size() == 1);
+        check("初始 stopped -> EN 线=高 (active-low: 禁能=高, 1 次写)",
+              en.level() == true && bus.writes.size() == 2
+              && bus.writes[1].second == sort::McpEn::kEnMask);
 
         size_t n = bus.writes.size();
         check("同状态 sync 不写", (en.sync("stopped"), bus.writes.size() == n));
 
-        check("running -> EN=高 (1 次写)",
-              en.sync("running") && bus.writes.size() == n + 1
-              && bus.writes[n].second == sort::McpEn::kEnMask);
+        check("running -> EN 线=低 (使能, 1 次写)",
+              !en.sync("running") && bus.writes.size() == n + 1
+              && bus.writes[n].second == 0x00);
         check("running 重复 sync 不写", (en.sync("running"), bus.writes.size() == n + 1));
-        check("stopped -> EN=低", !en.sync("stopped")
-              && bus.writes.size() == n + 2 && bus.writes[n + 1].second == 0x00);
-        check("paused 保持低", (en.sync("paused"), bus.writes.size() == n + 2));
+        check("stopped -> EN 线=高 (禁能)", en.sync("stopped")
+              && bus.writes.size() == n + 2 && bus.writes[n + 1].second == sort::McpEn::kEnMask);
+        check("paused 保持高", (en.sync("paused"), bus.writes.size() == n + 2));
 
         // 手动强制 (串口 stepper 命令场景): 状态仍是 stopped 但临时使能
         en.forceLevel(true);
-        check("forceLevel(true) 写高", en.level() && bus.writes.size() == n + 3);
+        check("forceLevel(true) 写低 (使能)", !en.level() && bus.writes.size() == n + 3);
         en.forceLevel(false);
-        check("forceLevel(false) 写回低", !en.level() && bus.writes.size() == n + 4);
+        check("forceLevel(false) 写回高 (禁能)", en.level() && bus.writes.size() == n + 4);
     }
 }
 

@@ -6,7 +6,8 @@
 //
 // 为什么用它管 EN 而不是舵机: EN 是慢变数字量, 数字 IO 扩展的本职;
 // 舵机需要 50Hz 硬件 PWM, 仍走 PCA9685 (见 ServoI2C.h)。
-// 板上没插 MCP23017 时, EN 保持外部跳线 (接 5V 常使能), 固件自动检测回退。
+// 板上没插 MCP23017 时, EN 不接线 (浮空=使能, 2026-11-03 实测; 高=禁能),
+// 固件自动检测回退。
 //
 // 纯 C++ (无 Arduino 依赖): I2C 寄存器传输经 I2cReg 注入, 主机单测可测。
 #pragma once
@@ -39,9 +40,9 @@ class McpEn {
     static constexpr uint8_t kIodirA = 0x00;
     static constexpr uint8_t kGpioA = 0x12;
     static constexpr uint8_t kEnMask = 0x01;   // PA0
-    // EN 极性: false = 高电平使能 (A4988/DRV8825 惯例)。
-    // 若 SERVO42C 的 EN 是低电平使能, 在 config.h 注释处同步改为 true。
-    static constexpr bool kActiveLow = false;
+    // EN 极性: true = 低电平使能 (SERVO42C 2026-11-03 实机裁决:
+    // EN 高=禁能 / 浮空=使能; 与 A4988 类 EN 低=使能 一致)。
+    static constexpr bool kActiveLow = true;
 
     // 探测芯片; 在线则把 PA0 配成输出并按当前传送带状态初始化电平。
     // 返回 true = 在线且已接管 EN。

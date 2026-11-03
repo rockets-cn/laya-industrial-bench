@@ -1,5 +1,5 @@
 // EDGE 101 (DFR1283, ESP32 原版) 分拣控制器 — 实现 docs/sort-mqtt.md
-// 板载 RJ45 以太网 + 步进 (STEP=14 DIR=5, EN 驱动器端跳线 5V 常使能)
+// 板载 RJ45 以太网 + 步进 (STEP=14 DIR=5, EN 未接线/浮空实测可用)
 // + 3 路舵机 (LEDC PWM 直连, 12/15/33) + HuskyLens 2 (I2C 18/23, 预留)
 // + 2Hz 遥测
 //
@@ -460,12 +460,42 @@ static void onSerialCmd(const String& line) {
         esp_restart();
     } else if (line.startsWith("stepper")) {
         int n = line.substring(8).toInt();
-        // 手动脉冲验证 (EN 驱动器端跳线 5V 常使能, 固件不控制 EN)
-        for (int i = 0; i < n; i++) {
-            digitalWrite(STEPPER_STEP_PIN, HIGH); delayMicroseconds(2);
-            digitalWrite(STEPPER_STEP_PIN, LOW); delay(2);
+        // 手动脉冲验证: 必须走 RMT 硬件通道 (boot 后 RMT 已接管 GPIO14,
+        // digitalWrite 写 GPIO 寄存器到不了物理引脚 — 与 sketch 纯 digitalWrite
+        // 路径不同, 这是本固件能发脉冲的唯一通路). 50% 占空 400µs 周期 = 5kHz.
+        if (stepRmtReady && stepChan && !stepRmtActive && n >= 1 && n <= 20000) {
+            // 经典 ESP32 RMT 不支持 loop_count>0 (ESP_ERR_NOT_SUPPORTED),
+            // 把 N 个符号排成数组一次发完. 每符号 [200µs H, 200µs L] = 5kHz.
+            rmt_symbol_word_t *syms =
+                (rmt_symbol_word_t *)malloc(n * sizeof(rmt_symbol_word_t));
+            if (!syms) {
+                Serial.println("stepper: malloc 失败");
+            } else {
+                for (int i = 0; i < n; i++) {
+                    syms[i].duration0 = 16000;   // 200µs HIGH @80MHz
+                    syms[i].level0 = 1;
+                    syms[i].duration1 = 16000;   // 200µs LOW
+                    syms[i].level1 = 0;
+                }
+                rmt_transmit_config_t tc = {};
+                tc.loop_count = 0;
+                esp_err_t e1 = rmt_enable(stepChan);
+                esp_err_t e2 = (e1 == ESP_OK) ?
+                    rmt_transmit(stepChan, stepEnc, syms,
+                                 n * sizeof(rmt_symbol_word_t), &tc) : ESP_FAIL;
+                free(syms);
+                if (e2 != ESP_OK) {
+                    if (e1 == ESP_OK) rmt_disable(stepChan);
+                    Serial.printf("stepper %d: RMT 发射失败 e1=%d e2=%d\n", n, (int)e1, (int)e2);
+                } else {
+                    delay(400 * n / 1000 + 300);  // 等全部符号发完
+                    rmt_disable(stepChan);
+                    Serial.printf("stepper %d done\n", n);
+                }
+            }
+        } else {
+            Serial.println("stepper: RMT 未就绪或带在运行, 拒绝");
         }
-        Serial.printf("stepper %d done\n", n);
     } else if (line.startsWith("sweep")) {
         String sn = line.substring(6);  sn.trim();   // "sweep" = 5 字符 + 空格, 数字从 6 起
         int n = sn.toInt();
@@ -610,7 +640,7 @@ void setup() {
     if (mcpEn.begin(&mcpBus, conv.state()))
         Serial.printf("[mcp] MCP23017 @0x%02X 在线\n", sort::McpEn::kAddr);
     else
-        Serial.println("[mcp] MCP23017 未检测到 (光门未装; 步进 EN 由驱动器端 5V 跳线常使能)");
+        Serial.println("[mcp] MCP23017 未检测到 (光门未装; 步进 EN 未接线: 浮空=使能, 高=禁能, 2026-11-03 实测)");
 
     if (PHOTO_GATE_ENABLED) {
         if (mcpEn.present() && mcpGate.begin(&mcpBus, PHOTO_GATE_MASK_B)) {

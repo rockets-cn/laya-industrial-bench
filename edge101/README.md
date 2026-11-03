@@ -105,13 +105,15 @@ pio run -e s3emu        # 产物 .pio/build/s3emu/firmware.bin
 
 | 信号 | 引脚 | 备注 |
 |---|---|---|
-| HL2 TX/RX | GPIO5 / GPIO12 | Serial2 重映射, 38400 |
-| 步进 STEP/DIR | GPIO14 / GPIO15 | DIR 复用板载 LED (DIR=LOW→亮) |
-| I2C SDA/SCL | GPIO18 / GPIO23 | PCA9685 @0x40, 通道 0/1/2 = 1/2/3 号舵机 |
-| 步进 EN | MCP23017 PA0 | I2C @0x27 自动检测; 未接时回退驱动器端跳 5V 常使能 |
+| 舵机 1/2/3 | GPIO12 / GPIO15 / GPIO33 | LEDC PWM 直连 50Hz/15bit (0°=1000µs / 90°=1450µs), 上电即归位 |
+| 步进 STEP | GPIO14 | RMT 硬件脉冲 (320k pps 级带速); 串口 `stepper <n>` 手动脉冲也走 RMT |
+| 步进 DIR | GPIO5 | LOW=正向 (物品向分拣器); 反了则换接线 |
+| 步进 EN | 不接线 | SERVO42C 低电平使能 (2026-11-03 实测: 浮空=使能, 高=禁能); 固件不控 EN, MCP23017 PA0 预留接管 |
+| I2C SDA/SCL | GPIO18 / GPIO23 | HL2 预留 (现未接, `HL2_ON=0`; 串口 `vision` 注入可用) |
 | 以太网 | 板载 RJ45 | MDIO PHY 自动识别, 静态 IP |
 
-P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
+P34/P37/P38/P39 只能输入 (P38=板载按钮); P33 原 4G U1TXD 复用为舵机 3
+(4G 不用, 无影响); P15 与板载 LED 复用 (LED 放弃)。
 
 ## 行为要点 (与 sim_devices 对拍)
 
@@ -124,7 +126,7 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
   ESP_ERR_INVALID_ARG 静默回退); 失败原因见 boot 日志 `[step] RMT 初始化
   失败 (channel=X encoder=Y)`, 运行时可用 `stepstat`/`stepinit` 诊断恢复。
   真机已验证: 1.0 m/s 下 320000 pps 硬件脉冲, 步数账实一致。
-- **分拣器**: `divert` 进 busy, PCA9685 每次完成一件 `stepOne()`, N 件拨完才回
+- **分拣器**: `divert` 进 busy, LEDC 直连每次完成一件 `stepOne()`, N 件拨完才回
   `ok` ack; `reset` 清 fault; fault 时任何 divert 回 `fault` ack。
   **job_id 去重**: 完成窗 (60s) 内同 job_id 的 divert 重发/重投只补 `ok` 应答
   不重新拨料 (防网关重发/QoS1 重投导致双拨)。
@@ -148,8 +150,9 @@ P34/P37/P38/P39 只能输入 (P38=板载按钮), P33/P34 被 4G 模组占用。
   (QoS0) — 网关 `GET /motion` / relay `sort/event/motion`, 供动画还原
   「推杆何时推出 / 光门何时触发」。
 - **遥测**: 2Hz 发 conveyor + 3×sorter 状态 (网关 5s 无遥测判离线)。
-- **步进 EN**: MCP23017 PA0 接管 (上电自动检测): running=使能,
-  stopped/paused/fault=禁能 (停带断线圈电); 未接 MCP23017 时回退 EN 跳线 5V。
+- **步进 EN**: 不接线 (SERVO42C 低电平使能, 2026-11-03 实测: 浮空=使能,
+  高电平=禁能; 固件不控 EN)。MCP23017 PA0 预留未来接管: running=使能 (EN 低),
+  stopped/paused/fault=禁能 (EN 高, 停带断线圈电)。
 
 ## 串口控制台 (115200, 换行结尾)
 

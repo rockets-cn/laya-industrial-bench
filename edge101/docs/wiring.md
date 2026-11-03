@@ -44,14 +44,14 @@ https://blog.csdn.net/gjy_skyblue/article/details/120565771
 | 线 | 驱动器 | 接 |
 |---|---|---|
 | PUL+ | STEP | GPIO14 |
-| DIR+ | DIR | GPIO15 |
-| EN+  | EN  | **MCP23017 PA0**（主）; 未接 MCP23017 时回退: 驱动器端跳线 5V 常使能 |
+| DIR+ | DIR | GPIO5 |
+| EN+  | EN  | **不接线** (2026-11-03 实测 SERVO42C 低电平使能: 浮空=使能, 高电平=禁能; 想固化可跳 GND) |
 | GND  | GND | 共地 |
 | 电机动力 | 12V | 12V/1.5A+ 独立供电 (不并 5V 轨; 实际电压按电机铭牌) |
 
-- **EN 由 MCP23017 接管** (I2C 数字 IO 扩展, 与 PCA9685 共总线): 固件自动检测,
-  在线时 running=使能、stopped/paused/fault=禁能 (停带断线圈电); 离线时行为
-  同跳线 5V。详见下文 MCP23017 节。
+- **EN 由外部决定, 固件不碰**: 当前不接线 (浮空=使能, 实测可用)。MCP23017
+  装上后 PA0 可接管 (McpEn, `kActiveLow=true`): running=使能 (EN 低)、
+  stopped/paused/fault=禁能 (EN 高, 停带断线圈电)。详见下文 MCP23017 节。
 
 - **工作模式: 矢量闭环 (STEP/DIR)** — 编码器兜底, 堵转/丢步由驱动器处理
   (可启用堵转保护, LED 状态指示)。开环模式亦可; **串口控制模式暂不用**
@@ -68,35 +68,39 @@ https://blog.csdn.net/gjy_skyblue/article/details/120565771
   驱动器 A+/A-/B+/B- 端子; 动力 2 线 12V (V+/GND) → 驱动器动力端子。
   板子只出控制侧 STEP/DIR/GND 三根。
 
-### PCA9685 I2C 舵机控制器 (3 路分拣舵机)
+### 3 路舵机 (LEDC PWM 直连, 12/15/33)
 
-| 线 | 接 | 说明 |
-|---|---|---|
-| SDA | GPIO18 | 400kHz |
-| SCL | GPIO23 | 400kHz |
-| GND | GND | 共地 |
-| VDD (逻辑) | 3V3 | 模块有 VDDIO 跳线则拨 3.3V |
-| V+ (电机) | 5V 独立 | 舵机动力电源 (≥2A), **不要**用 I2C 3.3V |
+2026-10-30 起弃 PCA9685, 信号线直连 GPIO (7 路输出 GPIO 5/12/14/15/18/23/33
+全部用满; I2C 18/23 留给 HL2 预留):
 
-### MCP23017 I2C 数字 IO 扩展 (步进 EN + 光门 ×3, DFR0626)
+| 舵机 | 信号 | GPIO | 备注 |
+|---|---|---|---|
+| 1 号 | PWM | GPIO12 | 该脚内部下拉, 上电固件接管前可能抖一次归零 |
+| 2 号 | PWM | GPIO15 | 与板载 LED 复用, LED 从此常灭 (低电平点亮, PWM 平均为高) |
+| 3 号 | PWM | GPIO33 | 原 U1TXD/4G 复用, 4G 不用, 无影响 |
 
-与 PCA9685 **同一条 I2C 总线** (P18/P23), 地址不冲突: PCA9685 @0x40,
-MCP23017 @0x27。参考: https://wiki.dfrobot.com.cn/_SKU_DFR0626_MCP23017_IIC_to_16_digital_IO_expansion_module
+- 50Hz / 15bit: 0°=1000µs, 90°=1450µs。信号 3.3V, 舵机独立 5V 供电。
+- 上电即归位 0° (推杆收回)。
+
+### MCP23017 I2C 数字 IO 扩展 (光门 ×3, DFR0626)
+
+与 HL2 **预留同一条 I2C 总线** (P18 SDA / P23 SCL), 地址 0x27。参考:
+https://wiki.dfrobot.com.cn/_SKU_DFR0626_MCP23017_IIC_to_16_digital_IO_expansion_module
 
 | 线 | 接 | 说明 |
 |---|---|---|
 | VCC | 5V | 接口供电 3.3~5.5V, 输出电平跟随 VCC |
 | GND | GND | 共地 |
-| C (SCL) | GPIO23 | 与 PCA9685 共线 |
-| D (SDA) | GPIO18 | 与 PCA9685 共线 |
+| C (SCL) | GPIO23 | 与 HL2 (预留) 共线 |
+| D (SDA) | GPIO18 | 与 HL2 (预留) 共线 |
 | A0/A1/A2 | 拨码全 1 | I2C 地址 0x27 (默认值) |
-| PA0 | 驱动器 EN+ | 高电平使能 (A4988/DRV8825 惯例; 若 SERVO42C 极性相反, 改 `McpEn.h kActiveLow`) |
+| PA0 | 驱动器 EN+ | 低电平使能 (SERVO42C 2026-11-03 实测: 使能=EN 低; `McpEn.h kActiveLow=true`) — 现阶段 EN 不接线, 预留 |
 | PB0/PB1/PB2 | 光门 1/2/3 | 见下节 (推杆推出时序触发, 输入 + 内部上拉) |
 
-- **固件自动检测**: 启动日志 `[mcp] MCP23017 @0x27 在线, 步进 EN -> PA0
-  (停带禁能)` 或 `[mcp] MCP23017 未检测到, 步进 EN 保持外部跳线 (5V 常使能)`。
-- EN 随传送带状态: `running`=使能, `stopped/paused/fault`=禁能 (停带断线圈电,
-  替代原「EN 跳 5V 常使能」); 串口 `stepper <n>` 手动脉冲时临时使能、发完恢复。
+- **固件自动检测**: 启动日志 `[mcp] MCP23017 @0x27 在线` 或
+  `[mcp] MCP23017 未检测到 (光门未装; 步进 EN 未接线: 浮空=使能, 高=禁能, 2026-11-03 实测)`。
+- 在线后 EN 随传送带状态: `running`=使能 (EN 低), `stopped/paused/fault`=禁能
+  (EN 高, 停带断线圈电)。串口 `stepper <n>` 手动脉冲走 RMT 通道, 不涉及 EN。
 - **剩余 13 路预留** (PA1~PA7, PB3~PB7): 料道末端对账光电/限位/急停等数字量,
   输入模式 + 内部上拉即可 (OPEN_QUESTIONS 3②)。
 
@@ -161,11 +165,11 @@ loop_ui「Laya 工业决策回路」页「📐 分拣线光门安装布局」折
 
 ### 推杆 (3 个舵机) 接线要点
 
-- 3 个舵机信号线接 PCA9685 的 **OUT0/OUT1/OUT2** (通道 0/1/2 = 1/2/3 号料道,
-  各驱动 1 条**推杆**)。
+- 3 个舵机信号线**直连 GPIO12/15/33** (LEDC 50Hz PWM, 1/2/3 号 = 1/2/3 号
+  料道, 各驱动 1 条**推杆**)。2026-10-30 起弃 PCA9685。
 - 扫掠: 0°(推杆收回) ↔ 90°(推杆推出), 一件 = 一次推出, qty=N 连推 N 次。
   舵机型号/推杆行程几何待现场确认 (OPEN_QUESTIONS 第 4 条)。
-- 地址默认 0x40 (若模块地址不同, 改 config.h `SERVO_ADDR`)。
+- 舵机独立 5V 供电 (≥2A), 信号 3.3V, GND 共地。
 
 ### 以太网 (板载 RJ45, 网线直连)
 
@@ -183,7 +187,7 @@ loop_ui「Laya 工业决策回路」页「📐 分拣线光门安装布局」折
 USB 5V/2A (或 DC 9-26V 端子)
   └── EDGE101 板载 (主控 + 4G 模组 + HL2)   ~1W 静态 + HL2 峰值
 12V/1.5A+ 独立电源 ── 步进驱动器 VMOT
-5V/2A+ 独立电源  ─── 舵机 (PCA9685 V+)   [与 12V 共用 GND 共地]
+5V/2A+ 独立电源  ─── 舵机 (LEDC 直连 12/15/33)   [与 12V 共用 GND 共地]
 ```
 
 - 三处 GND 必须共地 (星形接地更好)。
@@ -193,9 +197,9 @@ USB 5V/2A (或 DC 9-26V 端子)
 
 1. 先不接电机/舵机, 只接 HL2: 串口 (115200, Type-C) 看
    `[hl2] ...` / `[eth] ...` / `[mqtt] connected`。
-2. 接 PCA9685 + 一个舵机到 OUT0, 串口发 `sweep 1` 验证扫掠方向与角度。
+2. 接一个舵机到 GPIO12, 串口发 `sweep 1` 验证扫掠方向与角度。
 3. 接步进, 串口发 `stepper 1000` (≈3.1mm @320步/mm, 假设值, 见 OPEN #6⑧
-   带速标定) 验证转向 (DIR=LOW 时 LED 亮 = 正转, 反过来就把 DIR 反相接线)。
+   带速标定) 验证转向 (DIR=LOW = 正向, 物品向分拣器; 皮带反了就把 DIR+ 接线反相)。
 4. 接光门 ×3 (各推杆前侧), 串口 `gates` 确认三路上拉 HIGH、挡光变 LOW;
    未接光门时可用 `vision <material>` + `track` 验证虚拟光门时序。
 5. 全接上, 网关 `POST /dispatch` 走一次完整闭环。
