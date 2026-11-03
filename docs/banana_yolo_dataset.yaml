@@ -1,0 +1,5 @@
+names: [banana]
+nc: 1
+path: /tmp/banana_yolo
+train: train/images
+val: val/images
