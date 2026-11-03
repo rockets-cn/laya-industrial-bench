@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 os.environ.setdefault("LLM_MODEL", "qwen3.5:4b")  # bench_pipeline reads it at import time
@@ -401,6 +401,37 @@ async def twin():
     return out
 
 
+# 真机摄像头 MJPEG 直播 (mjpeg_server: /dev/video0 -> 127.0.0.1:8125/stream,
+# 真机场景代替 HuskyLens2 的实时画面): 页面在 HuskyLens 上方缩小展示.
+CAM_STREAM_URL = os.environ.get("CAM_STREAM_URL", "http://127.0.0.1:8125/stream")
+
+
+@app.get("/cam/stream")
+def cam_stream():
+    """代理摄像头 MJPEG 直播流 (multipart/x-mixed-replace 透传).
+    流服务未运行 → 502, 页面回落显示「摄像头离线」占位卡."""
+    try:
+        up = urllib.request.urlopen(CAM_STREAM_URL, timeout=3)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "camera stream offline"},
+                            status_code=502)
+    ctype = up.headers.get("Content-Type",
+                           "multipart/x-mixed-replace; boundary=frame")
+
+    def gen():
+        try:
+            while True:
+                chunk = up.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+                time.sleep(0.05)  # 上游 :8125 无节流 (同帧可 ~1000fps 狂发), 这里限 ~20fps
+        finally:
+            up.close()
+
+    return StreamingResponse(gen(), media_type=ctype)
+
+
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -455,7 +486,7 @@ PAGE = """<!doctype html>
 </style></head><body><div class="wrap">
 <h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v13 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite)+常驻库存卡 · 失败降级 暂停+人工</span></h1>
 <div class="sec" style="margin-top:12px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
-<div id="gate" style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
+<div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
 <span id="gla-mode" style="font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
 <span style="font-size:12px;color:#8a91a0;display:flex;align-items:center;gap:5px">数据源
@@ -465,6 +496,10 @@ PAGE = """<!doctype html>
 </select></span>
 <span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有活 400ms / 待机 600ms)</span>
 </div>
+<!-- 真数据源: 摄像头实时画面 (MJPEG :8125 → /cam/stream), 缩小放 HuskyLens 2 上方; 定位由 JS 按 SVG CTM 计算 -->
+<img id="gla-camimg" alt="" draggable="false" onerror="camImgErr()" onload="camImgOk()"
+     style="display:none;position:absolute;z-index:20;border:1px solid #2c3342;border-radius:8px;background:#0a0c10;box-shadow:0 6px 18px rgba(0,0,0,.5);pointer-events:none">
+<span id="gla-camoff" style="display:none;position:absolute;z-index:20;pointer-events:none;font-size:11px;line-height:1.5;color:#8a91a0;background:rgba(30,36,48,.92);border:1px dashed #2c3342;border-radius:8px;padding:12px 14px;text-align:center">📷 摄像头离线<br>(MJPEG :8125 未运行)</span>
 @GATE_SVG@
 <details class="fold"><summary>接线与安装参考（光门 ↔ 推杆 ↔ MCP23017 · 安装位置/高度 · 件距约束 · 启用顺序）</summary>
 <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0 4px">
@@ -628,6 +663,47 @@ async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
  }catch(e){lastRun=keep;setLastRun(keep);
   if(window.__gla){__gla.setJob([]);}
   $('out').innerHTML=sec('📤 分拣下发')+`<pre style="color:#f87171">❌ ${e}</pre>`+$('out').innerHTML;}}
+// ---- 摄像头实时画面 (真数据源): MJPEG :8125 → /cam/stream, 缩小放 HuskyLens 2 上方 ----
+// SVG 用户坐标框: 4:3 · 120x90, 相机体 (x=132..168, y=240) 上方居中, 不压标题/尺寸线
+var CAM_BOX={x0:90,x1:210,y0:100,y1:190};
+var camOn=false;
+function camBoxPx(){ // SVG 用户坐标 → #gate 内容坐标 (含当前水平滚动量)
+ var svg=document.getElementById('gla-svg'),gate=document.getElementById('gate');
+ if(!svg||!gate)return null;
+ var m=svg.getScreenCTM(); if(!m)return null;
+ function P(x,y){var pt=svg.createSVGPoint();pt.x=x;pt.y=y;return pt.matrixTransform(m);}
+ var a=P(CAM_BOX.x0,CAM_BOX.y0),b=P(CAM_BOX.x1,CAM_BOX.y1);
+ var gr=gate.getBoundingClientRect();
+ return {left:a.x-gr.left-gate.clientLeft+gate.scrollLeft,
+         top:a.y-gr.top-gate.clientTop+gate.scrollTop,
+         w:b.x-a.x,h:b.y-a.y};
+}
+function camPlace(){
+ var box=camBoxPx(); if(!box)return;
+ ['gla-camimg','gla-camoff'].forEach(function(id){
+  var el=document.getElementById(id);
+  el.style.left=box.left+'px'; el.style.top=box.top+'px';
+  el.style.width=box.w+'px';
+  if(id==='gla-camimg')el.style.height=box.h+'px';
+ });
+}
+function camStream(src){ // 仅真实数据源显示 (模拟源无物理摄像头); 与孪生在线状态无关
+ var img=document.getElementById('gla-camimg'),off=document.getElementById('gla-camoff');
+ if(src==='device'){
+  if(!camOn){camOn=true;img.removeAttribute('src');img.src='/cam/stream';
+   img.style.display='block';off.style.display='none';}
+  camPlace();
+ } else if(camOn){
+  camOn=false; img.removeAttribute('src');
+  img.style.display='none'; off.style.display='none';
+ }
+}
+function camImgErr(){ // 流服务未运行 (/cam/stream 502) → 占位卡
+ var img=document.getElementById('gla-camimg'),off=document.getElementById('gla-camoff');
+ img.style.display='none'; off.style.display='block'; camPlace();
+}
+function camImgOk(){document.getElementById('gla-camoff').style.display='none';}
+window.addEventListener('resize',function(){if(camOn)camPlace();});
 // ---- 光门运行示意 · 数字孪生同步: 轮询 /twin (代理网关 health/motion/stats) ----
 // 在线 → SVG 切实时模式 (推杆/光门/料道按运动时间线还原); 离线 → 回落循环演示
 let twinSig='';
@@ -635,6 +711,9 @@ let twinTimer=null;
 function scheduleTwin(ms){if(twinTimer)clearTimeout(twinTimer);twinTimer=setTimeout(refreshTwin,ms);}
 async function refreshTwin(){
  const chip=$('gla-mode');
+ const srcSel=$('gla-src');
+ const src=srcSel?srcSel.value:'sim'; // 数据源: sim=本地孪生模拟器 / device=物理设备
+ camStream(src); // 摄像头实时画面: 仅真实数据源 (独立于孪生在线状态)
  let d=null;
  try{d=await (await fetch('/twin')).json();}catch(e){}
  const gla=window.__gla;
@@ -644,8 +723,6 @@ async function refreshTwin(){
   scheduleTwin(1500);
   return;
  }
- const srcSel=$('gla-src');
- const src=srcSel?srcSel.value:'sim'; // 数据源: sim=本地孪生模拟器 / device=物理设备
  const st=[{state:'ready',ts_ms:0},{state:'ready',ts_ms:0},{state:'ready',ts_ms:0}];
  (d.events||[]).forEach(ev=>{
   if(!ev||ev.state==null)return; // reset/cancel 只记 via 无 state, 不改状态
