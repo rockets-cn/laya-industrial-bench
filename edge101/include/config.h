@@ -11,27 +11,40 @@
 //   - 供电: DC 9-26V 端子 或 USB 5V/2A; 静态 ~100mA@5V
 //   - 板载 LED = GPIO15 (低电平点亮), 板载按钮 = GPIO38 (低电平按下)
 //
-// 引脚分配 (6 路可用输出全用):
-//   GPIO5  = HL2 UART TX   (Serial2 重映射, 38400)
-//   GPIO12 = HL2 UART RX
-//   GPIO14 = 步进 STEP
-//   GPIO15 = 步进 DIR      (复用板载 LED: DIR=LOW 时 LED 亮, 可当方向指示)
-//   GPIO18 = I2C SDA -> PCA9685 舵机控制器 (3 路舵机, 通道 0/1/2)
-//   GPIO23 = I2C SCL -> PCA9685 + MCP23017 (共总线, 地址 0x40 / 0x27)
-//   步进 EN: 6 路输出全用 → MCP23017 PA0 接管 (I2C 数字扩展, 固件自动检测);
-//            未接 MCP23017 时回退: 驱动器端 EN 跳线 5V (常使能)
-//   光门 ×3: 拨料时序触发 (divert trigger=photo) → MCP23017 PB0/PB1/PB2
+// 引脚分配 (2026-10-30 硬件改线):
+//   GPIO5  = 步进 DIR      (LOW=正向: 物品向分拣器方向; 反了则换接线)
+//   GPIO12 = 舵机 1 (LEDC PWM 直连; 该脚内部下拉 -> 上电固件接管前可能抖一次归零)
+//   GPIO14 = 步进 STEP (RMT 硬件脉冲)
+//   GPIO15 = 舵机 2 (LEDC PWM 直连; 板载 LED 复用就此放弃)
+//   GPIO18 = I2C SDA (板载 I2C 总线, 预留 HL2)
+//   GPIO23 = I2C SCL (板载 I2C 总线, 预留 HL2 — 原与舵机 3 冲突, 已挪到 33 解除)
+//   GPIO33 = 舵机 3 (LEDC PWM 直连; 原 U1TXD/4G 复用, 4G 不用, 无影响)
+//   步进 EN = 不接, 驱动器端跳线 5V 常使能 (固件不控制 EN)
+//   34/37/39 = 只能输入, 预留传感器 (无内部上拉, 用时需外接上拉)
+//   38 = 板载按钮 (输入)
 #pragma once
 
 #include <cstdint>
 #include <IPAddress.h>
 #include "HuskyLens.h"
 
-// ---------- HuskyLens 2 (Gravity UART, 38400) ----------
-static const uint8_t  HL2_RX_PIN   = 12;    // 板 RX <- HL2 TX (HuskyLens 默认 38400)
-static const uint8_t  HL2_TX_PIN   = 5;     // 板 TX -> HL2 RX
-static const uint32_t HL2_BAUD     = 38400;
+// ---------- HuskyLens 2 ----------
+// 现状 (2026-10-30): 计划走 I2C, 尚未连接。板上 I2C 总线 SDA=18 / SCL=23
+// 已空闲 (原 SCL 与舵机 3 冲突, 舵机 3 已挪到 33)。
+// HL2_ON=0: 本固件不初始化 HL2; 虚拟光门仍可用串口 `vision <material>`
+// 注入检测锚点离线验证 (配合 `track` 命令)。
+// 接线确认后启用: 实现 I2C 传输 (帧格式与 UART 相同 0x55 0x55, 写 0x1B
+// 触发取帧, I2C 地址需实机扫描确认) -> 本宏改 1。
+#define HL2_ON 0
+static const uint8_t  HL2_I2C_SDA_PIN = 18;   // 板载 I2C (Arduino Wire 默认)
+static const uint8_t  HL2_I2C_SCL_PIN = 23;
 static const uint32_t HL2_RETRIGGER_MS = 500;  // 同物料进画面去重窗口
+#if HL2_ON
+// (旧 UART 接线占位, 本轮未用: 5/12 已改作 DIR/舵机 1)
+static const uint8_t  HL2_RX_PIN   = 12;
+static const uint8_t  HL2_TX_PIN   = 5;
+static const uint32_t HL2_BAUD     = 38400;
+#endif
 
 // ---------- 步进电机 (42 两相 + MKS SERVO42C 闭环 PCBA, 传送带) ----------
 // 驱动器: Makerbase SERVO42C — 板载 16384 线磁编码器, FOC 矢量三环,
@@ -39,8 +52,8 @@ static const uint32_t HL2_RETRIGGER_MS = 500;  // 同物料进画面去重窗口
 // 我们用 STEP/DIR 驱动 (矢量闭环模式), 接线与 A4988 兼容; 串口控制模式
 // 需要第三路 UART, 板上无空闲, 暂不用。
 static const uint8_t STEPPER_STEP_PIN = 14;
-static const uint8_t STEPPER_DIR_PIN  = 15;   // 复用板载 LED (DIR=LOW -> LED 亮)
-// 无 EN 引脚 (见文件头说明): 驱动器 EN 端接 5V 常使能.
+static const uint8_t STEPPER_DIR_PIN  = 5;    // LOW=正向 (物品向分拣器方向; 反了换接线)
+// EN: 不接, 驱动器端跳线 5V 常使能 (2026-10-30 起, 固件不控制 EN).
 // 步/mm = (200 步/圈 × 细分数) ÷ 导程 mm/圈。
 // 假设: 1.8° 电机 (200 步/圈) + 导程 10mm + 驱动器设 1/16 细分
 //   => 3200 步/圈 ÷ 10mm/圈 = 320 步/mm。
@@ -84,11 +97,10 @@ static const double   GATE_DIST_MM[3]       = {500.0, 500.0, 500.0}; // 相机->
 static const double   ITEM_PITCH_MM         = 900.0; // photo job 件距 (mm, 标定项)
 static const uint32_t TRACK_MATCH_WINDOW_MS = 3000;  // 视觉 -> divert 匹配窗 (ms)
 
-// ---------- 舵机 ×3 (PCA9685 I2C @0x40, 通道 0/1/2) ----------
-static const uint8_t SERVO_SDA_PIN  = 18;
-static const uint8_t SERVO_SCL_PIN  = 23;
-static const uint8_t SERVO_ADDR     = 0x40;
-static const uint8_t SERVO_CH[3]    = {0, 1, 2};
+// ---------- 舵机 ×3 (LEDC 硬件 PWM, 直连; 2026-10-30 自 PCA9685 改直连) ----------
+// 50Hz / 15bit: 0°=1000µs 脉宽, 180°=2000µs。
+// 1/2/3 号舵机 (推杆) -> GPIO12/15/33。信号 3.3V, 舵机独立 5V 供电。
+static const uint8_t SERVO_PIN[3]  = {12, 15, 33};
 static const int     SERVO_REST_DEG  = 0;    // 归位
 static const int     SERVO_EJECT_DEG = 90;   // 拨出
 static const uint32_t SERVO_SWEEP_MS   = 800;  // 一次扫掠总时长 (拨出 400 + 归位 400)

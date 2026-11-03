@@ -1,10 +1,12 @@
 // EDGE 101 (DFR1283, ESP32 原版) 分拣控制器 — 实现 docs/sort-mqtt.md
-// 板载 RJ45 以太网 + HuskyLens 2 (UART, GPIO5/12) + 步进 (STEP=14 DIR=15)
-// + 3 路舵机 (PCA9685 I2C, SDA=18 SCL=23, 通道 0/1/2) + 2Hz 遥测
+// 板载 RJ45 以太网 + 步进 (STEP=14 DIR=5, EN 驱动器端跳线 5V 常使能)
+// + 3 路舵机 (LEDC PWM 直连, 12/15/33) + HuskyLens 2 (I2C 18/23, 预留)
+// + 2Hz 遥测
 //
 // 引脚/网络全部在 include/config.h (依据 DFRobot wiki DFR1283).
 // 纯逻辑 (状态机/解析/协议 JSON) 在 lib/SortLogic, 主机可单测.
 #include <Arduino.h>
+#include <Wire.h>
 #include <ETH.h>
 #include <WiFi.h>
 #include <NetworkClient.h>
@@ -22,7 +24,6 @@
 #include "Track.h"
 #include "HuskyLens.h"
 #include "Proto.h"
-#include "ServoI2C.h"
 #include "McpEn.h"
 #include "McpGate.h"
 #include "BeltHold.h"
@@ -31,16 +32,19 @@
 static sort::Conveyor conv;
 static sort::BeltHold beltHold;   // 推料期间停带 (扫掠中 hold, 扫掠结束自动恢复)
 static sort::Sorter sorters[3] = {sort::Sorter(1), sort::Sorter(2), sort::Sorter(3)};
+#if HL2_ON
 static sort::HuskyLens hl2(MATERIAL_MAP, MATERIAL_MAP_LEN, HL2_RETRIGGER_MS);
+#endif
 static sort::Track track;         // 带面位置跟踪 (虚拟光门; 配置见 config.h)
 static sort::BeltWatch beltWatch(GATE_DIST_MM[0], GATE_DIST_MM[1],
                                  GATE_DIST_MM[2], 1.0);  // 带速估计+打滑/卡滞 (物理光门)
 static bool beltFaultSent = false;
 
-static HardwareSerial hlSerial(2);            // UART2 重映射到 GPIO5/12
+#if HL2_ON
+static HardwareSerial hlSerial(2);            // UART2 重映射到 GPIO5/12 (本轮未用)
+#endif
 static NetworkClient ethClient;               // 3.x: 以太网客户端 (自动绑定默认 netif)
 static PubSubClient mqtt(ethClient);
-static ServoI2C servos;
 
 // MCP23017 (步进 EN + 预留数字量): TwoWire 实现 I2cReg 传输
 struct WireMcpBus : public sort::I2cReg {
@@ -171,7 +175,7 @@ static uint64_t stepsLive() {
 // ================= 舵机扫掠任务 (非阻塞, 每分拣器 1 路, 可并发) =================
 // 一件物料 = 一次 拨出->归位 扫掠; qty=N 则 N 次, 件间 SERVO_ITEM_GAP_MS.
 // 与 sim_devices 语义一致: 全部拨完才发 ack ok.
-// 3 个分拣器各占 1 个 PCA9685 通道, 光门触发下可能同时拨, 各自独立任务.
+// 3 个分拣器各占 1 路 LEDC PWM (GPIO12/15/33), 光门触发下可能同时拨, 各自独立任务.
 struct SweepTask {
     int n = 0;             // 分拣器 1..3
     bool active = false;
@@ -185,8 +189,17 @@ static String lastJobId[3] = {"", "", ""};   // 各分拣器当前 job_id (diver
 static std::string lastDoneJob[3];
 static uint32_t lastDoneAtMs[3] = {0, 0, 0};
 
+// 舵机: LEDC 硬件 PWM 直连 (arduinoespressif32 3.x: ledcAttach/ledcWrite,
+// duty = 分辨率原始计数, 非千分比): 50Hz / 15bit, 0°=1000µs, 180°=2000µs
+// 20ms 周期 = 32768 计数 -> 1000µs=1638, 1450µs=2355
+static uint32_t servoDutyRaw(int deg) {
+    if (deg < 0) deg = 0;
+    if (deg > 180) deg = 180;
+    uint32_t us = 1000UL + 5UL * (uint32_t)deg;
+    return us * ((1UL << 15)) / 20000UL;
+}
 static void servoWrite(int n, int deg) {
-    servos.setAngle(SERVO_CH[n - 1], deg);
+    ledcWrite(SERVO_PIN[n - 1], servoDutyRaw(deg));
 }
 
 static void publishSorterAck(int n, const char* job_id, const char* action,
@@ -380,6 +393,7 @@ static void mqttConnect() {
 }
 
 // ================= 视觉 (HuskyLens 2) =================
+#if HL2_ON
 static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
     char fid[24];
     snprintf(fid, sizeof(fid), "hl2-%lu", (unsigned long)ev.seq);
@@ -395,6 +409,7 @@ static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
     Serial.printf("[vision] %s id=%s pos=%+.0fmm\n",
                   ev.material.c_str(), fid, p0);
 }
+#endif
 
 // ================= 串口控制台 (调试) =================
 static String consoleBuf;
@@ -445,22 +460,22 @@ static void onSerialCmd(const String& line) {
         esp_restart();
     } else if (line.startsWith("stepper")) {
         int n = line.substring(8).toInt();
-        if (mcpEn.present()) mcpEn.forceLevel(true);   // 手动脉冲: 临时使能
+        // 手动脉冲验证 (EN 驱动器端跳线 5V 常使能, 固件不控制 EN)
         for (int i = 0; i < n; i++) {
             digitalWrite(STEPPER_STEP_PIN, HIGH); delayMicroseconds(2);
             digitalWrite(STEPPER_STEP_PIN, LOW); delay(2);
         }
-        if (mcpEn.present()) mcpEn.forceLevel(false);  // 发完恢复禁能
         Serial.printf("stepper %d done\n", n);
     } else if (line.startsWith("sweep")) {
-        int n = line.substring(7).toInt();
+        String sn = line.substring(6);  sn.trim();   // "sweep" = 5 字符 + 空格, 数字从 6 起
+        int n = sn.toInt();
         if (n >= 1 && n <= 3) {
             servoWrite(n, SERVO_EJECT_DEG); delay(450);
             servoWrite(n, SERVO_REST_DEG);
             Serial.printf("sweep %d done\n", n);
         }
     } else if (line.startsWith("vision")) {
-        String m = line.substring(8);
+        String m = line.substring(7);   // "vision" = 6 字符 + 空格, 物料从 7 起
         m.trim();
         // 注入视觉事件: 视为物品此刻在相机中心 (p0=0mm), 同时记位置锚点,
         // 之后 trigger=photo 的 divert 可走虚拟光门 (真机时序验证用).
@@ -584,16 +599,18 @@ void setup() {
         }
     }
 
-    servos.begin(SERVO_SDA_PIN, SERVO_SCL_PIN);
-    for (int i = 0; i < 3; i++) servos.setAngle(SERVO_CH[i], SERVO_REST_DEG);
-    Serial.printf("[servo] PCA9685 @0x%02X ch %d/%d/%d\n",
-                  SERVO_ADDR, SERVO_CH[0], SERVO_CH[1], SERVO_CH[2]);
+    // 舵机 ×3: LEDC 硬件 PWM 直连 (50Hz / 15bit), 上电即归位
+    for (int i = 0; i < 3; i++) {
+        ledcAttach(SERVO_PIN[i], 50, 15);
+        ledcWrite(SERVO_PIN[i], servoDutyRaw(SERVO_REST_DEG));
+    }
+    Serial.printf("[servo] LEDC @50Hz 15bit: GPIO%d/GPIO%d/GPIO%d 归位 %d°\n",
+                  SERVO_PIN[0], SERVO_PIN[1], SERVO_PIN[2], SERVO_REST_DEG);
 
     if (mcpEn.begin(&mcpBus, conv.state()))
-        Serial.printf("[mcp] MCP23017 @0x%02X 在线, 步进 EN -> PA0 (停带禁能)\n",
-                      sort::McpEn::kAddr);
+        Serial.printf("[mcp] MCP23017 @0x%02X 在线\n", sort::McpEn::kAddr);
     else
-        Serial.println("[mcp] MCP23017 未检测到, 步进 EN 保持外部跳线 (5V 常使能)");
+        Serial.println("[mcp] MCP23017 未检测到 (光门未装; 步进 EN 由驱动器端 5V 跳线常使能)");
 
     if (PHOTO_GATE_ENABLED) {
         if (mcpEn.present() && mcpGate.begin(&mcpBus, PHOTO_GATE_MASK_B)) {
@@ -608,9 +625,15 @@ void setup() {
                       GATE_DIST_MM[0], GATE_DIST_MM[1], GATE_DIST_MM[2],
                       ITEM_PITCH_MM, VIEW_WIDTH_MM);
 
+#if HL2_ON
     hlSerial.begin(HL2_BAUD, SERIAL_8N1, HL2_RX_PIN, HL2_TX_PIN);
     Serial.printf("[hl2] UART2 @%lu rx=GPIO%d tx=GPIO%d\n",
                   (unsigned long)HL2_BAUD, HL2_RX_PIN, HL2_TX_PIN);
+#else
+    Serial.printf("[hl2] 未接线: I2C 总线预留 SDA=GPIO%d / SCL=GPIO%d, "
+                  "接线确认后实现 I2C 传输并置 HL2_ON=1 (期间可用串口 vision 注入验证虚拟光门)\n",
+                  HL2_I2C_SDA_PIN, HL2_I2C_SCL_PIN);
+#endif
 
 #ifdef CONFIG_IDF_TARGET_ESP32
     // 板载 RJ45 (EDGE 101): 先起 PHY + DHCP, 再停 DHCP 设静态 IP
@@ -662,6 +685,7 @@ void loop() {
                               sorters[i].done_count + 1, sorters[i].pend_qty);
                 Serial.printf("[gate] 分拣器%d 光门触发, 开始拨料 (剩 %d 件)\n",
                               i + 1, sorters[i].pendingQty());
+                }
             }
         }
     }
@@ -697,8 +721,10 @@ void loop() {
     }
     mqtt.loop();
 
+#if HL2_ON
     while (hlSerial.available())
         hl2.feedByte((uint8_t)hlSerial.read(), millis(), onVision, nullptr);
+#endif
 
     if (mqtt.connected() && millis() - lastTeleMs >= 500) {
         lastTeleMs = millis();
