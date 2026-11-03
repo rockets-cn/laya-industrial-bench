@@ -508,11 +508,14 @@ def main():
         print("\n== 11. 带健康故障链路 (sim 注入 belt-slip/belt-jam) ==")
         base13 = gw.stats.batches["done"]
         conv.belt_fault = "jam"  # 带子一 running 就注入 (items_in 早已 >= 2)
-        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
-                             {"source": "test",
-                              "actions": [{"yard": 2, "material": "banana",
-                                           "qty": 1}]})
-        check("注入期 dispatch 202", st == 202, f"st={st} body={body}")
+        # 直接起带 (in-process handler, 绕过 job 短窗口): 遥测周期 0.5s, 若 job 的
+        # start→stop (~300ms) 恰好落在两次 tick 之间, running tick 被错过 → flaky.
+        # 注意: 首个 running tick 内 belt_fault 即触发, 网关侧 dev_state 只见 fault
+        conv.handle_cmd({"action": "start", "job_id": "belt-watch-test",
+                         "speed_mps": 1.0})
+        check("注入前置: 带已起且 items_in>=2",
+              conv.state == "running" and conv.items_in >= 2,
+              f"conv={conv.state} items_in={conv.items_in}")
         ok = wait_for(lambda: gw.dev_state.get("conveyor") == "fault",
                       8, "conveyor 遥测 fault")
         check("conveyor 遥测 fault (sim 注入)", ok, f"dev={gw.dev_state}")

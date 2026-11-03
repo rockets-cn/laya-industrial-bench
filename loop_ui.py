@@ -454,44 +454,8 @@ PAGE = """<!doctype html>
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
 <h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v13 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite)+常驻库存卡 · 失败降级 暂停+人工</span></h1>
-<svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
- <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
- <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="240" y1="32" x2="262" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="372" y1="32" x2="394" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="504" y1="32" x2="526" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="636" y1="32" x2="658" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="768" y1="32" x2="790" y2="32" marker-end="url(#arr)"/>
- <g id="fn1" class="n off"><rect x="2" y="14" width="104" height="36" rx="9"/><text x="54" y="37" text-anchor="middle">语音/文本</text></g>
- <g id="fn2" class="n off"><rect x="134" y="14" width="104" height="36" rx="9"/><text x="186" y="29" text-anchor="middle">ASR</text><text x="186" y="43" text-anchor="middle" class="sub">SenseVoice</text><text id="fn-asr" x="186" y="66" text-anchor="middle" class="ms">—</text></g>
- <g id="fn3" class="n off"><rect x="266" y="14" width="104" height="36" rx="9"/><text x="318" y="29" text-anchor="middle">规则归一化</text><text x="318" y="43" text-anchor="middle" class="sub">抽取 · 归属</text></g>
- <g id="fn4" class="n off"><rect x="398" y="14" width="104" height="36" rx="9"/><text x="450" y="29" text-anchor="middle">Laya 决策</text><text x="450" y="43" text-anchor="middle" class="sub">物料终审</text><text id="fn-laya" x="450" y="66" text-anchor="middle" class="ms">—</text></g>
- <g id="fn5" class="n off"><rect x="530" y="14" width="104" height="36" rx="9"/><text x="582" y="29" text-anchor="middle">校验器</text><text x="582" y="43" text-anchor="middle" class="sub">白名单 · 去重</text></g>
- <g id="fn6" class="n off"><rect x="662" y="14" width="104" height="36" rx="9"/><text x="714" y="29" text-anchor="middle">LLM 旁路</text><text x="714" y="43" text-anchor="middle" class="sub">校验拒绝 · 分配展开</text><text id="fn-bypass" x="714" y="66" text-anchor="middle" class="ms">未触发</text></g>
- <g id="fn7" class="n off"><rect x="794" y="14" width="104" height="36" rx="9"/><text x="846" y="29" text-anchor="middle">PLC 下发</text><text x="846" y="43" text-anchor="middle" class="sub">暂停 = 不发</text><text id="fn-e2e" x="846" y="66" text-anchor="middle" class="ms">—</text></g>
-</svg>
-<div class="row">
- <select id="preset" onchange="runPresetSel()" title="测试指令预设"><option value="" selected>预设指令…</option></select>
- <input id="txt">
- <button class="primary" onclick="runText()">▶ 运行</button>
- <button id="btnDispatch" onclick="dispatchRun()" disabled title="把最近一次运行的分类结果下发到 MQTT 分拣线">📤 下发分拣线</button>
- <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer" title="规则层认不出的问句交给 LLM 基于注入事实回答 (~10s, 仅展示不下发); 规则层能答的仍毫秒级直答; 开关状态保存在本浏览器"><input type="checkbox" id="qallm"> LLM 兜底</label>
- <button onclick="toggleLedger()" title="SQLite 出入库台账: 分拣下发自动记入, 这里可手动记出">📦 仓库台账</button>
- </div>
-<div class="row">
- <button id="micbtn" class="primary" style="min-width:120px" onclick="authToggle()">🎤 授权麦克风</button>
- <button id="ptt" title="按住说话 (或按住 空格键)" style="min-width:120px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
- <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
- <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
-</div>
-<div id="cards" class="cards"></div>
-<div id="stockcards" class="cards" style="margin:10px 0 4px"></div>
-<div id="yardcards" class="cards"></div>
-<div id="ledger" style="display:none;margin:14px 0"></div>
-<div id="out"></div>
-<details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
-<details class="fold" id="gate"><summary>📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步）</summary>
-<div style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:8px 0;overflow-x:auto">
+<div class="sec" style="margin-top:12px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
+<div id="gate" style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
 <span id="gla-mode" style="font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
 <span style="font-size:12px;color:#8a91a0;display:flex;align-items:center;gap:5px">数据源
@@ -502,6 +466,7 @@ PAGE = """<!doctype html>
 <span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有活 400ms / 待机 600ms)</span>
 </div>
 @GATE_SVG@
+<details class="fold"><summary>接线与安装参考（光门 ↔ 推杆 ↔ MCP23017 · 安装位置/高度 · 件距约束 · 启用顺序）</summary>
 <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0 4px">
 <tr><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">光门</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">对应推杆</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">MCP23017</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">安装位置（俯视）</th><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">安装高度（侧视）</th></tr>
 <tr><td style="border:1px solid #262b36;padding:6px 8px">光门 1（透过式 NPN 开集）</td><td style="border:1px solid #262b36;padding:6px 8px">1 号推杆</td><td style="border:1px solid #262b36;padding:6px 8px;color:#fb923c">PB0</td><td style="border:1px solid #262b36;padding:6px 8px">推杆 1 推料点<b>前方 D</b>（D = v×(推出400ms+余量100ms) ≈ 50cm @1m/s），光束横跨料道、垂直带面</td><td style="border:1px solid #262b36;padding:6px 8px">物品质心高（离带面 10~30mm）</td></tr>
@@ -514,8 +479,34 @@ PAGE = """<!doctype html>
 <li><b>末端对账门 ≠ 时序门</b>：料道末端（图中虚线 ×，OPEN #3②）确认件真进道（长期计数），与本次 3 路前侧时序门职责不同，本次不装。</li>
 <li><b>启用顺序</b>：接线 → 串口 <code>gates</code> 确认 ok=1/挡光变 0 → 按 ⑧ 带速标定修正 D → 网关 <code>divert_trigger</code> 改 "photo"；未接线期间保持 "immediate"（固件自动回退，实机已验证）。</li>
 </ul>
-</div>
 </details>
+</div>
+<div class="row">
+ <select id="preset" onchange="runPresetSel()" title="测试指令预设"><option value="" selected>预设指令…</option></select>
+ <input id="txt">
+ <button class="primary" onclick="runText()">▶ 运行</button>
+ <button id="btnDispatch" onclick="dispatchRun()" disabled title="把最近一次运行的分类结果下发到 MQTT 分拣线">📤 下发分拣线</button>
+ <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer" title="规则层认不出的问句交给 LLM 基于注入事实回答 (~10s, 仅展示不下发); 规则层能答的仍毫秒级直答; 开关状态保存在本浏览器"><input type="checkbox" id="qallm"> LLM 兜底</label>
+ <button onclick="toggleLedger()" title="SQLite 出入库台账: 分拣下发自动记入, 这里可手动记出">📦 仓库台账</button>
+ </div>
+<div class="row">
+ <span id="micwrap" style="position:relative;display:inline-flex">
+  <button id="mictrig" style="min-width:58px" title="麦克风 (点击打开授权菜单)" onclick="micMenuToggle(event)">🎤</button>
+  <div id="micmenu" style="display:none;position:absolute;z-index:60;top:calc(100% + 4px);left:0;background:#1e2430;border:1px solid #2c3342;border-radius:8px;padding:4px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.55)">
+   <button id="micmitem" style="display:block;width:100%;text-align:left;background:none;border:none;color:#e6e6e6;font-size:13px;padding:7px 9px;border-radius:6px;cursor:pointer" onmousedown="event.preventDefault()" onclick="micMenuAction()">🔐 授权麦克风</button>
+   <div id="micmstate" style="font-size:11px;color:#5b6270;padding:2px 9px 4px">未授权</div>
+  </div>
+ </span>
+ <button id="ptt" title="按住说话 (或按住 空格键)" style="min-width:120px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
+ <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
+ <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
+</div>
+<div id="cards" class="cards"></div>
+<div id="stockcards" class="cards" style="margin:10px 0 4px"></div>
+<div id="yardcards" class="cards"></div>
+<div id="ledger" style="display:none;margin:14px 0"></div>
+<div id="out"></div>
+<details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
 <script>
 const $=id=>document.getElementById(id);
 window.addEventListener('error',e=>{const m=$('micstate');
@@ -584,6 +575,23 @@ async function ledgerReset(){
  try{await jpost('/ledger/reset',{});refreshLedger();}
  catch(e){alert('清空失败: '+e.message)}
 }
+// 决策流程图: 不再挂标题下, 渲染到运行输出的「仓库分拣下发」段之后 (属于本次运行的结果表达)
+const FLOW_SVG=`<svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
+ <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
+ <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="240" y1="32" x2="262" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="372" y1="32" x2="394" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="504" y1="32" x2="526" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="636" y1="32" x2="658" y2="32" marker-end="url(#arr)"/>
+ <line class="edge" x1="768" y1="32" x2="790" y2="32" marker-end="url(#arr)"/>
+ <g id="fn1" class="n off"><rect x="2" y="14" width="104" height="36" rx="9"/><text x="54" y="37" text-anchor="middle">语音/文本</text></g>
+ <g id="fn2" class="n off"><rect x="134" y="14" width="104" height="36" rx="9"/><text x="186" y="29" text-anchor="middle">ASR</text><text x="186" y="43" text-anchor="middle" class="sub">SenseVoice</text><text id="fn-asr" x="186" y="66" text-anchor="middle" class="ms">—</text></g>
+ <g id="fn3" class="n off"><rect x="266" y="14" width="104" height="36" rx="9"/><text x="318" y="29" text-anchor="middle">规则归一化</text><text x="318" y="43" text-anchor="middle" class="sub">抽取 · 归属</text></g>
+ <g id="fn4" class="n off"><rect x="398" y="14" width="104" height="36" rx="9"/><text x="450" y="29" text-anchor="middle">Laya 决策</text><text x="450" y="43" text-anchor="middle" class="sub">物料终审</text><text id="fn-laya" x="450" y="66" text-anchor="middle" class="ms">—</text></g>
+ <g id="fn5" class="n off"><rect x="530" y="14" width="104" height="36" rx="9"/><text x="582" y="29" text-anchor="middle">校验器</text><text x="582" y="43" text-anchor="middle" class="sub">白名单 · 去重</text></g>
+ <g id="fn6" class="n off"><rect x="662" y="14" width="104" height="36" rx="9"/><text x="714" y="29" text-anchor="middle">LLM 旁路</text><text x="714" y="43" text-anchor="middle" class="sub">校验拒绝 · 分配展开</text><text id="fn-bypass" x="714" y="66" text-anchor="middle" class="ms">未触发</text></g>
+ <g id="fn7" class="n off"><rect x="794" y="14" width="104" height="36" rx="9"/><text x="846" y="29" text-anchor="middle">PLC 下发</text><text x="846" y="43" text-anchor="middle" class="sub">暂停 = 不发</text><text id="fn-e2e" x="846" y="66" text-anchor="middle" class="ms">—</text></g>
+</svg>`;
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
  if(d.path==='QA'){['fn1','fn2','fn3','fn7'].forEach(i=>set(i,'on'));['fn4','fn5','fn6'].forEach(i=>set(i,'off'))}
@@ -668,7 +676,6 @@ const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:
 const MATCOL={red_apple:'#ef4444',green_apple:'#4ade80',banana:'#fbbf24',pear:'#a3d977',
  red_block:'#ef4444',green_block:'#4ade80',yellow_block:'#facc15',blue_block:'#60a5fa'};
 async function render(d){
- drawFlow(d);
  setLastRun(d);
  if(lastRun)dispatchRun(); // 语音/文本指令 → 自动执行到所选数据源, 动画演示对应操作 (QA/暂停路径无 actions, 不触发)
  refreshStock(); // 常驻库存条: 每次运行后都刷新 (分拣自动记账 / 出库 / 清空) 都保持同步
@@ -691,11 +698,13 @@ async function render(d){
   $('yardcards').innerHTML=yc;
   out+=sec('🚚 仓库分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL')?'PLC 可执行':d.path)+'</span>')
    +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
-   +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
- } else $('yardcards').innerHTML='';
+   +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'')
+   +FLOW_SVG; // 决策流程图: 紧跟在仓库分拣下发之后
+ } else {$('yardcards').innerHTML='';out+=FLOW_SVG;}
  const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':'💬 简单回答'):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
  out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+(d.qa_source==='llm'?' (≤30字 · LLM 兜底, 仅转述注入事实, 未下发 PLC)':' (≤30字 · 规则层直答, 未下发 PLC)'):JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;
+ drawFlow(d); // 流程图在 #out 内 (仓库分拣下发之后), 注入 DOM 后再点亮状态
  let h='';
  h+=sec('ASR / 输入 <span class="chip">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a style="color:#60a5fa;font-size:12px" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
  if(d.answer!=null)h+=sec('问答 '+(d.qa_source==='llm'?'(LLM 兜底 · 仅转述注入事实)':'(规则层直答)'))+`<pre>${d.answer}</pre>`;
@@ -721,7 +730,7 @@ const WAKE_RE=/优优|悠悠|由由|柚柚|优由|youyou|you you/i;
 function thr(){ return Math.max(0.0015, floorRms*3.5) } // 动态阈值
 function refreshState(){
  const s=$('micstate');
- if(!armed){ s.textContent='未授权：先点「🎤 授权麦克风」'; }
+ if(!armed){ s.textContent='未授权：点「🎤」菜单授权麦克风'; }
  else if(flushing){ s.textContent='识别中…'; }
  else if(recActive){ s.textContent='🔴 录音中… 松开(空格/手指)发送'; }
  else if(wakeOn&&wmode==='cmd'){ s.textContent='🔔 已唤醒, 请说指令… (30秒内有效)'; }
@@ -729,6 +738,15 @@ function refreshState(){
  else { s.textContent='就绪：按住「🗣 按住说话」或 空格键 录音 (采样率 '+ctxRate+'Hz)'; }
 }
 function authToggle(){ armed?stopListen():startListen() }
+function micMenuToggle(e){e&&e.stopPropagation();const m=$('micmenu');m.style.display=m.style.display==='block'?'none':'block';}
+function micMenuHide(){$('micmenu').style.display='none';}
+function micMenuAction(){micMenuHide();authToggle();}
+function updateMicUi(){
+ const t=$('mictrig'),mi=$('micmitem'),ms=$('micmstate');
+ if(armed){t.classList.add('primary');mi.textContent='⏹ 撤销授权';ms.textContent='已授权 · 采样率 '+(ctxRate||16000)+'Hz';}
+ else{t.classList.remove('primary');mi.textContent='🔐 授权麦克风';ms.textContent='未授权';}
+}
+document.addEventListener('click',e=>{if(e.target&&!e.target.closest('#micwrap'))micMenuHide();});
 async function startListen(){
  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:true}})}
  catch(e){$('micstate').textContent='麦克风不可用: '+e.message;return}
@@ -741,8 +759,7 @@ async function startListen(){
  armed=true; speechStart=0; speechUntil=0; bufs=[]; recBufs=[]; floorRms=0.001; floorN=0;
  wmode=wakeOn?'idle':'off';
  if(wakeOn&&!tickTimer)tickTimer=setInterval(wakeTick,300);
- $('micbtn').textContent='⏹ 撤销授权';
- $('micbtn').classList.remove('primary');
+ updateMicUi();
  $('ptt').disabled=false; $('wakesw').disabled=false;
  refreshState();
 }
@@ -754,8 +771,7 @@ function stopListen(){
  try{ac.close()}catch(e){}
  if(stream)stream.getTracks().forEach(t=>t.stop());
  proc=src=stream=ac=null;
- $('micbtn').textContent='🎤 授权麦克风';
- $('micbtn').classList.add('primary');
+ updateMicUi();
  $('ptt').disabled=true; $('wakesw').disabled=true; $('wakesw').checked=false; wakeOn=false;
  $('lv').style.width='0';
  refreshState();
@@ -943,6 +959,7 @@ refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板
  if(sv==='device'||sv==='sim')sel.value=sv;
  sel.addEventListener('change',()=>{localStorage.setItem('glaSrc',sel.value);twinSig='';refreshTwin();});
 })();
+updateMicUi();
 refreshTwin(); // 光门运行示意: 加载即探测数字孪生 (在线切实时模式, 离线循环演示)
 </script></div></body></html>"""
 
