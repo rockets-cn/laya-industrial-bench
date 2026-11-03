@@ -12,7 +12,7 @@
 | ② | 主循环 digitalWrite 打 STEP 仅 ~3kHz (名义 320k pps) | RMT TX 硬件脉冲: 1 个 [pulse,gap] 符号 × loop_count=-1 无限循环, APB 80MHz 精确 50% 占空比; 主循环只做 start/stop 看门; 创建失败自动回退旧路径 | `pio run -e edge101/s3emu` 均 SUCCESS; 实机验证: 接电机后按 1m/s 跑 10s 量带速 (OPEN #6⑧) |
 | ③ | loop_ui /dispatch 把网关 202 压成 200 | `JSONResponse(..., status_code=r.status)` 透传 | TestClient + stub 网关: 202/409/422 全透传 |
 | ④ | 契约字段漂移 (ts 全 ""; steps_total vs items_in) | 契约明确: `state` 必填, 其余设备可选; `steps_total`/`items_in` 不同量纲并列; `ts` 无 RTC 可 `""` (网关忽略, 后续 NTP) | docs/sort-mqtt.md 命令/应答/遥测三节重写, 与代码行为一致 |
-| ⑤ | STEPS_PER_MM / 物料映射是假设 | **STEPS_PER_MM 已实测定稿 68.7 (2026-11-03, 3200步=46.6mm 卷尺)**; 物料映射仍 OPEN #1 | — |
+| ⑤ | STEPS_PER_MM / 物料映射是假设 | **STEPS_PER_MM 实测定稿 69.1 (2026-11-03, 三次卷尺+基准加权 13400÷193.82)**; 物料映射仍 OPEN #1 | — |
 | ⑥ | 拨料时序: divert 收命令即执行, 物品位置无处安放 (分拣器对位置一无所知) | **光门触发** (方案 C): divert `trigger=photo` → 分拣器 `armed`, 推杆**前侧 (上游)** 光门落沿才推 (安装距离 = 带速×(动作时间+余量), 公式入 docs/sort-mqtt.md「光门时序」); qty>1 每件各等一次光门; 5s 无物品 → fault "photo timeout" + job_id 回 ack; 视觉坐标 x/y/w/h + pos_mm 带面位置随批次事件/台账透传 (方案 B) | 主机单测 104 项 (Gate 边沿去抖 + Sorter photo 全路径); E2E 第 9 节 7 项 (photo 触发拨出 / trigger 字段 / armed 状态 / 坐标透传 / photo 超时 fault 锁存 / 清除恢复); BOM 新增 光门 ×3 (OPEN #6⑨) |
 | ⑦ | 光门未安装 (BOM ⑨ OPEN) 时 photo 时序无法成立 — 实机只能 immediate, 与 `gate_layout.svg` 时序不符; 且设备运动无遥测, 网页示意图无法反映实际 | **虚拟光门 + 运动事件时间线**: 无物理光门时按「HL2 检测锚点 (像素→带面位置) + 带速匀速外推」预测物品过光门线时刻, 到点推杆 (固件 `Track.h`, 纯逻辑可单测); 解析顺序 物理光门 → 虚拟光门 → immediate; 固件每次分拣器状态迁移广播 `sort/line1/motion` (via=immediate/photo/virtual/...), 网关环形缓冲 + relay `sort/event/motion` + `GET /motion`; 视觉事件带 `pos_mm` | 主机单测 141 项 (Track 位置跟踪/预测 + Sorter 虚拟光门全路径 + 协议); E2E 52 项 (第 10 节 8 项: 时间线顺序 via=photo/relay/缓冲/HTTP/pos_mm/取消/injected); `pio run` 双环境 SUCCESS; 文档: sort-mqtt.md 虚拟光门节 + wiring.md 标定方法 + README×2 |
 
@@ -61,8 +61,8 @@ E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
    7 路输出 GPIO 5/12/14/15/18/23/33 全用满, I2C 18/23 留给 HL2)。
 6. **步进电机与驱动器** (已定: **MKS SERVO42C 闭环 PCBA** + 42 两相电机,
    文档: CSDN 120565771 — 16384 线磁编码器 + FOC 闭环):
-   ① 电机型号/导程/额定电压电流? (**STEPS_PER_MM 已实测定稿 68.7**
-      = 3200步÷46.6mm, 2026-11-03; 细分/导程仍未确认, 与 320 假设差 4.7 倍)
+   ① 电机型号/导程/额定电压电流? (**STEPS_PER_MM 实测定稿 69.1**
+      = 13400步÷193.82mm 加权, 三次卷尺+基准, 2026-11-03; 细分/导程仍未确认)
    ② 驱动器细分设多少? (与 ① 一起决定 STEPS_PER_MM; 出厂默认值?)
    ③ 堵转保护 / 自动回零 / 熄屏 默认开哪些?
    ④ 电源: 驱动器与电机共 12V 一路够吗 (12V/1.5A+)?
@@ -75,10 +75,11 @@ E2E 从 31 项扩到 37 项 (第 8 节实机时序回归)。
    ⑦ 采购: **MCP23017 (DFR0626) ×1** — 5V 供电, 拨码全 1 (地址 0x27),
       **PB0/PB1/PB2 → 3 路光门 (新, ⑨)**; PA0 预留 (驱动器 EN, 现不接线);
       余 13 路预留数字量 (末端对账光电/限位/急停)。
-   ⑧ **带速实测反推 STEPS_PER_MM** — **已完成 (2026-11-03)**: 3200 步
-      (RMT 5kHz 手动脉冲) 卷尺+基准 = 46.6mm → `STEPS_PER_MM=68.7` 定稿入
-      config.h。后续跑带按 1.0m/s = 68700 pps; 若确认细分/导程(①②)后与
-      实测偏差 >2%, 按公式重算再测 1000 步复核。
+   ⑧ **带速实测反推 STEPS_PER_MM** — **已完成 (2026-11-03)**: 卷尺+基准
+      三次 (RMT 5kHz 手动脉冲): 3200步=46.6mm / 3200步=48.11mm /
+      7000步=99.11mm (±3%) → 加权 13400÷193.82 = `STEPS_PER_MM=69.1`。
+      后续跑带按 1.0m/s = 69100 pps; 若确认细分/导程(①②)后偏差 >2%,
+      按公式重算再测复核。
    ⑨ **光门 ×3 (新, 2026-10-30, 推杆推出时序触发, divert trigger=photo)**:
       透过式光电开关, **NPN 开集**输出, 5V, 如 E3T-ST61 或同级
       (必须 NPN 开集 — PNP 源型与 MCP23017 内部上拉不配)。每推杆 1 路,
