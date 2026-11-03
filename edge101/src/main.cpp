@@ -415,7 +415,7 @@ static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
 static String consoleBuf;
 static void onSerialCmd(const String& line) {
     if (line == "help") {
-        Serial.println("help | state | eth | mqtt | stepstat | stepinit | gates | track | reboot | stepper <n> | sweep <n> | vision <material>");
+        Serial.println("help | state | eth | mqtt | stepstat | stepinit | gates | track | reboot | stepper <n> [r] | sweep <n> | vision <material>");
     } else if (line == "gates") {
         bool hi0 = true, hi1 = true, hi2 = true;
         if (gateOk) mcpGate.poll(hi0, hi1, hi2);
@@ -459,11 +459,14 @@ static void onSerialCmd(const String& line) {
         delay(1000);
         esp_restart();
     } else if (line.startsWith("stepper")) {
-        int n = line.substring(8).toInt();
+        String s = line.substring(8);
+        int n = s.toInt();
+        bool rev = s.indexOf(" r") >= 0;   // "stepper <n> r" = 反向 (DIR=HIGH)
         // 手动脉冲验证: 必须走 RMT 硬件通道 (boot 后 RMT 已接管 GPIO14,
         // digitalWrite 写 GPIO 寄存器到不了物理引脚 — 与 sketch 纯 digitalWrite
         // 路径不同, 这是本固件能发脉冲的唯一通路). 50% 占空 400µs 周期 = 5kHz.
         if (stepRmtReady && stepChan && !stepRmtActive && n >= 1 && n <= 20000) {
+            digitalWrite(STEPPER_DIR_PIN, rev ? HIGH : LOW);  // LOW=正向(HIGH=反向)
             // 经典 ESP32 RMT 不支持 loop_count>0 (ESP_ERR_NOT_SUPPORTED),
             // 把 N 个符号排成数组一次发完. 每符号 [200µs H, 200µs L] = 5kHz.
             rmt_symbol_word_t *syms =
@@ -486,11 +489,13 @@ static void onSerialCmd(const String& line) {
                 free(syms);
                 if (e2 != ESP_OK) {
                     if (e1 == ESP_OK) rmt_disable(stepChan);
+                    digitalWrite(STEPPER_DIR_PIN, LOW);
                     Serial.printf("stepper %d: RMT 发射失败 e1=%d e2=%d\n", n, (int)e1, (int)e2);
                 } else {
                     delay(400 * n / 1000 + 300);  // 等全部符号发完
                     rmt_disable(stepChan);
-                    Serial.printf("stepper %d done\n", n);
+                    digitalWrite(STEPPER_DIR_PIN, LOW);  // 回正向
+                    Serial.printf(rev ? "stepper %d rev done\n" : "stepper %d done\n", n);
                 }
             }
         } else {
