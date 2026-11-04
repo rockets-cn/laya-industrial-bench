@@ -19,17 +19,31 @@ torch.set_num_threads(4)   # 限制推理线程: 与 cam_status/mjpeg_server/桌
                            # 8 线程全开会互相 deschedule 出 1-2s 尖峰 (2026-11-04 实测)
 from ultralytics import YOLO
 
-BIN = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+if len(sys.argv) < 2:
+    print("用法: beltctl.py <bin 1|2|3>  (时间触发模式, 无默认仓, 防误触)")
+    raise SystemExit(2)
+BIN = int(sys.argv[1])
+assert BIN in (1, 2, 3)
+NOMINAL = len(sys.argv) > 2 and sys.argv[2].upper().startswith("N")
 SPEED = 0.0525
-W0 = (float(sys.argv[4]) if len(sys.argv) > 4 else 330.0,
-      float(sys.argv[5]) if len(sys.argv) > 5 else 385.0,
-      float(sys.argv[6]) if len(sys.argv) > 6 else 270.0,
-      float(sys.argv[7]) if len(sys.argv) > 7 else 360.0)   # cx_min, cx_max, cy_min, cy_max
-LAST_TRIGGER = (float(sys.argv[2]) if len(sys.argv) > 2 else 241.5,
-                float(sys.argv[3]) if len(sys.argv) > 3 else 400.0)  # 扫掠目标点
+
+def _argf(i, default):
+    """float argv[i]; NOMINAL 模式 argv[2]='N' 会占位, 解析失败回默认值"""
+    if len(sys.argv) > i:
+        try:
+            return float(sys.argv[i])
+        except ValueError:
+            return default
+    return default
+
+W0 = (_argf(4, 330.0), _argf(5, 385.0), _argf(6, 270.0), _argf(7, 360.0))   # cx_min, cx_max, cy_min, cy_max
+LAST_TRIGGER = (_argf(2, 241.5), _argf(3, 400.0))  # 扫掠目标点
 FEEDBACK_MM = 0.0                   # 15mm 修正已被 LEAD_S 提前触发吸收, 不再叠加
 UPSTREAM_VEC = (0.87, -0.50)        # 沿轨迹上游单位向量 (由 (346,340)->(241.5,400) 反推)
-LEAD_S = {1: 0.4, 2: 0.2, 3: 0.4}.get(BIN, 0.4)  # 提前量: 距目标点还有 N s 行程时发 divert
+LEAD_S = {1: 0.45, 2: 0.2, 3: 0.35}.get(BIN, 0.4)  # 提前量: 距目标点还有 N s 行程时发 divert
+# 2026-11-04 s3a: fit_speed 受 YOLO 抖动影响常给出 50/184 之类的垃圾值;
+# 带速是恒速步进驱动的, 实测 89-95px/s -> 拟合不可信时回退默认 95
+DEFAULT_PXPS = 95.0
 # 2 号接触区窄 (甜区 x≈353,y≈315): 0.2s × 拟合 pxs ≈ 停带滞后, 扫掠时香蕉重心落在甜区 (2026-11-04 实测)
 MAX_ATTEMPTS = 6
 REV_STEPS = 15000          # ~217mm 反向
@@ -269,34 +283,8 @@ def main():
             time.sleep(1.5)
         return ok >= 2
 
-    # 起步前流健康检查: 帧龄检查 (one_frame 拒 >0.6s 旧帧); 不健康 -> 重启流再查
-    if not stream_healthy():
-        print(f"[{ts()}] 起步前流不健康 (疑似 C110 卡帧循环) -> 重启流", flush=True)
-        stream_restart()
-        if not stream_healthy():
-            print(f"[{ts()}] 重启后仍不健康, 停带等待人工 (可重插 USB)", flush=True)
-            return
-
-    print(f"[{ts()}] 串口已开, 起步 {SPEED} m/s", flush=True)
-    belt("start", SPEED)
-    time.sleep(1.0)
-
-    def reverse_home():
-        print(f"[{ts()}] 反向回上游 (stepper {REV_STEPS} r)...", flush=True)
-        fwd["v"] = False
-        belt("stop")
-        serial_cmd(f"stepper {REV_STEPS} r", REV_WAIT_S)
-        belt("start", SPEED)
-        fwd["v"] = True
-
-    # ---- 旧帧循环保护 (C110 卡帧时 USB 会循环发旧帧, 坐标乱跳) ----
-
     def banana_guard():
-        """banana() + 旧帧保护:
-        1) 同一 JPEG 内容 2-30s 内再现 -> 帧循环 -> 立即重启流
-        2) 同一坐标在 4-45s 内重现且远离最近观测 -> 帧循环 -> 重启流
-        3) 正向跑带时坐标上游跳变 -> 丢弃该帧; 连跳 3 次重启流
-        """
+        """banana() + 旧帧保护 (时间触发版: pHash 循环 + 坐标重现; 正向跳变防护已不需要)"""
         p, f = banana()
         if p is None and f is None:
             stale["n"] = 0
@@ -312,149 +300,221 @@ def main():
                 dt = now - t_q
                 if not (2.5 <= dt <= 30.0) or hamming(h, h_q) >= 10:
                     continue
-                # 位置也要一致 (或都无香蕉): 排除静止带面纹理的 pHash 相似
                 pos_match = (p is None and p_q is None) or (
                     p is not None and p_q is not None and
                     np.hypot(p[0] - p_q[0], p[1] - p_q[1]) < 25)
                 if pos_match:
                     matches += 1
-            # 需 2 个独立匹配: 真循环 (5 帧周期) 窗口内多次重复; 跑带时单次碰巧 <10 不算
             if matches >= 2:
-                print(f"[{ts()}] 帧循环检测: 同内容帧 {matches} 次再现 -> 重启流",
-                      flush=True)
+                print(f"[{ts()}] 帧循环检测: 同内容帧 {matches} 次再现 -> 重启流", flush=True)
                 stream_restart()
                 return None, f
-        if p is None:   # 有帧但没香蕉: 位置检查跳过, 内容检查已完成
+        if p is None:
             stale["n"] = 0
             return None, f
         obs_hist.append((now, p))
         if len(obs_hist) > 60:
             obs_hist.pop(0)
-        # 重复检测: 4-45s 前有过几乎相同位置且已远离最近观测 = 循环旧帧
-        if fwd["v"]:
-            recent_far = all(
-                np.hypot(p[0] - q[0], p[1] - q[1]) > 40 for _t, q in obs_hist[-2:])
-            if recent_far:
-                for t_q, q in obs_hist:
-                    dt = now - t_q
-                    if 4.0 <= dt <= 45.0 and abs(q[0] - p[0]) < 18 and abs(q[1] - p[1]) < 18:
-                        print(f"[{ts()}] 帧循环检测: 坐标 {tuple(map(round, p))} 在 {dt:.0f}s 内重现 -> 重启流",
-                              flush=True)
-                        stream_restart()
-                        return None, f
-        pc = p[0] * UPSTREAM_VEC[0] + p[1] * UPSTREAM_VEC[1]   # 越大越上游
-        if fwd["v"] and stale["last_pc"] is not None and pc > stale["last_pc"] + 55:
-            stale["n"] += 1
-            print(f"[{ts()}] 疑似旧帧 (坐标上游跳变 {stale['n']}/3)", flush=True)
-            if stale["n"] >= 3:
-                stream_restart()
-            stale["last_pc"] = pc
-            return None, f
-        stale["n"] = 0
-        stale["last_pc"] = pc
+        recent_far = all(np.hypot(p[0]-q[0], p[1]-q[1]) > 40 for _t, q in obs_hist[-2:])
+        if recent_far:
+            for t_q, q in obs_hist:
+                dt = now - t_q
+                if 4.0 <= dt <= 45.0 and abs(q[0]-p[0]) < 18 and abs(q[1]-p[1]) < 18:
+                    print(f"[{ts()}] 帧循环检测: 坐标 {tuple(map(round, p))} 在 {dt:.0f}s 内重现 -> 重启流", flush=True)
+                    stream_restart()
+                    return None, f
         return p, f
 
-    fwd = {"v": True}
+    # 起步前流健康检查: 帧龄检查 (one_frame 已拒 X-Timestamp >0.6s 的旧帧); 不健康 -> 重启流再查
+    # 标称距离模式 (N): 触发全程不依赖相机, 跳过流健康检查
+    if not NOMINAL and not stream_healthy():
+        print(f"[{ts()}] 起步前流不健康 (疑似 C110 卡帧循环) -> 重启流", flush=True)
+        stream_restart()
+        if not stream_healthy():
+            print(f"[{ts()}] 重启后仍不健康, 停带等待人工 (可重插 USB)", flush=True)
+            return
 
-    # ---- 恢复: 等香蕉进前窗口 W0 ----
-    pxs = None
-    entered = False
-    for rec in range(1, 5):
-        print(f"[{ts()}] 恢复 {rec}: 等待香蕉进 W0{W0}", flush=True)
-        t_wait = time.time()
-        last_log = 0.0
-        last_in_w0 = None
-        while time.time() - t_wait < 45:
-            p, _ = banana_guard()
-            if p and W0[0] < p[0] < W0[1] and W0[2] < p[1] < W0[3]:
-                # 单帧进窗即认 (2026-11-04 s2m: 双帧去抖在 YOLO 1-2s 尖峰下,
-                # W0 0.56s 通行只落 1 次观测 -> 永远 entered=False; 误帧由
-                # banana_guard 的 pHash/旧帧/上游跳变防护兜底)
-                print(f"[{ts()}] 恢复 {rec}: 香蕉进 W0 于 {tuple(map(lambda v: round(v), p))}", flush=True)
-                entered = True
-                break
-            if time.time() - last_log > 3:
-                last_log = time.time()
-                print(f"[{ts()}] " + (f"香蕉 {tuple(map(lambda v: round(v), p))} (等进 W0...)" if p else "画面无香蕉"),
-                      flush=True)
-            time.sleep(0.2)
-        if entered:
-            break
-        print(f"[{ts()}] 恢复 {rec}: 超时 -> 反向试探", flush=True)
-        reverse_home()
-    else:
-        print(f"[{ts()}] 4 轮恢复失败 (香蕉可能掉带外), 停带等待人工", flush=True)
+    # ============ 时间触发分拣 (2026-11-04 mm-秒模型, 跑带中不靠 YOLO) ============
+    # 真值: v=52.5mm/s (步进计数实测 0.0%偏差), 起步~40ms, L=0.28s (30fps实测)
+    # 锚点链 (新机位 2026-11-04, s=0 黄标): P1 s=120 / P2 s=170 / P3 锚 s=220
+    #   P3 实际接触 s≈221 (网页定位用户目视 4 轮: 199偏进口10 → 206偏进口5 → 211再来2.5 → 214再来3 → 221 用户"就这个位置"并推入成功; 探针区 202-218 略偏); 远侧推; 掉带点在出口端 (画面外), 严禁正向冲出口
+    V_MM_S = 52.5
+    L_CONTACT = 0.28
+    S_CONTACT = {1: 120.0, 2: 170.0, 3: 221.0}
+    S_TRIGGER = S_CONTACT[BIN] - V_MM_S * L_CONTACT   # ≈ -15mm
+    STEPS_PER_MM = 69.1
+    A0 = np.array([598.4, 96.8])
+    LANE_DOWN = np.array([-0.707, 0.707])             # 顺流方向 (单位向量, 新机位 45°)
+    ANCH = [(0.0, 0.0), (120.0, 139.6), (170.0, 230.1), (220.0, 346.1), (305.0, 545.0)]  # (s_mm, d_px)
+
+    def d_of(p):
+        return float((np.array(p, dtype=float) - A0) @ LANE_DOWN)
+
+    def s_of(p):
+        d = d_of(p)
+        for (s1, d1), (s2, d2) in zip(ANCH, ANCH[1:]):
+            if d <= d2:
+                return s1 + (d - d1) * (s2 - s1) / (d2 - d1)
+        return ANCH[-1][0] + (d - ANCH[-1][1]) * (305.0 - 220.0) / (545.0 - 346.1)
+
+    def local_scale(d):
+        for (s1, d1), (s2, d2) in zip(ANCH, ANCH[1:]):
+            if d <= d2:
+                return (d2 - d1) / (s2 - s1)
+        return (545.0 - 346.1) / (305.0 - 220.0)
+
+    def on_lane(p):
+        """带面判定: 车道投影 s∈[-80,305] 且垂直偏移 <40mm (按局部 px/mm 换算, 透视自适应)"""
+        if p is None:
+            return False
+        d = d_of(p)
+        if d < -80 or d > 545:
+            return False
+        perp_mm = float(np.linalg.norm(np.array(p, dtype=float) - (A0 + LANE_DOWN * d))) / local_scale(d)
+        return perp_mm < 40.0
+
+    def stable_pos(max_obs=15):
+        """停带, 取 5 次有效观测中位数 (仅接受带面上的香蕉); 不稳定 -> None.
+        连续 2 次无新鲜帧 = 流故障 -> 立即重启流 (区别于"带面无香蕉")"""
+        ps = []
+        no_frame = 0
+        seen = 0
+        while seen < max_obs and len(ps) < 5:
+            seen += 1
+            p, f = banana_guard()
+            if f is None:
+                no_frame += 1
+                if no_frame >= 2:
+                    print(f"[{ts()}] 连续无新鲜帧 -> 疑似流故障, 重启流", flush=True)
+                    stream_restart()
+                    no_frame = 0
+            else:
+                no_frame = 0
+                if p is not None and on_lane(p):
+                    ps.append(p)
+            time.sleep(0.4)
+        if len(ps) < 3:
+            return None
+        c = np.median(ps, axis=0)
+        if np.std([d_of(v) for v in ps]) > 20:
+            return None
+        return (float(c[0]), float(c[1]))
+
+    def step_move(steps, reverse=False):
+        """停带时步进移位; >20000 步自动分段 (固件上限)"""
+        sign = " r" if reverse else ""
+        while steps > 0:
+            n = min(steps, 20000)
+            print(f"[{ts()}]   步进 {'反' if reverse else '正'}转 {n} 步...", flush=True)
+            serial_cmd(f"stepper {n}{sign}", max(10.0, n / 3628.0 * 1.5 + 4.0))
+            steps -= n
+
+    def place_s(s_target):
+        """把带面上香蕉移到 s_target (±25mm 即止); 无带面香蕉 -> None; 返回 (s, p)"""
+        for _ in range(3):
+            p = stable_pos()
+            if p is None:
+                return None
+            s0 = s_of(p)
+            ds = s_target - s0
+            print(f"[{ts()}] 定位: 香蕉 s={s0:.0f}mm -> 目标 {s_target:.0f}mm (Δ={ds:+.0f})", flush=True)
+            if abs(ds) < 25:
+                return s0, p
+            step_move(int(abs(ds) * STEPS_PER_MM), reverse=(ds < 0))
+        p = stable_pos()
+        return (s_of(p), p) if p is not None else None
+
+    for attempt in range(1, 5):
+        s_target = S_TRIGGER - 60.0
+        print(f"[{ts()}] === 时间触发轮 {attempt}/4 (仓{BIN}, 触发线 s={S_TRIGGER:.0f}mm{'  [标称距离模式]' if NOMINAL else ''}) ===", flush=True)
+        if NOMINAL:
+            # 标称距离模式: 香蕉由人工放在黄标 (s=0), 纯步进定位, 全程不碰相机
+            print(f"[{ts()}] 标称: 香蕉 s0=0 (黄标), 正转 {s_target:.0f}mm 定位", flush=True)
+            step_move(int(round(s_target * STEPS_PER_MM)), reverse=False)
+            s0, p_last = 0.0, None
+        else:
+            placed = place_s(s_target)
+            bring = 0
+            while placed is None and bring < 8:
+                bring += 1
+                # 反转运出 (72mm/段): 带面可见区为空, 香蕉必在隐形回路段; 反转让它从出口端背面
+                # 浮现到可见带尾, 全程不经过出口端正向转折点 (2026-11-04: 正向 8s 带出多次掉带)
+                print(f"[{ts()}] 带面未见香蕉 -> 反转 5000 步带出 (试 {bring}/8)", flush=True)
+                serial_cmd("stepper 5000 r", 12.0)
+                placed = place_s(s_target)
+            if placed is None:
+                print(f"[{ts()}] 仍无带面香蕉 -> 停带, 等待人工 (放新香蕉后重跑)", flush=True)
+                belt("stop")
+                return
+            s0, p_last = placed
+            # 横向偏移闸 (2026-11-04: 香蕉偏到带面边缘时三仓推杆全部够不到 -> 空推)
+            d_chk = d_of(p_last)
+            lat_mm = float(np.linalg.norm(np.array(p_last, dtype=float) - (A0 + LANE_DOWN * d_chk))) / local_scale(d_chk)
+            print(f"[{ts()}] 横向偏移 {lat_mm:.0f}mm (阈值 15mm)", flush=True)
+            if lat_mm > 15:
+                print(f"[{ts()}] !! 香蕉偏出推杆可达区 -> 停带, 请重新把香蕉放到带面中间后重跑", flush=True)
+                belt("stop")
+                return
+        if s0 > S_TRIGGER:
+            print(f"[{ts()}] 香蕉 s0={s0:.0f}mm 已过触发线, 定位失败 -> 停带等待人工", flush=True)
+            belt("stop")
+            return
+
+        print(f"[{ts()}] 就位 s0={s0:.0f}mm, 起步", flush=True)
+        def div_count(state_str):
+            if state_str and "diverted=" in state_str:
+                return int(state_str.split("diverted=")[1].split()[0].split("/")[BIN - 1])
+            return None
+
+        n_div_pre = div_count(serial_cmd("state", 3))
+        t_cmd = time.time()
+        MQ.publish("sort/line1/conveyor/cmd",
+                   json.dumps({"job_id": f"t{BIN}", "action": "start", "speed_mps": SPEED}), qos=1).wait_for_publish(2)
+        t_divert = t_cmd + (S_TRIGGER - s0) / V_MM_S
+        print(f"[{ts()}] 预测 divert 于 {t_divert - t_cmd:.3f}s 后", flush=True)
+        time.sleep(max(0.0, t_divert - time.time()))
+        t_fired = time.time()
+        MQ.publish(f"sort/sorter{BIN}/cmd",
+                   json.dumps({"job_id": f"td{BIN}", "action": "divert"}), qos=1).wait_for_publish(2)
+        print(f"[{ts()}] divert 已发 (计时偏差 {(t_fired - t_divert) * 1000:+.0f}ms)", flush=True)
+
+        t_stop = t_fired + 2.0
+        time.sleep(max(0.0, t_stop - time.time()))
+        belt("stop")
+        time.sleep(1.0)
+        s3 = serial_cmd("state", 3)
+        n_div_post = div_count(s3)
+        if n_div_post is not None and n_div_post == n_div_pre:
+            print(f"[{ts()}] !! 推杆未执行 divert (计数 {n_div_pre} 未变; state: {(s3 or '').strip()[-90:]})", flush=True)
+
+        # 验证: 未推中的香蕉应停在 s∈[S_T-25, S_T+170]mm (2s 行程 105mm + 裕量)
+        on_belt = None   # None=相机无画面, True=还在带面, False=已离带
+        for _ in range(3):
+            p, f = banana()
+            if f is None:
+                time.sleep(0.7)
+                continue
+            if p is not None and on_lane(p):
+                s_obs = s_of(p)
+                if S_TRIGGER - 25 <= s_obs <= S_TRIGGER + 170:
+                    on_belt = True
+                    print(f"[{ts()}] 验证: 香蕉仍在带面 s={s_obs:.0f}mm", flush=True)
+            else:
+                on_belt = False
+            time.sleep(0.7)
+        if on_belt is True:
+            print(f"[{ts()}] 未推中 -> 下一轮 (定位会自动复位)", flush=True)
+            continue
+        if on_belt is False:
+            print(f"[{ts()}] >>> 仓{BIN} 成功: 香蕉离带面 (已推入仓) <<<", flush=True)
+            print(f"[{ts()}] 结果: bin={BIN} attempts={attempt} t_divert_err_ms={(t_fired - t_divert) * 1000:.0f}", flush=True)
+            belt("stop")
+            return
+        print(f"[{ts()}] !! 相机无画面 (C110 卡帧), 无法自动验证 -> 停带, 请目视确认香蕉是否进了仓{BIN} 后告诉我", flush=True)
         belt("stop")
         return
-
-    # ---- 测试轮 ----
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        print(f"[{ts()}] === 第 {attempt}/{MAX_ATTEMPTS} 轮: 轨迹记录 + 提前量触发 ===", flush=True)
-        hist = []
-        fired = False
-        t_wait = time.time()
-        last_log = 0.0
-        while time.time() - t_wait < 60:
-            p, _ = banana_guard()
-            if p is None:
-                time.sleep(0.3)
-                continue
-            now = time.time()
-            hist.append((now, p))
-            if now - last_log > 1.5:
-                last_log = now
-                pxs_str = f"px/s≈{pxs:.0f}" if pxs else "px/s=?"
-                print(f"[{ts()}] {tuple(map(lambda v: round(v), p))} {pxs_str}", flush=True)
-            # 全程拟合速度并按提前量触发 —— 用 cx 沿车道投影而非 2D 距离:
-            # s2o 实测香蕉走"上车道" (y≈160) 时, 到目标点 (478,295) 的垂直距离 ~120px,
-            # 2D 距离永不可能 <= 20px 提前量 -> 永远落兜底; cx 单调且与车道无关
-            pxs = fit_speed(hist) or pxs
-            if pxs and pxs > 20:
-                trigger_x = LAST_TRIGGER[0] + LEAD_S * pxs
-                if p[0] <= trigger_x:
-                    print(f"[{ts()}] 到达触发区: 目标 x={LAST_TRIGGER[0]:.0f}, "
-                          f"香蕉 x={p[0]:.0f} <= 触发线 {trigger_x:.0f} (提前 {LEAD_S}s×{pxs:.0f}px/s) -> 发 divert", flush=True)
-                    fired = True
-                    break
-                if p[0] < LAST_TRIGGER[0] - 40:
-                    print(f"[{ts()}] 香蕉已过目标 (兜底触发)", flush=True)
-                    fired = True
-                    break
-        if not fired:
-            print(f"[{ts()}] 本轮未触发 (香蕉丢失/出画) -> 反向重试", flush=True)
-            reverse_home()
-            continue
-        for _ in range(20):
-            if s3_state["v"] in ("ready", "busy"):
-                break
-            time.sleep(0.5)
-        MQ.publish(f"sort/sorter{BIN}/cmd", json.dumps(
-            {"job_id": f"beltctl-a{attempt}", "action": "divert",
-             "material": "banana", "qty": 1, "trigger": "immediate"}), qos=1).wait_for_publish(2)
-        print(f"[{ts()}] divert 已发, 等扫掠...", flush=True)
-        saw_busy = False
-        for _ in range(30):
-            if s3_state["v"] == "busy":
-                saw_busy = True
-            time.sleep(0.3)
-        time.sleep(2.0)
-        p2, _ = banana()
-        pos2 = tuple(map(lambda v: round(v), p2)) if p2 else "出画"
-        print(f"[{ts()}] 扫掠 busy={saw_busy}, 扫掠后香蕉: {pos2}", flush=True)
-        if saw_busy:
-            if pxs:
-                print(f"[{ts()}] >>> 第 {attempt} 轮完成: 窗口+提前量触发, 扫掠发生; "
-                      f"标定 {pxs:.1f} px/s = {pxs/SPEED/1000:.2f} px/mm <<<", flush=True)
-            else:
-                print(f"[{ts()}] >>> 第 {attempt} 轮完成: 窗口+提前量触发, 扫掠发生 <<<", flush=True)
-            belt("stop")
-            print(f"[{ts()}] 停带, 结束", flush=True)
-            return
-        print(f"[{ts()}] 扫掠未发生 -> 反向重试", flush=True)
-        reverse_home()
-    print(f"[{ts()}] 达到最大轮数, 结束", flush=True)
     belt("stop")
-
+    print(f"[{ts()}] 连续失败, 停带等待人工", flush=True)
 
 if __name__ == "__main__":
     main()
