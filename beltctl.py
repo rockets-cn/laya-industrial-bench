@@ -8,10 +8,15 @@
 用法: beltctl.py [bin] [tx] [ty] [w0minx] [w0maxx] [w0miny] [w0maxy]
   3 号仓默认: 3 241.5 400 330 385 270 360
   1 号仓:     1 390 220 430 510 110 230
-  2 号仓:     2 353 315 395 455 215 295   (LEAD_S 按仓: 2 号 0.15s, 其余 0.4s)
+  2 号仓(2026-11-04 相机移动后重新标定): 2 478 295 490 560 150 380
+    (推杆接触区在车道 x≈455-480 新坐标, 帧差+实测推动验证; LEAD_S 按仓: 2 号 0.2s)
+  取帧: MJPEG 持久连接 StreamPuller (周期 ~0.2s, 2026-11-04 取代每周期新连接 ~1.5s)
 """
 import time, json, os, re, sys
 import urllib.request, cv2, numpy as np
+import torch
+torch.set_num_threads(4)   # 限制推理线程: 与 cam_status/mjpeg_server/桌面应用争核时,
+                           # 8 线程全开会互相 deschedule 出 1-2s 尖峰 (2026-11-04 实测)
 from ultralytics import YOLO
 
 BIN = int(sys.argv[1]) if len(sys.argv) > 1 else 3
@@ -33,6 +38,109 @@ SERIAL = "/dev/ttyACM0"
 MODEL = '/tmp/banana_train/banana_v1-2/weights/best.pt'
 STREAM = 'http://127.0.0.1:8125/stream'
 Y = YOLO(MODEL)   # 只加载一次
+
+
+class StreamPuller:
+    """MJPEG 持久连接拉帧器。
+    帧格式 (mjpeg_server.py): 每帧一个 part:
+        --frame\r\n Content-Type: image/jpeg\r\n X-Timestamp: <ms>\r\n\r\n <JPEG> \r\n
+    服务端在线速重发最新帧 -> 客户端按 X-Timestamp 单调递增判新帧;
+    连接断开/流重启窗口内自动重连 (带退避), 单帧读取超时 -> 放弃本周期。"""
+
+    def __init__(self, url, max_age=5.0):
+        self.url = url
+        self.max_age = max_age
+        self.resp = None
+        self.buf = b""
+        self.last_ts = 0
+
+    def _drop(self):
+        if self.resp is not None:
+            try:
+                self.resp.close()
+            except Exception:
+                pass
+            self.resp = None
+
+    def reset(self):
+        """流服务重启后调用: 丢弃旧连接, 下次 next_frame 重连新服务。"""
+        self._drop()
+        self.buf = b""
+        self.last_ts = 0
+
+    def _connect(self):
+        self._drop()
+        self.resp = urllib.request.urlopen(urllib.request.Request(self.url), timeout=20)
+        self.buf = b""
+
+    def _parse_one(self):
+        """从 buf 解析所有完整 part, 取 ts 最大 (最新) 且 ts > last_ts 的一帧返回。
+        其余旧 part 直接丢弃 (s2n 实测: FIFO 语义在 YOLO 节流下积压 ~60 part ≈ 2s 滞后,
+        位置读数全是旧的, fit_speed/提前量全部失准)。"""
+        best = None  # (ts, f)
+        while True:
+            hdr = self.buf.find(b"\r\n\r\n")
+            if hdr < 0:
+                break
+            head = self.buf[:hdr]
+            body = self.buf[hdr + 4:]
+            m = re.search(rb"X-Timestamp: (\d+)", head)
+            ts = int(m.group(1)) if m else 0
+            e = body.find(b"\r\n--frame")
+            if e < 0:
+                break
+            part = body[:e]
+            self.buf = body[e + 9:]
+            if ts <= self.last_ts:
+                continue
+            age = time.time() - ts / 1000.0
+            if age > self.max_age:
+                continue
+            a = part.find(b"\xff\xd8")
+            b = part.rfind(b"\xff\xd9")
+            if a < 0 or b <= a:
+                continue
+            f = cv2.imdecode(np.frombuffer(part[a:b + 2], np.uint8), cv2.IMREAD_COLOR)
+            if f is None:
+                continue
+            if best is None or ts > best[0]:
+                best = (ts, f)
+        if best is not None:
+            self.last_ts = best[0]
+            return best[1]
+        return None
+
+    def next_frame(self, timeout=3.0):
+        deadline = time.time() + timeout
+        reconnects = 0
+        while time.time() < deadline:
+            f = self._parse_one()
+            if f is not None:
+                return f
+            if self.resp is None:
+                try:
+                    self._connect()
+                except Exception:
+                    reconnects += 1
+                    if reconnects >= 5:
+                        return None
+                    time.sleep(1.0)
+                    continue
+            try:
+                chunk = self.resp.read(32768)
+            except Exception:
+                self._drop()
+                continue
+            if not chunk:
+                self._drop()
+                continue
+            self.buf += chunk
+            if len(self.buf) > 4 * 1024 * 1024:
+                self.buf = self.buf[-1024 * 1024:]   # 防积压
+        return None
+
+
+PULLER = StreamPuller(STREAM)
 
 import paho.mqtt.client as mqtt
 MQ = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"beltctl{BIN}")
@@ -76,31 +184,10 @@ def serial_cmd(line, wait):
 
 
 def one_frame(max_age=0.6):
-    """取最新帧; 若 X-Timestamp 过旧 (C110 冻结) 则稍后重试一次."""
-    f = None
-    for _ in range(2):
-        resp = urllib.request.urlopen(urllib.request.Request(STREAM), timeout=10)
-        buf = b""
-        end = time.time() + 1.2
-        while time.time() < end:
-            chunk = resp.read(65536)
-            if chunk:
-                buf += chunk
-            a = buf.find(b"\xff\xd8")
-            if a < 0:
-                continue
-            b = buf.find(b"\xff\xd9", a + 2)
-            if b >= 0:
-                m = re.findall(rb"X-Timestamp: (\d+)", buf[:a])
-                age = (time.time() * 1000 - int(m[-1])) / 1000.0 if m else 0.0
-                f = cv2.imdecode(np.frombuffer(buf[a:b + 2], np.uint8), cv2.IMREAD_COLOR)
-                buf = buf[b + 2:]
-                if f is not None and age < max_age:
-                    return f
-                if f is not None:
-                    break
-        time.sleep(0.3)
-    return f
+    """取最新帧。MJPEG 持久连接 + X-Timestamp 单调性判新帧 (替代每周期新连接,
+    周期从 ~1.5s 降到 ~0.2s, 2026-11-04: W0 通行 0.55s 被旧周期整个跳过是 2 号失准根因)。
+    连接失效/流重启窗口内自动重连, 超时返回 None (不炸主循环)。"""
+    return PULLER.next_frame(timeout=3.0)
 
 
 def banana():
@@ -125,7 +212,7 @@ def fit_speed(hist, window=2.5):
         return None
     a, z = seg[0], seg[-1]
     dt = z[0] - a[0]
-    if dt < 0.4:
+    if dt < 0.15:   # 2026-11-04 快速观察下首末点常不足 0.4s; ±20% 速度误差 = 提前量 ±4px, 可接受
         return None
     return np.hypot(z[1] - a[1], z[2] - a[2]) / dt
 
@@ -166,6 +253,7 @@ def main():
                          start_new_session=True,
                          cwd="/home/rockets/laya-industrial-bench")
         time.sleep(5)
+        PULLER.reset()
         stale["n"] = 0
         stale["last_pc"] = None
         obs_hist.clear()
@@ -219,19 +307,23 @@ def main():
             phash_hist.append((now, h, p))
             if len(phash_hist) > 120:
                 phash_hist.pop(0)
+            matches = 0
             for t_q, h_q, p_q in phash_hist:
                 dt = now - t_q
-                if not (2.5 <= dt <= 30.0) or hamming(h, h_q) >= 30:
+                if not (2.5 <= dt <= 30.0) or hamming(h, h_q) >= 10:
                     continue
                 # 位置也要一致 (或都无香蕉): 排除静止带面纹理的 pHash 相似
                 pos_match = (p is None and p_q is None) or (
                     p is not None and p_q is not None and
                     np.hypot(p[0] - p_q[0], p[1] - p_q[1]) < 25)
                 if pos_match:
-                    print(f"[{ts()}] 帧循环检测: 同内容帧在 {dt:.0f}s 内再现 -> 重启流",
-                          flush=True)
-                    stream_restart()
-                    return None, f
+                    matches += 1
+            # 需 2 个独立匹配: 真循环 (5 帧周期) 窗口内多次重复; 跑带时单次碰巧 <10 不算
+            if matches >= 2:
+                print(f"[{ts()}] 帧循环检测: 同内容帧 {matches} 次再现 -> 重启流",
+                      flush=True)
+                stream_restart()
+                return None, f
         if p is None:   # 有帧但没香蕉: 位置检查跳过, 内容检查已完成
             stale["n"] = 0
             return None, f
@@ -275,13 +367,12 @@ def main():
         while time.time() - t_wait < 45:
             p, _ = banana_guard()
             if p and W0[0] < p[0] < W0[1] and W0[2] < p[1] < W0[3]:
-                if last_in_w0 is not None and time.time() - last_in_w0 < 2.5:
-                    print(f"[{ts()}] 恢复 {rec}: 香蕉进 W0 于 {tuple(map(lambda v: round(v), p))}", flush=True)
-                    entered = True
-                    break
-                last_in_w0 = time.time()
-            else:
-                last_in_w0 = None
+                # 单帧进窗即认 (2026-11-04 s2m: 双帧去抖在 YOLO 1-2s 尖峰下,
+                # W0 0.56s 通行只落 1 次观测 -> 永远 entered=False; 误帧由
+                # banana_guard 的 pHash/旧帧/上游跳变防护兜底)
+                print(f"[{ts()}] 恢复 {rec}: 香蕉进 W0 于 {tuple(map(lambda v: round(v), p))}", flush=True)
+                entered = True
+                break
             if time.time() - last_log > 3:
                 last_log = time.time()
                 print(f"[{ts()}] " + (f"香蕉 {tuple(map(lambda v: round(v), p))} (等进 W0...)" if p else "画面无香蕉"),
@@ -314,20 +405,19 @@ def main():
                 last_log = now
                 pxs_str = f"px/s≈{pxs:.0f}" if pxs else "px/s=?"
                 print(f"[{ts()}] {tuple(map(lambda v: round(v), p))} {pxs_str}", flush=True)
-            # 全程拟合速度并按提前量触发 (滑窗拟合; 距离 <= 提前量即发 divert)
+            # 全程拟合速度并按提前量触发 —— 用 cx 沿车道投影而非 2D 距离:
+            # s2o 实测香蕉走"上车道" (y≈160) 时, 到目标点 (478,295) 的垂直距离 ~120px,
+            # 2D 距离永不可能 <= 20px 提前量 -> 永远落兜底; cx 单调且与车道无关
             pxs = fit_speed(hist) or pxs
             if pxs and pxs > 20:
-                px_per_mm = pxs / (SPEED * 1000.0)   # pxs=px/s, SPEED*1000=mm/s
-                target = (LAST_TRIGGER[0] + FEEDBACK_MM * px_per_mm * UPSTREAM_VEC[0],
-                          LAST_TRIGGER[1] + FEEDBACK_MM * px_per_mm * UPSTREAM_VEC[1])
-                dist = np.hypot(p[0] - target[0], p[1] - target[1])
-                if dist <= LEAD_S * pxs:
-                    print(f"[{ts()}] 到达触发区: 目标 {tuple(map(lambda v: round(v), target))}, "
-                          f"距离 {dist:.0f}px <= 提前量 {LEAD_S*pxs:.0f}px -> 发 divert", flush=True)
+                trigger_x = LAST_TRIGGER[0] + LEAD_S * pxs
+                if p[0] <= trigger_x:
+                    print(f"[{ts()}] 到达触发区: 目标 x={LAST_TRIGGER[0]:.0f}, "
+                          f"香蕉 x={p[0]:.0f} <= 触发线 {trigger_x:.0f} (提前 {LEAD_S}s×{pxs:.0f}px/s) -> 发 divert", flush=True)
                     fired = True
                     break
                 if p[0] < LAST_TRIGGER[0] - 40:
-                    print(f"[{ts()}] 香蕉已过目标 -> 兜底触发", flush=True)
+                    print(f"[{ts()}] 香蕉已过目标 (兜底触发)", flush=True)
                     fired = True
                     break
         if not fired:

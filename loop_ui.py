@@ -339,10 +339,35 @@ def ledger_reset():
 # MQTT 分拣网关 (sort_mqtt.py, 默认 :8123): 把 Laya 分类结果下发到分拣线
 GATEWAY_URL = os.environ.get("SORT_GATEWAY_URL", "http://127.0.0.1:8123")
 try:
-    _GATEWAY_CFG = json.load(open(os.path.join(HERE, "config", "sort_gateway.json"),
+    _GATEWAY_CFG = json.load(open(os.environ.get("SORT_GATEWAY_CFG",
+                                  os.path.join(HERE, "config", "sort_gateway.json")),
                                   encoding="utf-8"))
 except Exception:
     _GATEWAY_CFG = {}  # 配置缺失不致命: 带速按 1.0 m/s 显示
+
+# 语音/UI 的 yard actions 是 {"action","qty"} (物料键), 网关白名单要求
+# {"yard","material","qty"} — 下发前按 material_map.json 做物料->分拣器映射.
+try:
+    _MAT_MAP = json.load(open(os.path.join(HERE, "config", "material_map.json"),
+                              encoding="utf-8"))
+except Exception:
+    _MAT_MAP = {"mode": "fixed", "fixed": {}}
+
+
+def _map_actions_gateway(actions):
+    """[{"action","qty"}] -> 网关格式 [{"yard","material","qty"}]; 无法映射返回 None."""
+    fixed = _MAT_MAP.get("fixed", {})
+    out = []
+    for a in actions:
+        mat = a.get("material") or a.get("action")
+        yard = a.get("yard")
+        if not isinstance(yard, int):
+            yard = fixed.get(mat)
+        if not isinstance(yard, int) or mat not in fixed:
+            return None
+        out.append({"yard": yard, "material": mat,
+                    "qty": int(a.get("qty", 1))})
+    return out or None
 
 
 @app.post("/dispatch")
@@ -355,9 +380,13 @@ async def dispatch(request: Request):
     actions = body.get("actions")
     if not isinstance(actions, list) or not actions:
         raise HTTPException(422, "actions required")
+    gw_actions = _map_actions_gateway(actions)
+    if gw_actions is None:
+        raise HTTPException(422,
+            "action 无法映射到分拣器 (config/material_map.json 缺物料或 yard)")
     req = urllib.request.Request(
         GATEWAY_URL + "/dispatch",
-        data=json.dumps({"actions": actions, "source": "loop_ui",
+        data=json.dumps({"actions": gw_actions, "source": "loop_ui",
                           "path": body.get("path")}).encode(),
         headers={"Content-Type": "application/json"})
     try:
