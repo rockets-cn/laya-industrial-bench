@@ -80,7 +80,7 @@ https://blog.csdn.net/gjy_skyblue/article/details/120565771
 | 2 号 | PWM | GPIO15 | 与板载 LED 复用, LED 从此常灭 (低电平点亮, PWM 平均为高) |
 | 3 号 | PWM | GPIO33 | 原 U1TXD/4G 复用, 4G 不用, 无影响 |
 
-- 50Hz / 15bit: 0°=1000µs, 90°=1450µs。信号 3.3V, 舵机独立 5V 供电。
+- 50Hz / 15bit: 0°=1000µs, 90°=1500µs, 180°=2000µs（标准映射）。信号 3.3V，舵机独立 5V 供电。
 - 上电即归位 0° (推杆收回)。
 
 ### MCP23017 I2C 数字 IO 扩展 (光门 ×3, DFR0626)

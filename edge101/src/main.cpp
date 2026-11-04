@@ -119,6 +119,8 @@ static void stopStepRmt() {
     conv.steps_total +=
         (uint64_t)(stepRmtPps * (millis() - stepRmtStartMs) / 1000.0);
     rmt_disable(stepChan);
+    delay(20);   // 排空无限循环残留的 RMT ISR (防后续复用通道时 ISR 踩坏状态,
+                 // 2026-11-04 实测: 起停带后手动 stepper 触发 LoadProhibited@rmt_isr)
 }
 
 static bool startStepRmt() {
@@ -487,6 +489,24 @@ static void onSerialCmd(const String& line) {
                     syms[i].level1 = 0;
                 }
                 bool ok = true;
+                // 重建 RMT 通道/编码器: 带子无限循环发射 (loop_count=-1) 后,
+                // 旧通道残留的 ISR 状态会让后续发射触发 LoadProhibited
+                // (2026-11-04 实测崩溃点 rmt_isr_handle_tx_threshold; delay 排空无效).
+                if (stepChan) { rmt_del_channel(stepChan); stepChan = nullptr; }
+                if (stepEnc) { rmt_del_encoder(stepEnc); stepEnc = nullptr; }
+                rmt_tx_channel_config_t cc = {};
+                cc.gpio_num = (gpio_num_t)STEPPER_STEP_PIN;
+                cc.clk_src = RMT_CLK_SRC_APB;
+                cc.resolution_hz = 80000000;
+                cc.mem_block_symbols = 64;
+                cc.trans_queue_depth = 2;
+                cc.intr_priority = 0;
+                rmt_copy_encoder_config_t ec = {};
+                if (rmt_new_tx_channel(&cc, &stepChan) != ESP_OK ||
+                    rmt_new_copy_encoder(&ec, &stepEnc) != ESP_OK) {
+                    ok = false;
+                    Serial.println("stepper: RMT 通道重建失败");
+                }
                 for (int done = 0; done < n && ok; done += CHUNK) {
                     int m = min(n - done, CHUNK);
                     rmt_transmit_config_t tc = {};
@@ -503,6 +523,7 @@ static void onSerialCmd(const String& line) {
                     }
                     delay(400 * m / 1000 + 100);  // 等本段发完
                     rmt_disable(stepChan);
+                    delay(20);                    // 段间排空 ISR
                 }
                 free(syms);
                 digitalWrite(STEPPER_DIR_PIN, LOW);  // 回正向

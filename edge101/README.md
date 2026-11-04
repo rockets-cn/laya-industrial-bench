@@ -105,7 +105,7 @@ pio run -e s3emu        # 产物 .pio/build/s3emu/firmware.bin
 
 | 信号 | 引脚 | 备注 |
 |---|---|---|
-| 舵机 1/2/3 | GPIO12 / GPIO15 / GPIO33 | LEDC PWM 直连 50Hz/15bit (0°=1000µs / 90°=1450µs), 上电即归位 |
+| 舵机 1/2/3 | GPIO12 / GPIO15 / GPIO33 | LEDC PWM 直连 50Hz/15bit (标准映射 0°=1000µs / 90°=1500µs), 上电即归位 |
 | 步进 STEP | GPIO14 | RMT 硬件脉冲 (320k pps 级带速); 串口 `stepper <n>` 手动脉冲也走 RMT |
 | 步进 DIR | GPIO5 | LOW=正向 (物品向分拣器); 反了则换接线 |
 | 步进 EN | 不接线 | SERVO42C 低电平使能 (2026-11-03 实测: 浮空=使能, 高=禁能); 固件不控 EN, MCP23017 PA0 预留接管 |

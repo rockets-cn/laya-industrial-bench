@@ -107,8 +107,8 @@ static const uint32_t TRACK_MATCH_WINDOW_MS = 3000;  // 视觉 -> divert 匹配�
 // 实测: 1 号仓(离进口最近) = GPIO12, 2 号仓(中间) = GPIO15, 3 号仓(出口白杆) = GPIO33。
 static const uint8_t SERVO_PIN[3]  = {12, 15, 33};
 static const int     SERVO_REST_DEG  = -80;  // 归位 (556µs)
-static const int     SERVO_EJECT_DEG[3] = {80, 240, 80}; // [1,2,3] 出射角; 1/3 号半程(80°, 不必推到底),
-                                                        // 2 号臂几何不同: 80° 够不到带面, 实测 240° 才有力推动 (2026-11-04 视觉标定)
+static const int     SERVO_EJECT_DEG[3] = {240, 240, 240}; // [1,2,3] 出射角; 全行程实际操作模式
+                                                        // (80° 半程仅用于视觉点位标定测试; 点位确认后 2026-11-04 切全行程)
 static const uint32_t SERVO_SWEEP_MS   = 3000; // 一次扫掠总时长 (拨出 1500 + 归位 1500)
 static const uint32_t SERVO_ITEM_GAP_MS = 3500; // 件间间隔 (>= 扫掠时长)
 
