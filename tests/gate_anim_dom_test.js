@@ -3,7 +3,8 @@
 // 覆盖: 直通不停推料点 / busy→推料点(非 G[i]-90) / sim armed→带首全旅程 /
 //       推时停带(beltT 冻结) / wait→下一件带首 / setSrc(device) 清全部旅程 /
 //       相机识别显示 / 光门随物品亮 / 无指令推杆绝不动作 /
-//       多物品在带时光门 OR 聚合 (后出现的物品不抹除先过门物品的亮灯)
+//       多物品在带时光门 OR 聚合 (后出现的物品不抹除先过门物品的亮灯) /
+//       真实源视觉事件→物品相机处出现随带走, 推杆事件转任务拨出
 'use strict';
 const fs = require('fs');
 const svg = fs.readFileSync(process.argv[2], 'utf8');
@@ -163,6 +164,32 @@ frames(3, 100);
 check('S6 两个物品同时在带', op(1) > 0.5 && op(2) > 0.5 && parsePos(2).x < 200);
 check('S6 B 上游行走时 A 的光门 1 保持亮 (多物品 OR, 互不抹除)',
       parseFloat(el('gla-gate-1').getAttribute('opacity')) > 0.5);
+
+// ===== S7: 真实源"实际看到的就上带" — 视觉事件 → 物品在相机处 (CAMX) 出现,
+// 随带面走; 真实推杆事件 (busy) 到达 → 转任务模式, 到推料点停带拨出 =====
+g().setSrc('device'); frames(2, 100);  // 清空带面
+g().setJob([{ yard: 2, material: 'banana', label: '香蕉 ×1', color: '#fbbf24', qty: 1 }]);
+const s7 = twinBase();
+s7.vision_last = { ts_ms: nowMs - 100, frame_id: 's7-1', yard: 2 };
+s7.vision_label = '识别 · 香蕉 → 2号';
+s7.vision_until = nowMs + 5000;
+g().setTwin(s7);
+frames(1, 100);
+p = parsePos(2);
+check('S7 视觉事件 → 物品出现在相机处 CAMX=150', p && Math.abs(p.x - 150) < 1 && p.y === 400);
+frames(30, 100); // 3s @140px/s → 150+420=570 (直通态, 未到推料点 800)
+p = parsePos(2);
+check('S7 物品随带面走 (x≈570, 尚未到 P[1]=800)', p && p.x > 500 && p.x < 800);
+const s7b = twinBase(); s7b.sorters[1] = { state: 'busy', ts_ms: nowMs - 50 };
+s7b.vision_last = s7.vision_last; s7b.vision_label = s7.vision_label; s7b.vision_until = nowMs + 5000;
+g().setTwin(s7b);  // 真实推杆事件: 直通物品应转任务模式, 不走满到带尾
+let s7reached = false;
+for (let i = 0; i < 60 && !s7reached; i++) {
+  g().twinFrame(nowMs += 100);
+  const pp = parsePos(2);
+  if (pp && rodY2(2) < 438.0 && Math.abs(pp.x - 800) < 0.5) s7reached = true;
+}
+check('S7 推杆事件 → 转任务模式: 到 P[1]=800 停带拨出', s7reached);
 
 console.log(failures === 0 ? 'GATE_DOM_STUB_OK' : 'GATE_DOM_STUB_FAIL(' + failures + ')');
 process.exit(failures === 0 ? 0 : 1);

@@ -322,6 +322,7 @@
   // 光门处 (armed 事件), 无事件 = 只有皮带按实际运行, 不虚构任何物品.
   var journey=[null,null,null];   // 每分拣器 {phase:'travel'|'armed'|'busy'|'wait', x0, b0, tArmed, tBusy, tWait, qty, left, task, pass}
   var lastArmedMs=[0,0,0], lastBusyMs=[0,0,0], booted=false;
+  var lastVisSpawnMs=0; // 已按视觉事件上带的最近事件 ts_ms (去重: 每事件只上带一件)
   var srcMode='sim';             // setSrc 注入: sim=本地孪生 / device=物理设备
   var beltT=0, lastFrameMs=0;    // 带面时间轴 (ms)
   var VJ=140;                    // 带面/物品行走速度 px/s (2:1 放慢口径; 带纹与物品同速)
@@ -430,6 +431,16 @@
         }
       }
     }
+    // 真实源: 实际看到的就上带 — 新的视觉识别事件 (页面 vision_last) →
+    // 物品出现在相机处 (CAMX) 随带面走 (直通态: 未见到推杆事件=未拨出, 走满到带尾);
+    // 真实推杆事件 (armed/busy) 到达时该道转任务模式 (到推料点停带拨入), 不虚构
+    var vevL=td.vision_last;
+    if('device'===srcMode){if(vevL){if(vevL.ts_ms>lastVisSpawnMs){if(td.vision_until>now){
+      var vl=vevL.yard;
+      if(vl>=1){if(3>=vl){if(!journey[vl-1]){
+        startJourney(vl-1,CAMX,now,'pass');
+        lastVisSpawnMs=vevL.ts_ms;
+      }}}}}}}
     var msgJ='';
     for(var i=0;3>i;i++){
       var si=td.sorters?(td.sorters[i]||{}):{};
@@ -439,7 +450,13 @@
       if('armed'===st){ // 光门落沿事件 (新的) → 启动回放
         if(ts>lastArmedMs[i]){
           lastArmedMs[i]=ts;
-          if(journey[i]){if(journey[i].pass)journey[i]=null;} // 任务物品顶掉直通物品
+          if(journey[i]){if(journey[i].pass){
+            if('device'===srcMode){ // 真实源视觉物品: 推杆事件已到 → 转任务模式, 继续走到推料点停带拨入
+              var jx=journey[i].x0+VJ*(beltT-journey[i].b0)/1000;
+              if(jx>P[i])jx=P[i]; // 事件迟于物品到点: 钉在推料点
+              journey[i].x0=jx;journey[i].b0=beltT;journey[i].pass=false;
+            } else {journey[i]=null;} // 模拟源: 任务物品顶掉供血直通物品
+          }}
           if(!journey[i]){
             // 模拟源: 全旅程 (带首装料); 真实源: 物品按实际状态出现在光门处 (事件驱动, 不虚构上游行程)
             startJourney(i,('device'===srcMode)?G[i]:X0,now,'gate');
@@ -448,7 +465,13 @@
       } else if('busy'===st){ // 推杆已在动作 (错过 armed 窗口 / 旧固件只发 busy): 物品就在推料点, 不虚构上游行程
         if(ts>lastBusyMs[i]){
           lastBusyMs[i]=ts;
-          if(journey[i]){if(journey[i].pass)journey[i]=null;}
+          if(journey[i]){if(journey[i].pass){
+            if('device'===srcMode){ // 真实源视觉物品: 推杆已在动作 → 转任务模式 (未到点则补走到推料点)
+              var bx=journey[i].x0+VJ*(beltT-journey[i].b0)/1000;
+              if(bx>P[i])bx=P[i];
+              journey[i].x0=bx;journey[i].b0=beltT;journey[i].pass=false;
+            } else {journey[i]=null;}
+          }}
           if(!journey[i]){
             startJourney(i,P[i],now,'push');
             journey[i].phase='armed';

@@ -802,6 +802,7 @@ async function refreshTwin(){
    gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
     active_job:d.active_job||null,
     vision_label:visionLabel,vision_until:visionUntil,
+    vision_last:vev?{ts_ms:Date.parse(vev.ts)||0,frame_id:vev.frame_id||'',yard:vev.yard||0}:null,
     status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
