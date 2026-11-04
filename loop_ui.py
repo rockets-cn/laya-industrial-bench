@@ -411,7 +411,7 @@ async def twin():
     页面回落循环演示 (安全降级, 不影响其他功能)。"""
     out = {"online": False, "fault": None, "active_job": None, "queue": 0,
            "belt_mps": _GATEWAY_CFG.get("conveyor_speed_mps", 1.0),
-           "events": [], "stats": None}
+           "events": [], "stats": None, "vision": []}
     try:
         with urllib.request.urlopen(GATEWAY_URL + "/health", timeout=0.4) as r:
             h = json.loads(r.read().decode())
@@ -425,6 +425,14 @@ async def twin():
         out["events"] = list(m.get("motion", []))[-8:]
         with urllib.request.urlopen(GATEWAY_URL + "/stats", timeout=0.4) as r:
             out["stats"] = json.loads(r.read().decode())
+        # 实际看到的 (HuskyLens 2 视觉识别): 独立 try — 旧网关无此端点时
+        # 只缺视觉标签, 不拖垮整个孪生同步 (安全降级)
+        try:
+            with urllib.request.urlopen(GATEWAY_URL + "/vision", timeout=0.4) as r:
+                out["vision"] = list(json.loads(r.read().decode())
+                                     .get("vision", []))[-8:]
+        except Exception:
+            pass
     except Exception:
         pass  # 网关/ broker 任一不可达 → 保持 online:false
     return out
@@ -673,6 +681,7 @@ async function runText(){
  try{render(await jpost('/run',{text:t,domain:domain,qa_llm:$('qallm').checked}))}catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
  }
 let lastRun=null;
+let lastGlaJobList=[];let lastGlaJobSig='[]'; // 孪生当前注入的物品物料清单 (页面下发 ∪ 实际视觉事件覆盖)
 function setLastRun(d){lastRun=(d&&d.actions&&d.actions.length&&(d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL'))?d:null;
  const b=$('btnDispatch');if(b){b.disabled=!lastRun;
  b.title=lastRun?('把最近一次运行的 '+lastRun.actions.length+' 条指令下发到 MQTT 分拣线'):'先运行并产生可执行指令 (FAST/EXPAND/PARTIAL) 才能下发'}}
@@ -683,13 +692,16 @@ async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
   keep.actions.forEach(a=>{const k=a.yard+'|'+a.material;
    const e=agg.get(k)||{yard:a.yard,material:a.material,qty:0};
    e.qty+=a.qty;agg.set(k,e);});
-  __gla.setJob([...agg.values()].map(e=>({yard:e.yard,material:e.material,qty:e.qty,
-   label:(MATCN[e.material]||e.material)+' × '+e.qty,color:MATCOL[e.material]||'#fb923c'})));}
+  const items=[...agg.values()].map(e=>({yard:e.yard,material:e.material,qty:e.qty,
+   label:(MATCN[e.material]||e.material)+' × '+e.qty,color:MATCOL[e.material]||'#fb923c'}));
+  lastGlaJobList=items;lastGlaJobSig=JSON.stringify(items);
+  __gla.setJob(items);}
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
   lastRun=null;setLastRun(null);
   $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued}) — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
   refreshTwin(); // 下发立即刷一次, 光门运行示意尽快跟上真实时序
  }catch(e){lastRun=keep;setLastRun(keep);
+  lastGlaJobList=[];lastGlaJobSig='[]';
   if(window.__gla){__gla.setJob([]);}
   $('out').innerHTML=sec('📤 分拣下发')+`<pre style="color:#f87171">❌ ${e}</pre>`+$('out').innerHTML;}}
 // ---- 摄像头实时画面 (真数据源): MJPEG :8125 → /cam/stream, 缩小放 HuskyLens 2 上方 ----
@@ -763,14 +775,33 @@ async function refreshTwin(){
  // 模拟源: 传送带持续运行 (孪生画面环境供血, 随机物料完整过相机/光门/拨入);
 // 真实源: 按带子实际态 (推料期间固件/sim 自动停带, 推完自动恢复)
  const beltOn=src==='sim'?true:(d.conveyor==='running');
+ // 真实场景: 孪生按"实际看到的"显示 — 最近视觉事件 (HuskyLens 2 实际识别)
+ // 提供相机识别标签 (物料+去向+置信度), 并覆盖对应道的物品物料
+ const vList=d.vision||[];
+ const vev=vList.length?vList[vList.length-1]:null;
+ const vAge=vev?Date.now()-(Date.parse(vev.ts)||0):Infinity;
+ let visionLabel='',visionUntil=0;
+ if(src==='device'&&vev&&vAge<3000&&vev.yard>=1&&vev.yard<=3){
+  visionLabel='识别 · '+(MATCN[vev.material]||vev.material)+' → '+vev.yard+'号'+(typeof vev.confidence==='number'?' · '+Math.round(vev.confidence*100)+'%':'');
+  visionUntil=performance.now()+(3000-vAge);
+ }
+ let merged=lastGlaJobList.slice();
+ if(src==='device'&&vev&&vAge<6000&&vev.yard>=1&&vev.yard<=3){
+  merged=merged.filter(it=>it.yard!==vev.yard);
+  merged.push({yard:vev.yard,material:vev.material,qty:1,
+   label:(MATCN[vev.material]||vev.material)+' ×1',color:MATCOL[vev.material]||'#e6e6e6'});
+ }
+ const jsig=JSON.stringify(merged);
+ if(jsig!==lastGlaJobSig){lastGlaJobSig=jsig;lastGlaJobList=merged;if(gla)gla.setJob(merged);}
  const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})${(last.of>0&&last.item>0)?` · 第${last.item}/${last.of}件`:''}`
   :'数字孪生在线 · 等待事件…';
- const sig=JSON.stringify([src,beltOn,d.conveyor||'',d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'']);
+ const sig=JSON.stringify([src,beltOn,d.conveyor||'',d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'',(src==='device'&&vev)?vev.ts:'']);
  if(sig!==twinSig){
   twinSig=sig;
   if(gla){gla.setSrc&&gla.setSrc(src);
    gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
     active_job:d.active_job||null,
+    vision_label:visionLabel,vision_until:visionUntil,
     status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;

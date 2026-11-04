@@ -226,6 +226,17 @@ def main():
     ok = wait_for(lambda: gw.stats.vision["low_conf"] == v_base["low_conf"] + 1,
                   8, "vision 低置信")
     check("vision 低置信 low_conf", ok, f"got {gw.stats.vision}")
+    # 实际看到的: 校验通过的视觉事件进环形缓冲, GET /vision 供数字孪生按实显示
+    # (未知物料/低置信不记账 — 它们不是"确认看到的", 避免孪生显示误检)
+    st, body = http_json(f"http://127.0.0.1:{GPORT}/vision")
+    vis = body.get("vision", [])
+    check("GET /vision 200 + 仅记校验通过事件",
+          st == 200 and body.get("count") == 1 and len(vis) == 1, f"got {st} {body}")
+    if vis:
+        check("/vision 事件内容 (物料/去向/置信度/时间)",
+              vis[0]["material"] == "red_block" and vis[0]["confidence"] == 0.9
+              and vis[0]["yard"] in (1, 2, 3) and "ts" in vis[0],
+              f"got {vis[0]}")
 
     # ---------- 4. SCADA 入站命令 ----------
     print("\n== 4. SCADA 入站 sort/inbound/command ==")
@@ -356,6 +367,8 @@ def main():
         s2c.item_ms = 120
 
     # ---------- 9. 光门触发回归 (divert trigger=photo + 视觉坐标透传) ----------
+    # 物料选 banana: config/material_map.json 定稿映射 水果->3 号仓 (本节省时
+    # 桩全打在 s3 上); yellow/blue 方块->1 号, 红/绿方块->2 号 (70b26db 定稿)
     print("\n== 9. 光门触发 (trigger=photo) ==")
     saved_cfg9 = {k: gw.cfg.get(k) for k in ("divert_trigger", "photo_margin_s",
                                              "ack_timeout_s")}
@@ -398,7 +411,7 @@ def main():
                 time.sleep(0.02)
 
         threading.Thread(target=sample_states, daemon=True).start()
-        pub("sort/inbound/vision", {"material": "yellow_block", "confidence": 0.9,
+        pub("sort/inbound/vision", {"material": "banana", "confidence": 0.9,
                                      "frame_id": "t-gate", "x": 120, "y": 80,
                                      "w": 40, "h": 40})
         ok = wait_for(lambda: s3.diverted_total == base10d + 1, 10,
@@ -419,13 +432,13 @@ def main():
                                   for e in batch_events), 8, "批次事件带 vision.x")
         ev = [e for e in batch_events if (e.get("vision") or {}).get("x") == 120]
         check("批次事件透传视觉坐标", ok and ev and ev[0]["vision"]["y"] == 80
-              and ev[0]["vision"]["material"] == "yellow_block",
+              and ev[0]["vision"]["material"] == "banana",
               f"ev={ev[0] if ev else None}")
 
         # 9c. 光门无物品 (期望的件没到) -> 设备 fault -> 网关锁存
         s3.photo_dead = True
         base11f = gw.stats.batches["fault"]
-        pub("sort/inbound/vision", {"material": "yellow_block", "confidence": 0.9,
+        pub("sort/inbound/vision", {"material": "banana", "confidence": 0.9,
                                      "frame_id": "t-gate-2"})
         ok = wait_for(lambda: gw.stats.batches["fault"] > base11f, 12,
                       "photo 超时 -> 故障锁存")

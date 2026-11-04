@@ -159,19 +159,4 @@
   <text x="56" y="654" font-size="11" fill="var(--gate-mut,#8a91a0)">通光 = HIGH · 挡光 = LOW · 落沿 = 物品到达（固件 10ms 去抖）· 5s 无物品 → photo timeout fault</text>
   <text x="56" y="672" font-size="11" fill="var(--gate-mut,#8a91a0)">I2C 总线 SDA = GPIO18 / SCL = GPIO23（与 PCA9685 共总线）· 未接线 → trigger=photo 自动回退 immediate</text>
   <text x="56" y="690" font-size="11" fill="var(--gate-mut,#8a91a0)">装好并标定后: 网关 divert_trigger 改 "photo" · 串口 gates 查线（ok=1, 挡光变 0）</text>
-
-  <!-- 底部: 侧视高度 inset -->
-  <rect x="730" y="590" width="410" height="112" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <text x="746" y="614" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)">侧视 · 光门安装高度（光束垂直带面）</text>
-  <line x1="752" y1="664" x2="1122" y2="664" stroke="var(--gate-fg,#e6e6e6)" stroke-width="3"/>
-  <circle cx="774" cy="678" r="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <circle cx="1100" cy="678" r="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <rect x="886" y="630" width="36" height="34" rx="2" fill="var(--gate-acc,#fb923c)"/>
-  <line x1="756" y1="647" x2="1118" y2="647" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
-  <rect x="746" y="641" width="12" height="12" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
-  <rect x="1122" y="641" width="12" height="12" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-  <line x1="950" y1="647" x2="950" y2="664" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
-  <line x1="946" y1="647" x2="954" y2="647" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
-  <line x1="946" y1="664" x2="954" y2="664" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
-  <text x="958" y="662" font-size="10" fill="var(--gate-mut,#8a91a0)">10~30mm · 对齐物品质心（按件高定）</text>
 </svg>

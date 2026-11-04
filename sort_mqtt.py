@@ -19,6 +19,7 @@
     sort/line1/motion  {"sorter","state","via":"immediate|photo|virtual|
                         timeout|reset|done|next|cancel","job_id","ts"}
     网关维护时间线 GET /motion (保留最近 motion_keep 条) + relay sort/event/motion
+    + 最近视觉识别 GET /vision (实际看到的: 数字孪生按实显示相机标签/物品物料)
   人工: sort/human/fault_clear 任意 payload -> 清除故障锁存
 
 统计 (统计分发): 内存计数 + JSONL 台账 (stats/sort_ledger.jsonl, 每 job 一行)
@@ -234,6 +235,9 @@ class SortGateway:
         # 运动事件时间线 (设备 sort/line1/motion -> 环形缓冲 + relay):
         # 动画还原"实际情况"用, 保留最近 motion_keep 条.
         self.motion = deque(maxlen=int(self.cfg.get("motion_keep", 100)))
+        # 最近视觉识别事件 (HuskyLens 2 实际看到的, 白名单+置信度校验通过):
+        # 数字孪生按"实际看到的"显示相机识别标签与物品物料, GET /vision
+        self.vision_events = deque(maxlen=32)
         self._seq_lock = threading.Lock()
         self._stop = threading.Event()
 
@@ -369,6 +373,17 @@ class SortGateway:
             v = payload.get(k)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 vision[k] = v
+        # 记账"实际看到的" (校验通过即记录, 记录在故障/队列检查之前:
+        # 相机看到的事实不受故障锁存/队列满影响; 数字孪生 GET /vision
+        # 按相机实际识别显示标签与物品物料)
+        self.vision_events.append({
+            "ts": _now(),
+            "material": material,
+            "confidence": conf,
+            "yard": sorter,
+            "frame_id": vision.get("frame_id"),
+            "pos_mm": vision.get("pos_mm"),
+        })
         job = self.enqueue_job(
             [{"yard": sorter, "material": material, "qty": 1}],
             source="vision", path="VISION", extra=vision)
@@ -707,6 +722,11 @@ class SortGateway:
                     # "让示意图动起来"的动画据此还原实际情况.
                     self._send(200, {"count": len(gw.motion),
                                       "motion": list(gw.motion)})
+                elif self.path == "/vision":
+                    # 最近视觉识别事件 (HuskyLens 2 实际看到的, 时间序):
+                    # 数字孪生按此显示"实际看到的" — 相机识别标签/物品物料.
+                    self._send(200, {"count": len(gw.vision_events),
+                                      "vision": list(gw.vision_events)[-8:]})
                 else:
                     self._send(404, {"error": "not found"})
 

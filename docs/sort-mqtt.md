@@ -342,6 +342,7 @@ OPEN_QUESTIONS 第 3 条), 与本次 3 路前侧触发光门职责不同, 互不
 | `GET /health` | broker 连接 / 队列 / 活动 job / 故障状态 |
 | `GET /stats` | 同 `sort/stats/summary` |
 | `GET /motion` | 运动事件时间线 (设备状态迁移, 最近 `motion_keep` 条): `{count, motion: [{ts, sorter, state, via, job_id}]}` — 「让示意图动起来」的动画数据源 |
+| `GET /vision` | 最近视觉识别事件 (HuskyLens 2 **实际看到的**, 白名单+置信度校验通过即记账, 最近 8 条): `{count, vision: [{ts, material, confidence, yard, frame_id?, pos_mm?}]}` (时间序) — 数字孪生「按实际看到的显示」: 相机识别标签 + 物品物料按实际识别, 不受精简/故障/队列满影响 (未知物料/低置信不记账, 避免显示误检) |
 | `POST /dispatch` | `{actions, source?, path?}` → 202 `{job_id, queued}` / 409 故障锁存 / 422 非法 |
 | `POST /fault/clear` | 人工清除故障 |
 

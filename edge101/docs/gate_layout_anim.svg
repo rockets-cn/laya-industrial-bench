@@ -206,21 +206,6 @@
   <text x="56" y="672" font-size="11" fill="var(--gate-mut,#8a91a0)">I2C 总线 SDA = GPIO18 / SCL = GPIO23（与 PCA9685 共总线）· 未接线 → trigger=photo 自动回退 immediate</text>
   <text x="56" y="690" font-size="11" fill="var(--gate-mut,#8a91a0)">装好并标定后: 网关 divert_trigger 改 "photo" · 串口 gates 查线（ok=1, 挡光变 0）</text>
 
-  <!-- 底部: 侧视高度 inset -->
-  <rect x="730" y="590" width="410" height="112" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <text x="746" y="614" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)">侧视 · 光门安装高度（光束垂直带面）</text>
-  <line x1="752" y1="664" x2="1122" y2="664" stroke="var(--gate-fg,#e6e6e6)" stroke-width="3"/>
-  <circle cx="774" cy="678" r="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <circle cx="1100" cy="678" r="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <rect x="886" y="630" width="36" height="34" rx="2" fill="var(--gate-acc,#fb923c)"/>
-  <line x1="756" y1="647" x2="1118" y2="647" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
-  <rect x="746" y="641" width="12" height="12" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
-  <rect x="1122" y="641" width="12" height="12" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-  <line x1="950" y1="647" x2="950" y2="664" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
-  <line x1="946" y1="647" x2="954" y2="647" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
-  <line x1="946" y1="664" x2="954" y2="664" stroke="var(--gate-mut,#8a91a0)" stroke-width="1.5"/>
-  <text x="958" y="662" font-size="10" fill="var(--gate-mut,#8a91a0)">10~30mm · 对齐物品质心（按件高定）</text>
-
   <!-- =====================================================================
        动态演示驱动 (IIFE, 无外部依赖; 纯 t 的确定性渲染, 便于测试)
        时序 (显示时间, 2:1 放慢; 比例 = 真实):
@@ -596,11 +581,15 @@
       else if(gOn||gateLit[gk]){gg.setAttribute('opacity','0.80');gg.setAttribute('stroke','var(--gate-acc,#fb923c)');}
       else{gg.setAttribute('opacity','0');gg.setAttribute('stroke','var(--gate-acc,#fb923c)');}
     }
-    // 相机识别显示 (HuskyLens 2 处: 物料名 + 去向; 模拟源过相机时出现, 真实源按事件出现)
-    var visOn=false;
-    if(visUntil>now)visOn=true;
+    // 相机识别显示 (HuskyLens 2 处: 物料名 + 去向)
+    // 模拟源: 物品过相机时显示任务物料; 真实源: 按"实际看到的" —
+    // 页面传入的最近视觉事件 (td.vision_label + 有效期 vision_until)
+    var devVis=false;
+    if('device'===srcMode){if(td.vision_label){if(td.vision_until>now)devVis=true;}} // 内联脚本无 CDATA: 比较翻转操作数, 多条件用嵌套 if
+    var visOn=devVis||visUntil>now;
     get('gla-visiong').setAttribute('opacity',visOn?'1':'0');
-    if(visOn)get('gla-vision').textContent=visLabel;
+    if(devVis)get('gla-vision').textContent=td.vision_label;
+    else if(visOn)get('gla-vision').textContent=visLabel;
     get('gla-fan').setAttribute('opacity',visOn?'0.35':'0.10');
     get('gla-cam').setAttribute('stroke',visOn?'var(--gate-acc,#fb923c)':'var(--gate-bd,#262b36)');
     get('gla-status').textContent=msgJ||('sim'===srcMode?'模拟运行 · 物料无指令直通 (下发指令后按 HuskyLens 2 识别结果拨入指定仓库)':td.status||'数字孪生在线 · 等待事件…');
