@@ -109,7 +109,8 @@ class GatewayStats:
                          "queue_dropped": 0}
         self.items = {"dispatched": 0, "by_sorter": {}, "by_material": {}}
         self.cmd = {"sent": 0, "ack_ok": 0, "ack_timeout": 0, "retries": 0}
-        self.vision = {"events": 0, "dispatched": 0, "unknown": 0, "low_conf": 0}
+        self.vision = {"events": 0, "dispatched": 0, "unknown": 0, "low_conf": 0,
+                       "ignored_grace": 0}
         self.lat_cmd_ack = deque(maxlen=500)  # 命令->应答 延迟 (s)
         self.lat_batch = deque(maxlen=500)    # 批次 E2E 延迟 (s)
         self._items_ts = deque()               # (ts, qty) 滚动 5min 吞吐窗口
@@ -334,6 +335,16 @@ class SortGateway:
     # ---------- 视觉入站 ----------
     def _on_vision(self, payload):
         self.stats.vision_event("events")
+        # 启动宽限期 (2026-11-04 用户反馈: 每次重启传送带自动运行):
+        # 网关启动后 N 秒内忽略视觉事件, 防止带面上"开电前就在"的物料
+        # 立即触发自动分拣/起带. 宽限结束后新入带物料正常自动分拣.
+        grace = float(self.cfg.get("vision_grace_s", 0.0))
+        if grace > 0 and time.time() - self.stats.started < grace:
+            self.stats.vision_event("ignored_grace")
+            print(f"[gateway] 启动宽限期内忽略视觉事件: "
+                  f"{payload.get('material')} frame={payload.get('frame_id')}",
+                  flush=True)
+            return
         material = payload.get("material")
         conf = float(payload.get("confidence", 0.0))
         if material not in MATERIALS:

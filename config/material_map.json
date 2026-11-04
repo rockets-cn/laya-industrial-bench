@@ -1,15 +1,15 @@
 {
-  "_comment": "视觉识别 -> 分拣器映射. mode: fixed (本表) | round_robin (按物料轮转 1..3). 默认映射是占位, 等现场确认物料布局后改 (见 OPEN_QUESTIONS.md).",
+  "_comment": "视觉识别 -> 仓库映射. 仓库编号 2026-11-04 定稿: 1 号仓=离进口最近(上游), 2 号仓=中间, 3 号仓=出口处白杆(下游). mode: fixed | round_robin. 香蕉->3 号仓已现场验证.",
   "mode": "fixed",
   "fixed": {
-    "red_apple": 1,
-    "green_apple": 1,
-    "banana": 1,
-    "pear": 1,
+    "red_apple": 3,
+    "green_apple": 3,
+    "banana": 3,
+    "pear": 3,
     "red_block": 2,
     "green_block": 2,
-    "yellow_block": 3,
-    "blue_block": 3
+    "yellow_block": 1,
+    "blue_block": 1
   },
   "confidence_min": 0.3
 }

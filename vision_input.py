@@ -347,6 +347,10 @@ def parse_args():
                     help="--stream 场景 blob 最小面积 (px)")
     ap.add_argument("--clear-ms", type=int, default=2000,
                     help="--stream 驻留沿去重: 消失多久后可再次上报 (ms)")
+    ap.add_argument("--startup-grace-s", type=float, default=8.0,
+                    help="启动宽限期 (s): 启动后该时间内不发任何事件, 避免"
+                         "重启时带面上已有物料立即触发自动分拣/起带 "
+                         "(2026-11-04 用户反馈: 每次重启传送带自动运行)")
     ap.add_argument("--yolo-model", default=None,
                     help="Yolo 水果模型 (.pt, 4 类: banana/pear/red_apple/green_apple); "
                          "与色块检测并行, 各自去重")
@@ -397,6 +401,10 @@ def main():
               f"min_area={args.min_area} clear={args.clear_ms}ms "
               f"检测器={len(detectors)} (Ctrl-C 停止)", flush=True)
         fr, t0 = 0, time.time()
+        grace_end = t0 + args.startup_grace_s   # 启动宽限: 期间抑制发布
+        if args.startup_grace_s > 0:
+            print(f"[vision] 启动宽限 {args.startup_grace_s:.0f}s: 期间带面已有物料不触发自动分拣",
+                  flush=True)
         yolo = next((d for d in detectors if isinstance(d, YoloFruitVision)), None)
         yolo_warm = yolo is None          # Yolo 首次推理完成前不发任何事件 (预热间隙)
         last_pub = {}                     # material -> 上次发布时刻 (feed 级硬冷却)
@@ -410,6 +418,8 @@ def main():
                     continue
                 if not yolo_warm:
                     continue
+                if time.time() < grace_end:
+                    continue             # 启动宽限期: 不发事件 (检测照常, 只抑制发布)
                 # 水果在带时 (Yolo 3s 内见过), 抑制 HSV 色块报告:
                 # 香蕉黄皮会被 HSV 误报成 yellow_block -> 错格
                 if det is not yolo and yolo is not None and \
