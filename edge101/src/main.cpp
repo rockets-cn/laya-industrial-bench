@@ -190,13 +190,16 @@ static std::string lastDoneJob[3];
 static uint32_t lastDoneAtMs[3] = {0, 0, 0};
 
 // 舵机: LEDC 硬件 PWM 直连 (arduinoespressif32 3.x: ledcAttach/ledcWrite,
-// duty = 分辨率原始计数, 非千分比): 50Hz / 15bit, 0°=1000µs, 180°=2000µs
-// 20ms 周期 = 32768 计数 -> 1000µs=1638, 1450µs=2355
+// duty = 分辨率原始计数, 非千分比): 50Hz / 15bit, 标准映射 0°=1000µs,
+// 90°=1500µs, 180°=2000µs (5.56µs/deg); 宽量程舵机允许 -120°..240°
+// (负角 = 脉宽 <1000µs, 下限 500µs; 240°=2333µs)
+// 20ms 周期 = 32768 计数 -> 1000µs=1638, 1500µs=2457, 2000µs=3276
 static uint32_t servoDutyRaw(int deg) {
-    if (deg < 0) deg = 0;
-    if (deg > 180) deg = 180;
-    uint32_t us = 1000UL + 5UL * (uint32_t)deg;
-    return us * ((1UL << 15)) / 20000UL;
+    if (deg < -120) deg = -120;
+    if (deg > 240) deg = 240;
+    int64_t us = 1000 + (1000LL * (int64_t)deg) / 180LL;
+    if (us < 500) us = 500;
+    return (uint32_t)(us * ((1UL << 15)) / 20000UL);
 }
 static void servoWrite(int n, int deg) {
     ledcWrite(SERVO_PIN[n - 1], servoDutyRaw(deg));
@@ -230,7 +233,7 @@ static void sweepStart(int n) {
     SweepTask& t = sweeps[n - 1];
     t.n = n; t.active = true; t.inEject = true;
     t.phaseAt = millis();
-    servoWrite(n, SERVO_EJECT_DEG);
+    servoWrite(n, SERVO_EJECT_DEG[n - 1]);
     beltHold.sweepStart();   // 推料期间停带: 物品停在推料点被拨入料道
     beltWatch.onDivert(n - 1);  // 该件在门 n-1 被拨出: 不再期望它过下一门
     stopStepRmt();
@@ -264,7 +267,7 @@ static void sweepTick() {
             } else {
                 t.inEject = true;                 // immediate: 连续拨下一件
                 t.phaseAt = now;
-                servoWrite(t.n, SERVO_EJECT_DEG);
+                servoWrite(t.n, SERVO_EJECT_DEG[t.n - 1]);
             }
         }
     }
@@ -415,7 +418,7 @@ static void onVision(const sort::VisionEvent& ev, uint32_t now_ms, void*) {
 static String consoleBuf;
 static void onSerialCmd(const String& line) {
     if (line == "help") {
-        Serial.println("help | state | eth | mqtt | stepstat | stepinit | gates | track | reboot | stepper <n> [r] | sweep <n> | vision <material>");
+        Serial.println("help | state | eth | mqtt | stepstat | stepinit | gates | track | reboot | stepper <n> [r] | sweep <n> | servo <n> <deg> | vision <material>");
     } else if (line == "gates") {
         bool hi0 = true, hi1 = true, hi2 = true;
         if (gateOk) mcpGate.poll(hi0, hi1, hi2);
@@ -467,36 +470,44 @@ static void onSerialCmd(const String& line) {
         // 路径不同, 这是本固件能发脉冲的唯一通路). 50% 占空 400µs 周期 = 5kHz.
         if (stepRmtReady && stepChan && !stepRmtActive && n >= 1 && n <= 20000) {
             digitalWrite(STEPPER_DIR_PIN, rev ? HIGH : LOW);  // LOW=正向(HIGH=反向)
-            // 经典 ESP32 RMT 不支持 loop_count>0 (ESP_ERR_NOT_SUPPORTED),
-            // 把 N 个符号排成数组一次发完. 每符号 [200µs H, 200µs L] = 5kHz.
+            // 经典 ESP32 RMT 单次大 buffer (实测 ~240KB) 触发 LoadProhibited panic,
+            // 分段 5000 符号 (80KB) 发射, 段间 disable/enable.
+            // 每符号 [200µs H, 200µs L] = 5kHz.
+            const int CHUNK = 5000;
             rmt_symbol_word_t *syms =
-                (rmt_symbol_word_t *)malloc(n * sizeof(rmt_symbol_word_t));
+                (rmt_symbol_word_t *)malloc(CHUNK * sizeof(rmt_symbol_word_t));
             if (!syms) {
                 Serial.println("stepper: malloc 失败");
+                digitalWrite(STEPPER_DIR_PIN, LOW);
             } else {
-                for (int i = 0; i < n; i++) {
+                for (int i = 0; i < CHUNK; i++) {
                     syms[i].duration0 = 16000;   // 200µs HIGH @80MHz
                     syms[i].level0 = 1;
                     syms[i].duration1 = 16000;   // 200µs LOW
                     syms[i].level1 = 0;
                 }
-                rmt_transmit_config_t tc = {};
-                tc.loop_count = 0;
-                esp_err_t e1 = rmt_enable(stepChan);
-                esp_err_t e2 = (e1 == ESP_OK) ?
-                    rmt_transmit(stepChan, stepEnc, syms,
-                                 n * sizeof(rmt_symbol_word_t), &tc) : ESP_FAIL;
-                free(syms);
-                if (e2 != ESP_OK) {
-                    if (e1 == ESP_OK) rmt_disable(stepChan);
-                    digitalWrite(STEPPER_DIR_PIN, LOW);
-                    Serial.printf("stepper %d: RMT 发射失败 e1=%d e2=%d\n", n, (int)e1, (int)e2);
-                } else {
-                    delay(400 * n / 1000 + 300);  // 等全部符号发完
+                bool ok = true;
+                for (int done = 0; done < n && ok; done += CHUNK) {
+                    int m = min(n - done, CHUNK);
+                    rmt_transmit_config_t tc = {};
+                    tc.loop_count = 0;
+                    esp_err_t e1 = rmt_enable(stepChan);
+                    esp_err_t e2 = (e1 == ESP_OK) ?
+                        rmt_transmit(stepChan, stepEnc, syms,
+                                     m * sizeof(rmt_symbol_word_t), &tc) : ESP_FAIL;
+                    if (e2 != ESP_OK) {
+                        if (e1 == ESP_OK) rmt_disable(stepChan);
+                        ok = false;
+                        Serial.printf("stepper %d: RMT 发射失败 e1=%d e2=%d\n", n, (int)e1, (int)e2);
+                        break;
+                    }
+                    delay(400 * m / 1000 + 100);  // 等本段发完
                     rmt_disable(stepChan);
-                    digitalWrite(STEPPER_DIR_PIN, LOW);  // 回正向
-                    Serial.printf(rev ? "stepper %d rev done\n" : "stepper %d done\n", n);
                 }
+                free(syms);
+                digitalWrite(STEPPER_DIR_PIN, LOW);  // 回正向
+                if (ok)
+                    Serial.printf(rev ? "stepper %d rev done\n" : "stepper %d done\n", n);
             }
         } else {
             Serial.println("stepper: RMT 未就绪或带在运行, 拒绝");
@@ -505,9 +516,23 @@ static void onSerialCmd(const String& line) {
         String sn = line.substring(6);  sn.trim();   // "sweep" = 5 字符 + 空格, 数字从 6 起
         int n = sn.toInt();
         if (n >= 1 && n <= 3) {
-            servoWrite(n, SERVO_EJECT_DEG); delay(450);
+            servoWrite(n, SERVO_EJECT_DEG[n - 1]); delay(450);
             servoWrite(n, SERVO_REST_DEG);
             Serial.printf("sweep %d done\n", n);
+        }
+    } else if (line.startsWith("servo")) {
+        // 现场调角: "servo <n> <deg>" 保持舵机在 deg (0-180, 标准映射).
+        // 标定推杆行程用: 逐步加角直到推杆到位, 再定 SERVO_EJECT_DEG.
+        int sp = line.indexOf(' ', 5);      // 第 1 个空格 (servo 后)
+        int sp2 = sp > 0 ? line.indexOf(' ', sp + 1) : -1;
+        int n = sp > 0 ? line.substring(sp + 1, sp2 < 0 ? line.length() : sp2).toInt() : 0;
+        int deg = sp2 > 0 ? line.substring(sp2 + 1).toInt() : -1;
+        if (n >= 1 && n <= 3 && deg >= -120 && deg <= 240) {
+            servoWrite(n, deg);
+            Serial.printf("servo %d -> %d deg (us=%ld) hold\n", n, deg,
+                          (long)(1000 + (1000LL * (int64_t)deg) / 180LL));
+        } else {
+            Serial.println("servo: 用法 servo <1-3> <-120..240>");
         }
     } else if (line.startsWith("vision")) {
         String m = line.substring(7);   // "vision" = 6 字符 + 空格, 物料从 7 起
