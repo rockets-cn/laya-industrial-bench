@@ -100,13 +100,15 @@ static const double   ITEM_PITCH_MM         = 900.0; // photo job 件距 (mm, �
 static const uint32_t TRACK_MATCH_WINDOW_MS = 3000;  // 视觉 -> divert 匹配窗 (ms)
 
 // ---------- 舵机 ×3 (LEDC 硬件 PWM, 直连; 2026-10-30 自 PCA9685 改直连) ----------
-// 50Hz / 15bit: 0°=1000µs 脉宽, 180°=2000µs。
+// 50Hz / 15bit, 标准映射 0°=1000µs / 90°=1500µs / 180°=2000µs;
+// 宽量程推杆舵机 (2026-11-04 现场标定): 收回 556µs(=-80°), 全展开 2333µs(=240°),
+// 中立 1500µs; 行程 ~1780µs, 扫掠时长按 3.2s 预算.
 // 1/2/3 号舵机 (推杆) -> GPIO12/15/33。信号 3.3V, 舵机独立 5V 供电。
 static const uint8_t SERVO_PIN[3]  = {12, 15, 33};
-static const int     SERVO_REST_DEG  = 0;    // 归位
-static const int     SERVO_EJECT_DEG = 90;   // 拨出
-static const uint32_t SERVO_SWEEP_MS   = 800;  // 一次扫掠总时长 (拨出 400 + 归位 400)
-static const uint32_t SERVO_ITEM_GAP_MS = 900; // 件间间隔 (>= 扫掠时长)
+static const int     SERVO_REST_DEG  = -80;  // 归位 (556µs)
+static const int     SERVO_EJECT_DEG = 240;  // 拨出全展开 (2333µs)
+static const uint32_t SERVO_SWEEP_MS   = 3000; // 一次扫掠总时长 (拨出 1500 + 归位 1500)
+static const uint32_t SERVO_ITEM_GAP_MS = 3500; // 件间间隔 (>= 扫掠时长)
 
 // ---------- 板载以太网 (RJ45, 网线直连) ----------
 // PHY: IP101 (TLK110 驱动), 地址 1; MDC=GPIO4 MDIO=GPIO13 PWR=GPIO2,
