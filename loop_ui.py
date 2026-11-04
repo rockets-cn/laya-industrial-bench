@@ -759,8 +759,20 @@ async function refreshTwin(){
  try{d=await (await fetch('/twin')).json();}catch(e){}
  const gla=window.__gla;
  if(!d||!d.online){
-  if(twinSig){twinSig='';if(gla)gla.demo();}
-  if(chip)chip.textContent='数字孪生离线 · 循环演示';
+  if(twinSig){twinSig='';}
+  if(gla&&gla.setSrc)gla.setSrc(src);
+  if(src==='device'){
+   // 真实源离线: 不播虚拟循环演示 — 孪生视图冻结 (带停、不再上虚拟物品),
+   // 只等设备栈恢复; "实际看到的" 一条: 真实源画面里不出现没发生的事
+   if(gla)gla.setTwin({online:false,belt_on:false,
+    sorters:[{state:'ready',ts_ms:0},{state:'ready',ts_ms:0},{state:'ready',ts_ms:0}],
+    vision_label:'',vision_until:0,vision_last:null,
+    status:'数字孪生离线 · 真实源: 无虚拟演示, 等设备栈恢复'});
+   if(chip)chip.textContent='数字孪生离线 · 真实源 · 无虚拟演示';
+  } else {
+   if(gla)gla.demo(); // 模拟源离线: 回落本地循环演示 (模拟本就是本地生成)
+   if(chip)chip.textContent='数字孪生离线 · 循环演示';
+  }
   scheduleTwin(1500);
   return;
  }
