@@ -55,7 +55,7 @@ if not os.path.exists(_gate_path):
     _gate_path = os.path.join(HERE, "edge101", "docs", "gate_layout.svg")
 GATE_SVG = open(_gate_path, encoding="utf-8").read()
 
-app = FastAPI(title="Laya 工业决策回路")
+app = FastAPI(title="仓库分拣线数字孪生")
 
 AUDIO_DIR = os.path.join(HERE, "test_audio")
 # (名称, 文本, 领域 fruit|block|mixed)
@@ -435,7 +435,7 @@ def cam_stream():
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Laya 仓库分拣回路 v13</title>
+<title>仓库分拣线 · 数字孪生</title>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
@@ -484,7 +484,7 @@ PAGE = """<!doctype html>
  #flow .n.off rect{stroke-dasharray:4 3}
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
-<h1>🏭 Laya 工业决策回路 · 仓库分拣<span class="ver">v13 · 分拣+简单问答(≤30字)+部分下发+LLM兜底(可开关)+仓库台账(SQLite)+常驻库存卡 · 失败降级 暂停+人工</span></h1>
+<h1>🏭 仓库分拣线 · 数字孪生<span class="ver">光门/推杆/带态 实时还原 + 语音·文本决策回路 · 模拟/真实数据源 · 失败降级 暂停+人工</span></h1>
 <div class="sec" style="margin-top:12px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
 <div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
