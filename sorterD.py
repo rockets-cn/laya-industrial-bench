@@ -32,6 +32,9 @@ ANCH = [(0.0, 0.0), (120.0, 139.6), (170.0, 230.1), (220.0, 346.1), (305.0, 545.
 D_OVER = {1: 2.0, 2: 2.0, 3: 2.0}   # 每仓独立停带提前量, 各自学该仓的停带后滚动
 MIN_APPROACH = 15.0
 TOL_PUSH = 10.0
+DRY_RUN = True                       # 干跑: 跟踪/停带/测落点/学D_OVER全走, 但【不发推杆】(测试定位用)
+DARK_THR = 35.0                      # 帧灰度均值低于此 = 画面过暗
+DARK_FRAMES = 40                     # 连续 N 帧过暗 (~5s) -> 停带并停程序
 
 def s_of(p):
     d = float((np.array(p) - A0) @ LANE)
@@ -118,7 +121,7 @@ def divert(b):
 
 # ---------------- 视觉 ----------------
 PERP = np.array([0.707, 0.707])   # 垂直于 LANE
-LANE_HALF_W = 60.0                # 带面半宽(px): 超出即带外物体 (滑槽旧香蕉/背景), 一律忽略
+LANE_HALF_W = 85.0                # 带面半宽(px): 斜放香蕉 bbox 中心偏移最大~79px, 放宽到85盖住; 仍排除滑槽残留
 
 def detect(f):
     if f is None:
@@ -213,6 +216,23 @@ def measure_rest_px(ref_px, max_wait=1.8, max_jump=50):
         time.sleep(0.35)
     return prev_s
 
+def measure_near(s_pred, max_wait=2.5, win=50.0):
+    """停带后在 s_pred 邻域(win mm)内找最高置信度带面香蕉, 等滚稳(两次读数差<6mm).
+    按预测落点搜索, 不依赖接近途中可能丢失的跟踪点 -> 抗丢."""
+    t_end = time.time() + max_wait
+    prev = None
+    while time.time() < t_end:
+        f = B.one_frame()
+        near = sorted([d for d in detect(f) if abs(d[0] - s_pred) <= win],
+                      key=lambda z: -z[2])
+        if near:
+            s = near[0][0]
+            if prev is not None and abs(s - prev) < 6.0:
+                return s
+            prev = s
+        time.sleep(0.04)
+    return prev
+
 def measure_s(n=5, s_range=None, px_ref=None):
     """带停状态下实测香蕉位置 (中值)
     px_ref: 参考像素点 — 只取距离它 40px 内的框 (区分带面新香蕉和滑槽里的旧香蕉)"""
@@ -255,6 +275,7 @@ def main():
 
     cur = 1
     cands = []
+    dark_count = 0
     while True:
         try:
             now = time.time()
@@ -262,12 +283,23 @@ def main():
             if f is None:
                 time.sleep(0.1)
                 continue
+            # ---- 画面过暗安全停: 灯关了看不到香蕉, 停带并停程序 ----
+            if cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).mean() < DARK_THR:
+                dark_count += 1
+                if dark_count >= DARK_FRAMES:
+                    log(f"!! 画面连续过暗 ({dark_count}帧) -> 停止带子并退出")
+                    belt("stop"); time.sleep(1.0)
+                    log("带子已停, 程序退出 (等灯再亮后重启)")
+                    return
+            else:
+                dark_count = 0
             dets = detect(f)
             static_update(dets, now)
 
             # ---- 找料 (IDLE): 进口区运动香蕉; 锁最靠前一根 (前者优先处理) ----
+            # conf 门槛 0.5: 进口边缘出框/斜放时检测差(conf~0.3), 只在清晰入框后才锁
             for s, p, c in dets:
-                if -8 <= s <= 150 and c >= 0.15 and not is_blacklisted(p):
+                if -8 <= s <= 150 and c >= 0.5 and not is_blacklisted(p):
                     cands.append((now, s, p))
             cands = [x for x in cands if now - x[0] < 1.5]
             if len(cands) >= 4:
@@ -306,14 +338,21 @@ def main():
                             log(f"停带指令已发 (s_pred={sp:.0f}mm)")
                             break
                         time.sleep(0.02)
-                    # ---- 等锁定香蕉滚稳 -> 测真实落点 -> 够不着就补步 -> 推 ----
-                    sf = measure_rest_px(trk_px)
+                    # ---- 测真实落点: 优先按预测落点邻域搜索(抗丢), 失败再按跟踪点 ----
+                    sf = measure_near(sp)
+                    if sf is None:
+                        sf = measure_rest_px(trk_px)
                     if sf is None:
                         log("!! 停带后没找到香蕉 -> 恢复带子")
                         belt("start", 0.0525); time.sleep(0.5); continue
                     err = sf - target
                     D_OVER[tbin] = min(15.0, max(0.0, D_OVER[tbin] + 0.3 * err))   # 每仓独立, 封顶15防停太早
                     log(f"落点 {sf:.1f} (偏差 {err:+.1f}) -> 仓{tbin}提前量 D_OVER={D_OVER[tbin]:.1f}")
+                    if DRY_RUN:
+                        nxt = (tbin % 3) + 1
+                        log(f"[干跑] 仓{tbin}: 落点 {sf:.1f} 目标 {target:.0f} 误差 {err:+.1f}mm -> 不推杆, 恢复带子, 下根测仓{nxt}")
+                        cur = nxt
+                        belt("start", 0.0525); time.sleep(0.5); continue
                     if err < -22:        # 短得推杆够不着 -> 正步补 (实测 ~57 步/mm)
                         need = min(target - sf, 50.0)
                         n_steps = int(need * 57)
