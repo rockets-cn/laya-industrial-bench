@@ -242,6 +242,11 @@ class SortGateway:
         # 最近视觉识别事件 (HuskyLens 2 实际看到的, 白名单+置信度校验通过):
         # 数字孪生按"实际看到的"显示相机识别标签与物品物料, GET /vision
         self.vision_events = deque(maxlen=32)
+        # 模型 vs 实际对照 (数字孪生 GET /jobs): 最近批次的
+        # (laya 命令物料/仓/数量 vs edge101 执行成败 vs HuskyLens 实际看到)
+        # 环形缓冲, 逐件对照 + mismatch 高亮. 选仓权在 PC laya, 这里只做对照.
+        self.job_history = deque(maxlen=100)
+        self.job_history_lock = threading.Lock()
         self._seq_lock = threading.Lock()
         self._stop = threading.Event()
 
@@ -382,6 +387,7 @@ class SortGateway:
         # 按相机实际识别显示标签与物品物料)
         self.vision_events.append({
             "ts": _now(),
+            "t": time.time(),
             "material": material,
             "confidence": conf,
             "yard": sorter,
@@ -470,6 +476,7 @@ class SortGateway:
                 self._latch_fault(job)
                 self.stats.job_finished(job)
                 self._batch_event(job, "fault")
+                self._record_job(job)
             finally:
                 with self.active_lock:
                     self.active_job = None
@@ -500,9 +507,13 @@ class SortGateway:
             else:
                 groups[k] = dict(a)
                 order.append(k)
+        job["divert_results"] = []
         for k in order:
             g = groups[k]
             ok, note = self._divert_cmd(job, g["yard"], g)
+            job["divert_results"].append({"yard": g["yard"],
+                                          "material": g["material"],
+                                          "qty": g["qty"], "ok": ok, "note": note})
             if not ok:
                 return self._fail(job, f"sorter{g['yard']}",
                                    f"divert 无应答/失败: {note}")
@@ -518,6 +529,7 @@ class SortGateway:
         job["e2e_s"] = time.time() - job["t0"]
         self.stats.job_finished(job)
         self._batch_event(job, "done")
+        self._record_job(job)
 
     def _fail(self, job, device, error):
         job["outcome"] = "fault"
@@ -526,8 +538,28 @@ class SortGateway:
         self._latch_fault(job)
         self.stats.job_finished(job)
         self._batch_event(job, "fault")
+        self._record_job(job)
         # 故障安全: 尽力停带 (无应答也继续)
         self._conveyor_cmd(job, "pause", required=False)
+
+    def _record_job(self, job):
+        """模型 vs 实际对照: 批次完成后记录 (laya 命令 / edge101 执行成败 /
+        逐仓 divert 结果), 数字孪生 GET /jobs 逐项对照 + mismatch 高亮.
+        HuskyLens "实际看到" 由 /jobs 端点按时间窗就近关联 (见 do_GET /jobs)."""
+        rec = {
+            "job_id": job["job_id"],
+            "ts": _now(),
+            "t0": job.get("t0"),
+            "t_done": time.time(),
+            "source": job.get("source"),
+            "actions": job.get("actions"),
+            "outcome": job.get("outcome"),
+            "fault": job.get("fault"),
+            "e2e_ms": round(job.get("e2e_s", 0.0) * 1000, 1),
+            "divert_results": job.get("divert_results"),
+        }
+        with self.job_history_lock:
+            self.job_history.append(rec)
 
     def _latch_fault(self, job):
         with self.fault_lock:
@@ -737,6 +769,55 @@ class SortGateway:
                     # 数字孪生按此显示"实际看到的" — 相机识别标签/物品物料.
                     self._send(200, {"count": len(gw.vision_events),
                                       "vision": list(gw.vision_events)[-8:]})
+                elif self.path == "/jobs":
+                    # 模型 vs 实际对照 (数字孪生核心): 逐批次对照
+                    #   命令(laya: 物料/仓/数量) vs 执行(edge101: 成败/逐仓ack)
+                    #   vs HuskyLens 实际看到(按时间窗就近关联, 时序近似).
+                    # judgment: ok=执行成功且HL物料无意外 / mismatch=HL看到命令外物料
+                    #          / fault=执行失败. 选仓权在 PC laya, 网关只对照.
+                    with gw.job_history_lock:
+                        recs = list(gw.job_history)[-20:]
+                    vis = list(gw.vision_events)
+                    out = []
+                    for r in reversed(recs):
+                        actions = r.get("actions") or []
+                        cmd_mats = sorted({a.get("material")
+                                           for a in actions if a.get("material")})
+                        dres = r.get("divert_results") or []
+                        exec_ok = (r.get("outcome") == "done"
+                                   and bool(dres)
+                                   and all(d.get("ok") for d in dres))
+                        t0 = float(r.get("t0") or 0.0)
+                        t1 = float(r.get("t_done") or 0.0) + 2.0
+                        hl = [v for v in vis
+                              if (v.get("t") or 0.0) >= t0 - 2.0
+                              and (v.get("t") or 0.0) <= t1]
+                        hl_mats = sorted({v.get("material") for v in hl})
+                        mismatch = sorted(set(hl_mats) - set(cmd_mats))
+                        if r.get("outcome") != "done":
+                            judgment = "fault"
+                        elif mismatch:
+                            judgment = "mismatch"
+                        else:
+                            judgment = "ok"
+                        out.append({
+                            "job_id": r.get("job_id"),
+                            "ts": r.get("ts"),
+                            "source": r.get("source"),
+                            "outcome": r.get("outcome"),
+                            "fault": r.get("fault"),
+                            "actions": actions,
+                            "divert_results": dres,
+                            "cmd_materials": cmd_mats,
+                            "exec_ok": exec_ok,
+                            "hl_materials": hl_mats,
+                            "hl_conf": [round(v.get("confidence", 0.0), 2)
+                                        for v in hl],
+                            "hl_mismatch": mismatch,
+                            "judgment": judgment,
+                            "e2e_ms": r.get("e2e_ms"),
+                        })
+                    self._send(200, {"count": len(out), "jobs": out})
                 else:
                     self._send(404, {"error": "not found"})
 

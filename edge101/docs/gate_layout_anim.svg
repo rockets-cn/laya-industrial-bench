@@ -1,4 +1,4 @@
-<svg id="gla-svg" viewBox="0 0 1180 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分拣线光门运行示意 (俯视 · 推杆版 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步)"
+<svg id="gla-svg" viewBox="0 0 1180 720" xmlns="http://www.w3.org/2000/svg"     role="img" aria-label="分拣线执行器运行示意 (俯视 · 推杆版 · 单点红外 T0 上游 + 带速外推到仓瞬停推杆 · 数字孪生同步)"
  style="width:100%;height:auto;display:block">
   <!-- 颜色: gate-* CSS 变量 (宿主可覆盖, 深色回退内置). 动态版: 内嵌脚本按 真实时序 驱动,
        静态参考版见 gate_layout.svg; 尊重 prefers-reduced-motion. -->
@@ -13,9 +13,9 @@
   </defs>
 
   <!-- 标题 -->
-  <text x="20" y="34" font-size="18" font-weight="700" fill="var(--gate-fg,#e6e6e6)">分拣线光门安装示意（俯视）· 3 路时序光门装在各推杆【前侧 / 上游】</text>
-  <text x="20" y="56" font-size="11" fill="var(--gate-mut,#8a91a0)">比例 1px≈3.3mm（D=50cm→150px，件距 90cm→270px）· 上行 = 上游/相机侧 · 下行 = 推杆/料道侧 · 带面行进方向 → · 动态演示（时间 2:1 放慢）</text>
-  <text id="gla-status" x="20" y="78" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)">▶ 循环演示 · 带速 1.0 m/s（1px≈3.3mm · 时间 2:1 放慢 · 件距 ≥ 0.9m）</text>
+  <text x="20" y="34" font-size="18" font-weight="700" fill="var(--gate-fg,#e6e6e6)">分拣线执行器示意（俯视）· 单点红外 T0（上游）+ 带速外推 → 到仓瞬停推杆（IR 触发 · 推杆版）</text>
+  <text x="20" y="56" font-size="11" fill="var(--gate-mut,#8a91a0)">IR(T0) 上游识别前缘 → 带速外推预测到目标仓推杆 → 到点瞬停 → 推杆展开(hold=0) → 收回 → 恢复带 · 上行=上游/IR·HL侧 · 下行=推杆/料道侧 · 带面行进 → · 动态演示(2:1 放慢)</text>
+  <text id="gla-status" x="20" y="78" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)">▶ 循环演示 · 单点红外 T0 触发（IR→仓 带速外推 · 到仓瞬停推杆 · hold=0 · 时间 2:1 放慢）</text>
 
   <!-- 图例 -->
   <rect x="840" y="76" width="320" height="140" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
@@ -25,7 +25,7 @@
   <line x1="862" y1="124" x2="862" y2="140" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="4 3"/>
   <rect x="858" y="120" width="8" height="8" fill="var(--gate-fg,#e6e6e6)"/>
   <rect x="858" y="142" width="8" height="8" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="2 2"/>
-  <text x="876" y="138" font-size="11" fill="var(--gate-mut,#8a91a0)">时序光门 ×3（前侧 · NPN 开集）</text>
+  <text x="876" y="138" font-size="11" fill="var(--gate-mut,#8a91a0)">单点红外 T0（位置基准 · 上游）</text>
   <line x1="853" y1="154" x2="873" y2="154" stroke="var(--gate-mut,#8a91a0)" stroke-width="8" opacity="0.35" stroke-linecap="round"/>
   <text x="876" y="158" font-size="11" fill="var(--gate-mut,#8a91a0)">料道（推出通道）</text>
   <line x1="856" y1="168" x2="868" y2="180" stroke="var(--gate-mut,#8a91a0)" stroke-width="2" stroke-dasharray="2 2"/>
@@ -33,7 +33,7 @@
   <text x="876" y="178" font-size="11" fill="var(--gate-mut,#8a91a0)">末端对账门（OPEN #3② · 本次不装）</text>
   <rect x="852" y="190" width="16" height="10" rx="2" fill="var(--gate-bg,#171a21)" stroke="var(--gate-mut,#8a91a0)"/>
   <line x1="860" y1="190" x2="860" y2="204" stroke="var(--gate-fg,#e6e6e6)" stroke-width="4" stroke-linecap="round"/>
-  <text x="876" y="200" font-size="11" fill="var(--gate-mut,#8a91a0)">推杆（舵机驱动 · 推出 400ms）</text>
+  <text x="876" y="200" font-size="11" fill="var(--gate-mut,#8a91a0)">推杆（舵机驱动 · 停带推出 · hold=0）</text>
 
   <!-- 相机 (HuskyLens 2) -->
   <text x="150" y="212" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">t0 识别 · 像素 x/y/w/h 透传留痕（B 方案）</text>
@@ -47,15 +47,25 @@
     <text id="gla-vision" x="150" y="285" font-size="11" font-weight="600" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">识别 · --</text>
   </g>
 
-  <!-- 尺寸线: 相机->光门1 与 件距 光门1->光门2 -->
+  <!-- 单点红外 T0 (位置基准, 上游): 物品前缘到 IR = T0, 带速外推预测到目标仓推杆.
+       橙色虚线竖标, 区分于 3 路到仓停推点 (白色虚线). -->
+  <g>
+    <line x1="230" y1="352" x2="230" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="2" stroke-dasharray="3 3"/>
+    <rect x="223" y="334" width="14" height="14" rx="3" fill="var(--gate-bg,#171a21)" stroke="var(--gate-acc,#fb923c)"/>
+    <circle cx="230" cy="341" r="3" fill="var(--gate-acc,#fb923c)"/>
+    <text x="230" y="328" font-size="11" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">红外 T0</text>
+    <text x="230" y="466" font-size="9" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">GPIO34 · 上游位置基准</text>
+  </g>
+
+  <!-- 尺寸线: IR(T0)->1号仓推杆 与 件距 -->
   <line x1="200" y1="288" x2="380" y2="288" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
   <line x1="200" y1="283" x2="200" y2="293" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
   <line x1="380" y1="283" x2="380" y2="293" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
-  <text x="290" y="264" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">photo_margin_s = 3s（延迟 + 行程预算, 现场实测）</text>
-  <text x="290" y="278" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">相机 → 光门 1 物理距离 &lt; 50cm</text>
+  <text x="290" y="264" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">IR(T0) → 1号仓推杆 d1 = IR_DIST1_MM（irset 在线标定）</text>
+  <text x="290" y="278" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">带速外推: 到仓时刻 = T0 + 距离 / 带速</text>
   <line x1="380" y1="288" x2="650" y2="288" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
   <line x1="650" y1="283" x2="650" y2="293" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5"/>
-  <text x="515" y="252" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">件距 ≥ v×0.9s ≈ 90cm @1m/s（上游排产保证, 否则漏拨）</text>
+  <text x="515" y="252" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">件距 ≥ 推杆行程窗口 × 带速（上游排产保证, 否则到仓时上一件未推完 → 漏拨）</text>
 
   <!-- 上行/下行 标签 -->
   <text x="44" y="352" font-size="11" fill="var(--gate-mut,#8a91a0)">上游 · 相机侧</text>
@@ -117,20 +127,20 @@
     <line x1="380" y1="352" x2="380" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
     <rect x="373" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
     <rect x="373" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-    <text x="380" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">光门 1 · 前侧</text>
-    <text x="380" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">PB0</text>
+    <text x="380" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">仓 1 · 到仓停推区</text>
+    <text x="380" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">推杆 1</text>
 
     <line x1="650" y1="352" x2="650" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
     <rect x="643" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
     <rect x="643" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-    <text x="650" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">光门 2 · 前侧</text>
-    <text x="650" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">PB1</text>
+    <text x="650" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">仓 2 · 到仓停推区</text>
+    <text x="650" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">推杆 2</text>
 
     <line x1="920" y1="352" x2="920" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
     <rect x="913" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
     <rect x="913" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-    <text x="920" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">光门 3 · 前侧</text>
-    <text x="920" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">PB2</text>
+    <text x="920" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">仓 3 · 到仓停推区</text>
+    <text x="920" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">推杆 3</text>
   </g>
   <!-- 挡光叠加 (脚本控制 opacity: 物品在光束内 = 1) -->
   <line id="gla-gate-1" x1="380" y1="352" x2="380" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0"/>
@@ -178,33 +188,33 @@
     <line x1="380" y1="520" x2="530" y2="520" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
     <line x1="380" y1="515" x2="380" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
     <line x1="530" y1="515" x2="530" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
-    <text x="455" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">D = v×(400ms+100ms)</text>
-    <text x="455" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">≈ 50cm @ 1.0 m/s（⑧标定后修正）</text>
+    <text x="455" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">仓 1 · IR→推杆 = d1</text>
+    <text x="455" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">IR_DIST1_MM（irset 在线标定）</text>
 
     <line x1="650" y1="520" x2="800" y2="520" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
     <line x1="650" y1="515" x2="650" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
     <line x1="800" y1="515" x2="800" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
-    <text x="725" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">D = v×(400ms+100ms)</text>
-    <text x="725" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">≈ 50cm @ 1.0 m/s（⑧标定后修正）</text>
+    <text x="725" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">仓 2 · IR→推杆 = d1+sp</text>
+    <text x="725" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">d1 + 1×SPACING_MM（spset 标定）</text>
 
     <line x1="920" y1="520" x2="1070" y2="520" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
     <line x1="920" y1="515" x2="920" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
     <line x1="1070" y1="515" x2="1070" y2="525" stroke="var(--gate-acc,#fb923c)" stroke-width="1.5"/>
-    <text x="995" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">D = v×(400ms+100ms)</text>
-    <text x="995" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">≈ 50cm @ 1.0 m/s（⑧标定后修正）</text>
+    <text x="995" y="540" font-size="12" font-weight="700" fill="var(--gate-acc,#fb923c)" text-anchor="middle">仓 3 · IR→推杆 = d1+2sp</text>
+    <text x="995" y="556" font-size="10" fill="var(--gate-mut,#8a91a0)" text-anchor="middle">d1 + 2×SPACING_MM（spset 标定）</text>
   </g>
 
   <!-- 行进方向 -->
   <line x1="80" y1="344" x2="1100" y2="344" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" opacity="0.85" marker-end="url(#gw-arw)"/>
-  <text x="590" y="338" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">带面行进方向（光门落沿 = 物品到达推杆前侧 = 推出动作开始）</text>
+  <text x="590" y="338" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">带面行进方向（物品过 IR(T0) → 带速外推到目标仓 → 到仓瞬停 → 推杆推出）</text>
 
   <!-- 底部: 接线说明 -->
   <rect x="40" y="590" width="660" height="112" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <text x="56" y="614" font-size="13" font-weight="700" fill="var(--gate-fg,#e6e6e6)">接线（与步进 EN 共 MCP23017 @0x27）</text>
-  <text x="56" y="636" font-size="11" fill="var(--gate-mut,#8a91a0)">PB0 = 光门 1 · PB1 = 光门 2 · PB2 = 光门 3 — IODIR 输入 + GPPU 内部上拉</text>
-  <text x="56" y="654" font-size="11" fill="var(--gate-mut,#8a91a0)">通光 = HIGH · 挡光 = LOW · 落沿 = 物品到达（固件 10ms 去抖）· 5s 无物品 → photo timeout fault</text>
-  <text x="56" y="672" font-size="11" fill="var(--gate-mut,#8a91a0)">I2C 总线 SDA = GPIO18 / SCL = GPIO23（与 PCA9685 共总线）· 未接线 → trigger=photo 自动回退 immediate</text>
-  <text x="56" y="690" font-size="11" fill="var(--gate-mut,#8a91a0)">装好并标定后: 网关 divert_trigger 改 "photo" · 串口 gates 查线（ok=1, 挡光变 0）</text>
+  <text x="56" y="614" font-size="13" font-weight="700" fill="var(--gate-fg,#e6e6e6)">接线（执行器 edge101 · 2026-11-10 新方案）</text>
+  <text x="56" y="636" font-size="11" fill="var(--gate-mut,#8a91a0)">红外 T0 = GPIO34（纯输入 · 外部 3.3V 上拉 · 接近=低/NPN; irset pol 在线翻）· 上游位置基准</text>
+  <text x="56" y="654" font-size="11" fill="var(--gate-mut,#8a91a0)">HuskyLens 2 I2C: SDA=GPIO18 / SCL=GPIO23 · 地址 0x50 · 400kHz · 自学习分类(algo6) · 切算法后等 ≥5s</text>
+  <text x="56" y="672" font-size="11" fill="var(--gate-mut,#8a91a0)">推杆舵机: 1=GPIO12 · 2=GPIO15 · 3=GPIO33 · 收回 270°(2500µs) · 展开 -80°(556µs) · 夹值 -120..280°</text>
+  <text x="56" y="690" font-size="11" fill="var(--gate-mut,#8a91a0)">在线调参: irset &lt;d1&gt; [sp] / spset &lt;mm&gt; / hold &lt;ms&gt; / confmin &lt;0..1&gt; · 诊断: ir / state / track / servo</text>
 
   <!-- =====================================================================
        动态演示驱动 (IIFE, 无外部依赖; 纯 t 的确定性渲染, 便于测试)
@@ -282,9 +292,9 @@
       get('gla-chute-'+(i+1)).setAttribute('stroke-opacity',(0.30+ca).toFixed(2));
       // 状态行: 取 已发生的最近事件
       function ev(tt,msg){if(t>=tt){if(tt>best){best=tt;bmsg=msg;}}}
-      ev(tc,'t0 识别 · 物品 '+(i+1)+'（HuskyLens 2 → 分拣器 '+(i+1)+' · 像素 x/y/w/h 透传）');
-      ev(tg,'光门 '+(i+1)+' 落沿 → 推杆 '+(i+1)+' 推出开始（行程 400ms · 时间 2:1 放慢）');
-      ev(td,'物品 '+(i+1)+' 到达推料点 · 拨入 '+(i+1)+' 号料道 ✓');
+      ev(tc,'t0 识别 · 物品 '+(i+1)+'（HuskyLens 2 识别 → 分拣器 '+(i+1)+' · 像素 x/y/w/h 透传）');
+      ev(tg,'物品 '+(i+1)+' 过 IR(T0) → 带速外推 → 到仓 '+(i+1)+' 瞬停推杆（hold=0 · 时间 2:1 放慢）');
+      ev(td,'推杆 '+(i+1)+' 收回 → 物品 '+(i+1)+' 拨入 '+(i+1)+' 号料道 ✓');
     }
     // 相机识别闪烁 (任一物品过相机 0.5s 内)
     get('gla-fan').setAttribute('opacity',camOn?'0.35':'0.10');

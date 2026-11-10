@@ -203,6 +203,20 @@ def main():
     ok = wait_for(lambda: gw.stats.batches["done"] > base_done, 10, "恢复后 done")
     check("恢复后批次完成", ok)
 
+    # 模型 vs 实际对照: GET /jobs 返回逐批次 (命令物料/仓/数量 vs 执行成败
+    # vs HuskyLens 实际看到). 该批次命令 pear/仓1, 执行 done; 此刻尚无 HL
+    # 视觉事件 -> judgment=ok (执行成功且无意外物料).
+    st, body = http_json(f"http://127.0.0.1:{GPORT}/jobs")
+    check("/jobs 200", st == 200, f"st={st}")
+    jobs = body.get("jobs", [])
+    check("/jobs 有批次", len(jobs) >= 1, f"count={body.get('count')}")
+    if jobs:
+        top = jobs[0]
+        check("/jobs 最新=pear 批次 (命令/执行/判定)",
+              top["cmd_materials"] == ["pear"] and top["exec_ok"]
+              and top["judgment"] == "ok",
+              f"top={top}")
+
     # ---------- 3. 视觉入站 (MQTT 直接发事件) ----------
     print("\n== 3. 视觉入站 sort/inbound/vision ==")
     pc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="test-pub")
