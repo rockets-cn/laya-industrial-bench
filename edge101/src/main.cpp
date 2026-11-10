@@ -193,12 +193,12 @@ static uint32_t lastDoneAtMs[3] = {0, 0, 0};
 
 // 舵机: LEDC 硬件 PWM 直连 (arduinoespressif32 3.x: ledcAttach/ledcWrite,
 // duty = 分辨率原始计数, 非千分比): 50Hz / 15bit, 标准映射 0°=1000µs,
-// 90°=1500µs, 180°=2000µs (5.56µs/deg); 宽量程舵机允许 -120°..240°
-// (负角 = 脉宽 <1000µs, 下限 500µs; 240°=2333µs)
+// 90°=1500µs, 180°=2000µs (5.56µs/deg); 宽量程舵机允许 -120°..280°
+// (收回=270°=2500µs, 展开=-80°=556µs; 下限 500µs)
 // 20ms 周期 = 32768 计数 -> 1000µs=1638, 1500µs=2457, 2000µs=3276
 static uint32_t servoDutyRaw(int deg) {
     if (deg < -120) deg = -120;
-    if (deg > 240) deg = 240;
+    if (deg > 280) deg = 280;
     int64_t us = 1000 + (1000LL * (int64_t)deg) / 180LL;
     if (us < 500) us = 500;
     return (uint32_t)(us * ((1UL << 15)) / 20000UL);
@@ -548,7 +548,7 @@ static void onSerialCmd(const String& line) {
         int sp2 = sp > 0 ? line.indexOf(' ', sp + 1) : -1;
         int n = sp > 0 ? line.substring(sp + 1, sp2 < 0 ? line.length() : sp2).toInt() : 0;
         int deg = sp2 > 0 ? line.substring(sp2 + 1).toInt() : -1;
-        if (n >= 1 && n <= 3 && deg >= -120 && deg <= 240) {
+        if (n >= 1 && n <= 3 && deg >= -120 && deg <= 280) {
             servoWrite(n, deg);
             Serial.printf("servo %d -> %d deg (us=%ld) hold\n", n, deg,
                           (long)(1000 + (1000LL * (int64_t)deg) / 180LL));

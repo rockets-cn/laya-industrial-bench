@@ -101,14 +101,13 @@ static const uint32_t TRACK_MATCH_WINDOW_MS = 3000;  // 视觉 -> divert 匹配�
 
 // ---------- 舵机 ×3 (LEDC 硬件 PWM, 直连; 2026-10-30 自 PCA9685 改直连) ----------
 // 50Hz / 15bit, 标准映射 0°=1000µs / 90°=1500µs / 180°=2000µs;
-// 宽量程推杆舵机 (2026-11-04 现场标定): 收回 556µs(=-80°), 全展开 2333µs(=240°),
-// 中立 1500µs; 行程 ~1780µs, 扫掠时长按 3.2s 预算.
+// 宽量程推杆舵机: 收回=270°(us=2500), 展开=-80°(us=556)
+// (2026-11-10 用户实机确认; 早期 config 把方向定义反了: 曾误标 收回=-80°/全展开=240°)
 // 编号定稿 (2026-11-04 判别测试): 命令 "1 号" 实际推动 3 号仓处杆 → 映射之前写反。
 // 实测: 1 号仓(离进口最近) = GPIO12, 2 号仓(中间) = GPIO15, 3 号仓(出口白杆) = GPIO33。
-static const uint8_t SERVO_PIN[3]  = {12, 15, 33};
-static const int     SERVO_REST_DEG  = -80;  // 归位 (556µs)
-static const int     SERVO_EJECT_DEG[3] = {240, 240, 240}; // [1,2,3] 出射角; 全行程实际操作模式
-                                                        // (80° 半程仅用于视觉点位标定测试; 点位确认后 2026-11-04 切全行程)
+static const uint8_t SERVO_PIN[3]  = {12, 15, 33};   // 舵机3=GPIO33; GPIO23 留给 HuskyLens I2C SCL (2026-11-10 用户定)
+static const int     SERVO_REST_DEG  = 270; // 收回/安全位 (us=2500) — 上电归位推杆缩回, 不挡带面
+static const int     SERVO_EJECT_DEG[3] = {-80, -80, -80}; // [1,2,3] 展开/出射角 (us=556) — 拨料时伸出推料
 static const uint32_t SERVO_SWEEP_MS   = 3000; // 一次扫掠总时长 (拨出 1500 + 归位 1500)
 static const uint32_t SERVO_ITEM_GAP_MS = 3500; // 件间间隔 (>= 扫掠时长)
 
