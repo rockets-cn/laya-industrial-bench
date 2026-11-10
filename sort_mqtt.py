@@ -74,6 +74,10 @@ DEFAULT_CFG = {
     # 固件侧 MCP23017 PB0/1/2 接光门走物理光门, 未接时走虚拟光门
     # (相机检测锚点+带速预测, 见固件 Track.h), 再无匹配才回退 immediate).
     "divert_trigger": "immediate",
+    # 视觉入站 sort/inbound/vision 是否自动 dispatch (选仓). 默认 False = 只记录
+    # (喂数字孪生"真实侧"), 选仓权在 PC laya 模型 (经 /dispatch 下发); True = 旧行为
+    # (HuskyLens 自动下发, 仅作兼容保留).
+    "vision_dispatch": False,
     # photo 模式的额外超时预算: 相机->光门的物品行程 + 光门反应时间.
     "photo_margin_s": 3.0,
     # 运动事件时间线 (sort/line1/motion): 保留最近 N 条, GET /motion 供
@@ -110,8 +114,8 @@ class GatewayStats:
                          "queue_dropped": 0}
         self.items = {"dispatched": 0, "by_sorter": {}, "by_material": {}}
         self.cmd = {"sent": 0, "ack_ok": 0, "ack_timeout": 0, "retries": 0}
-        self.vision = {"events": 0, "dispatched": 0, "unknown": 0, "low_conf": 0,
-                       "ignored_grace": 0}
+        self.vision = {"events": 0, "dispatched": 0, "recorded": 0,
+                       "unknown": 0, "low_conf": 0, "ignored_grace": 0}
         self.lat_cmd_ack = deque(maxlen=500)  # 命令->应答 延迟 (s)
         self.lat_batch = deque(maxlen=500)    # 批次 E2E 延迟 (s)
         self._items_ts = deque()               # (ts, qty) 滚动 5min 吞吐窗口
@@ -384,11 +388,17 @@ class SortGateway:
             "frame_id": vision.get("frame_id"),
             "pos_mm": vision.get("pos_mm"),
         })
-        job = self.enqueue_job(
-            [{"yard": sorter, "material": material, "qty": 1}],
-            source="vision", path="VISION", extra=vision)
-        if job:
-            self.stats.vision_event("dispatched")
+        # 选仓权在 PC laya 模型 (经 sort/inbound/command / POST /dispatch 下发).
+        # HuskyLens 视觉事件默认只记录 (喂孪生"真实侧"), 不自动下发; 只有
+        # vision_dispatch=True 才按旧行为 dispatch (HL 决定仓).
+        if self.cfg.get("vision_dispatch", False):
+            job = self.enqueue_job(
+                [{"yard": sorter, "material": material, "qty": 1}],
+                source="vision", path="VISION", extra=vision)
+            if job:
+                self.stats.vision_event("dispatched")
+        else:
+            self.stats.vision_event("recorded")
 
     def _map_to_sorter(self, material):
         n = int(self.cfg["sorter_count"])

@@ -128,6 +128,7 @@ def main():
            "ack_timeout_s": 0.8, "ack_retries": 1, "stats_period_s": 1.0,
            "divert_timeout_per_item_s": 1.0, "busy_wait_s": 3.0,
            "busy_wait_max_ext": 3,
+           "vision_dispatch": True,   # 测试用 HL 自动 dispatch 路径 (设备门/运动行为)
            "ledger_path": ledger}
     gw = sm.SortGateway(cfg).start()
     print(f"[test] broker :{BPORT}  gateway HTTP :{GPORT}  ledger={ledger}")
@@ -237,6 +238,22 @@ def main():
               vis[0]["material"] == "red_block" and vis[0]["confidence"] == 0.9
               and vis[0]["yard"] in (1, 2, 3) and "ts" in vis[0],
               f"got {vis[0]}")
+
+    # vision_dispatch=False (默认, 选仓权在 PC laya 模型): 视觉事件只记录不下发.
+    # 验证 recorded+1 且 dispatched/batches 不变 (不产生 divert).
+    gw.cfg["vision_dispatch"] = False
+    base_rec = gw.stats.vision.get("recorded", 0)
+    base_disp_ro = gw.stats.vision["dispatched"]
+    base_done_ro = gw.stats.batches["done"]
+    pub("sort/inbound/vision", {"material": "banana", "confidence": 0.9,
+                                 "frame_id": "t-rec", "source": "test"})
+    ok_ro = wait_for(lambda: gw.stats.vision.get("recorded", 0) == base_rec + 1,
+                     6, "record-only 记账")
+    check("vision_dispatch=False 只记录不下发 (喂孪生真实侧)",
+          ok_ro and gw.stats.vision["dispatched"] == base_disp_ro
+          and gw.stats.batches["done"] == base_done_ro,
+          f"vision={gw.stats.vision}")
+    gw.cfg["vision_dispatch"] = True   # 恢复 (后续节 9/10 依赖 HL 自动 dispatch)
 
     # ---------- 4. SCADA 入站命令 ----------
     print("\n== 4. SCADA 入站 sort/inbound/command ==")
