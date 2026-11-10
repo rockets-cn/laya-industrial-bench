@@ -1,0 +1,326 @@
+// ============================================================================
+// main.cpp — HuskyLens 2 自学习训练固件 (目标: PCB 模块)
+// 2026-11-10
+//
+// 复用已验证的底层:
+//   - 舵机 ×3: LEDC 硬件 PWM 直连 (12/15/33), 上电归位 REST=270°(收回/安全位)
+//   - 步进电机: RMT @GPIO14 硬件脉冲, EN 浮空=使能, DIR=5, STEPS_PER_MM=69.1
+//   - HuskyLens 2: I2C SDA=18 / SCL=23, addr=0x50, 400kHz (DFRobot 官方库)
+//
+// 目的: 配合传送带训练 PCB 模型。命令集 (串口 115200, 每行一条):
+//   help                 命令列表
+//   hl                   重新 KNOCK + 报告 HuskyLens 在线状态
+//   algo <n>             切算法 (6=自学习分类) + 强制等 5s
+//   rec <sec>            开始视频录像 <sec> 秒 (写 SD, 需插卡; 分辨率 1280x720)
+//   recstop              停止录像
+//   result               读当前识别结果 (算法/ID/置信度/坐标/尺寸)
+//   learn                学当前画面一帧 (返回学得的 ID, 0=失败)
+//   learnN <n>           连续学 n 帧 (每帧间隔 400ms)
+//   save <id>            保存知识库 (id 0-4)
+//   load <id>            加载知识库 (id 0-4)
+//   forget               遗忘全部已学
+//   belt on / belt off   启/停传送带 (默认 52.5mm/s)
+//   beltset <mps>        改带速 (m/s), 运行中即时生效
+//   stepper <N>          手动走 N 步 (停带状态下, 低速)
+//   servo <1-3> <deg>    手动设舵机角 (-120..280)
+//   state                状态 (带速/步数/舵机/HuskyLens/算法)
+//   reboot               重启
+// ============================================================================
+#include "config.h"
+#include <Arduino.h>
+#include <Wire.h>
+#include "driver/rmt_tx.h"
+#include "driver/rmt_encoder.h"
+#include "driver/rmt_common.h"
+#include "DFRobot_HuskylensV2.h"
+
+// ================= HuskyLens 2 =================
+static HuskylensV2 hl;
+static bool        hlOnline = false;
+static eAlgorithm_t g_algo  = ALGORITHM_SELF_LEARNING_CLASSIFICATION; // 6
+
+// 总线恢复: SCL 打 9 个时钟脉冲, 让卡住的从机出 START
+static void i2cRecover() {
+  Wire.end();
+  delay(5);
+  pinMode(HL2_I2C_SCL_PIN, OUTPUT);
+  for (int i = 0; i < 9; i++) {
+    digitalWrite(HL2_I2C_SCL_PIN, HIGH); delay(5);
+    digitalWrite(HL2_I2C_SCL_PIN, LOW);  delay(5);
+  }
+  Wire.begin(HL2_I2C_SDA_PIN, HL2_I2C_SCL_PIN, 400000);
+  hlOnline = hl.begin(Wire);
+  Serial.printf("[i2c] 总线恢复后 KNOCK %s\n", hlOnline ? "OK" : "失败");
+}
+
+static bool hlKnock() {
+  Wire.begin(HL2_I2C_SDA_PIN, HL2_I2C_SCL_PIN, 400000);
+  hlOnline = hl.begin(Wire);
+  return hlOnline;
+}
+
+static void dumpResults() {
+  int8_t num = hl.getResult(ALGORITHM_ANY);
+  if (num < 0) { Serial.println("result: I2C 通信失败 (-1)"); i2cRecover(); return; }
+  if (num == 0) { Serial.println("result: 无目标"); return; }
+  Serial.printf("result: %d 个目标\n", num);
+  int seen = 0;
+  while (hl.available(ALGORITHM_ANY)) {
+    Result *r = static_cast<Result *>(hl.popCachedResult(ALGORITHM_ANY));
+    if (!r) break;
+    Serial.printf("  #%d algo=%d id=%d learned=%d conf=%.2f xy=(%d,%d) wh=%dx%d name=%s\n",
+                  seen++, (int)r->algorithmType, r->ID,
+                  (r->ID == 0) ? 0 : 1, r->conf,
+                  r->xCenter, r->yCenter, r->width, r->height, r->name.c_str());
+  }
+}
+
+// ================= 舵机 (LEDC) =================
+static uint32_t servoDutyRaw(int deg) {
+  if (deg < -120) deg = -120;
+  if (deg > 280)  deg = 280;
+  int64_t us = 1000 + (1000LL * (int64_t)deg) / 180LL;
+  if (us < 500) us = 500;
+  return (uint32_t)(us * ((1UL << 15)) / 20000UL);
+}
+static void servoWrite(int n, int deg) {
+  if (n >= 1 && n <= 3) ledcWrite(SERVO_PIN[n - 1], servoDutyRaw(deg));
+}
+
+// ================= 步进电机 (RMT) =================
+static rmt_channel_handle_t stepChan = nullptr;
+static rmt_encoder_handle_t stepEnc  = nullptr;
+static bool stepRmtReady = false, stepRmtActive = false, stepRmtFailed = false;
+static uint64_t stepsTotal = 0;
+static unsigned long stepRmtStartMs = 0;
+static double stepRmtPps = 0.0;
+static double beltMps = 0.0525;   // 52.5 mm/s
+static bool   beltOn = false;
+
+static void stopStepRmt();
+
+static bool startStepRmt() {
+  double pps = beltMps * 1000.0 * STEPS_PER_MM;
+  if (pps < 1000.0) return false;
+  uint32_t period = (uint32_t)(80000000.0 / pps);
+  if (period < 10 || period > 32766) return false;
+  stopStepRmt();
+  rmt_symbol_word_t sym = {};
+  sym.duration0 = period / 2;  sym.level0 = 1;
+  sym.duration1 = period - period / 2;  sym.level1 = 0;
+  rmt_transmit_config_t tc = {};
+  tc.loop_count = -1;
+  if (rmt_enable(stepChan) != ESP_OK) { stepRmtFailed = true; return false; }
+  if (rmt_transmit(stepChan, stepEnc, &sym, sizeof(sym), &tc) != ESP_OK) {
+    rmt_disable(stepChan); stepRmtFailed = true; return false;
+  }
+  stepRmtStartMs = millis(); stepRmtPps = pps; stepRmtActive = true;
+  return true;
+}
+static void stopStepRmt() {
+  if (!stepRmtActive || !stepChan) return;
+  stepRmtActive = false;
+  stepsTotal += (uint64_t)(stepRmtPps * (millis() - stepRmtStartMs) / 1000.0);
+  rmt_disable(stepChan);
+  delay(20);
+}
+static uint64_t stepsLive() {
+  uint64_t s = stepsTotal;
+  if (stepRmtActive) s += (uint64_t)(stepRmtPps * (millis() - stepRmtStartMs) / 1000.0);
+  return s;
+}
+static void stepManual(uint32_t n) {
+  stopStepRmt();
+  beltOn = false;
+  digitalWrite(STEPPER_DIR_PIN, LOW);
+  uint32_t interval = 1000;   // ~1000 步/s
+  for (uint32_t i = 0; i < n; i++) {
+    digitalWrite(STEPPER_STEP_PIN, HIGH);
+    delayMicroseconds(3);
+    digitalWrite(STEPPER_STEP_PIN, LOW);
+    uint32_t t0 = millis();
+    while (millis() - t0 < interval) { /* pace */ }
+  }
+  stepsTotal += n;
+  Serial.printf("stepper %lu 完成 (累计 %lu 步)\n", (unsigned long)n, (unsigned long)stepsLive());
+}
+
+// ================= 命令处理 =================
+static void onCmd(const String &line) {
+  if (line.length() == 0) return;
+  Serial.print("> "); Serial.println(line);
+  if (line == "help") {
+    Serial.println("help|hl|algo <n>|rec <sec>|recstop|result|learn|learnN <n>|"
+                   "save <id>|load <id>|forget|belt on|belt off|beltset <mps>|"
+                   "stepper <N>|servo <1-3> <deg>|state|reboot");
+  } else if (line == "hl") {
+    i2cRecover();
+    Serial.printf("hl: %s (algo=%d)\n", hlOnline ? "在线" : "离线", (int)g_algo);
+  } else if (line.startsWith("algo ")) {
+    int n = line.substring(5).toInt();
+    Serial.printf("algo: 切 %d ... ", n);
+    bool ok = hl.switchAlgorithm((eAlgorithm_t)n);
+    g_algo = (eAlgorithm_t)n;
+    Serial.printf("%s, 强制等 5s 加载模型...\n", ok ? "已发" : "失败(重试中)");
+    delay(5000);
+    Serial.println("algo: 完成");
+  } else if (line.startsWith("rec ")) {
+    int sec = line.substring(4).toInt();
+    if (sec <= 0) sec = 10;
+    Serial.printf("rec: 开始视频录像 %d s (1280x720, SD 卡)... ", sec);
+    bool ok = hl.startRecording(MEDIA_TYPE_VIDEO, sec * 1000, "pcb.mp4", RESOLUTION_1280x720);
+    Serial.println(ok ? "已启动" : "失败(需 SD 卡? / I2C?)");
+  } else if (line == "recstop") {
+    Serial.printf("recstop: %s\n", hl.stopRecording(MEDIA_TYPE_VIDEO) ? "已停止" : "失败");
+  } else if (line == "result") {
+    dumpResults();
+  } else if (line == "learn") {
+    uint8_t id = hl.learn(g_algo);
+    Serial.printf("learn: %s (id=%d)\n", (id == 0) ? "失败(无目标?)" : "成功", id);
+  } else if (line.startsWith("learnN ")) {
+    int n = line.substring(7).toInt();
+    if (n <= 0) n = 3; if (n > 40) n = 40;
+    int got = 0;
+    for (int i = 0; i < n; i++) {
+      uint8_t id = hl.learn(g_algo);
+      if (id > 0) got++;
+      delay(400);
+    }
+    Serial.printf("learnN: %d/%d 帧学成功\n", got, n);
+  } else if (line.startsWith("autolearn ")) {
+    // 自动学习: 每 ~400ms 学一帧, 跑 <sec> 秒。见到 PCB 就学成, 没见到就失败计数。
+    // 用于传送带: PCB 经过镜头期间自动学进多个位置/视角 (不依赖 getResult 门控)。
+    int sec = line.substring(10).toInt();
+    if (sec <= 0) sec = 15; if (sec > 120) sec = 120;
+    uint32_t tEnd = millis() + sec * 1000;
+    int learned = 0, tries = 0, lastReport = 0;
+    Serial.printf("autolearn: 开始 %d s (每 400ms 学一帧)...\n", sec);
+    uint32_t lastLearnMs = 0;
+    while (millis() < tEnd) {
+      if (millis() - lastLearnMs >= 400) {
+        uint8_t id = hl.learn(g_algo);
+        tries++;
+        if (id > 0) learned++;
+        lastLearnMs = millis();
+      }
+      int elapsed = sec - (int)((tEnd - millis()) / 1000);
+      if (elapsed >= lastReport && elapsed < sec) {
+        lastReport = elapsed;
+        Serial.printf("  ...%d s, 学成 %d / 试 %d\n", elapsed, learned, tries);
+      }
+      delay(40);
+    }
+    Serial.printf("autolearn: 完成, 学成 %d / 试 %d 帧\n", learned, tries);
+  } else if (line.startsWith("save ")) {
+    int id = line.substring(5).toInt();
+    if (id < 0) id = 0; if (id > 4) id = 4;
+    Serial.printf("save: 保存知识库 id=%d -> %s\n", id,
+                  hl.saveKnowledges(g_algo, (uint8_t)id) ? "OK" : "失败");
+  } else if (line.startsWith("load ")) {
+    int id = line.substring(5).toInt();
+    if (id < 0) id = 0; if (id > 4) id = 4;
+    Serial.printf("load: 加载知识库 id=%d -> %s\n", id,
+                  hl.loadKnowledges(g_algo, (uint8_t)id) ? "OK" : "失败");
+  } else if (line == "forget") {
+    Serial.printf("forget: %s\n", hl.forget(g_algo) ? "已遗忘" : "失败");
+  } else if (line == "belt on") {
+    beltOn = true;
+    Serial.printf("belt on: %.4f m/s -> %s\n", beltMps, startStepRmt() ? "RMT 运行中" : "RMT 失败");
+  } else if (line == "belt off") {
+    beltOn = false; stopStepRmt();
+    Serial.printf("belt off: 已停 (累计 %lu 步)\n", (unsigned long)stepsLive());
+  } else if (line.startsWith("beltset ")) {
+    beltMps = line.substring(8).toFloat();
+    if (beltMps < 0.01) beltMps = 0.01;
+    if (beltMps > 0.30) beltMps = 0.30;
+    if (beltOn) { stopStepRmt(); startStepRmt(); }
+    Serial.printf("beltset: 带速 %.4f m/s\n", beltMps);
+  } else if (line.startsWith("stepper ")) {
+    uint32_t n = line.substring(8).toInt();
+    if (n > 20000) n = 20000;
+    stepManual(n);
+  } else if (line.startsWith("servo ")) {
+    int sp = line.indexOf(' ', 5);
+    int sp2 = sp > 0 ? line.indexOf(' ', sp + 1) : -1;
+    int n = sp > 0 ? line.substring(sp + 1, sp2 < 0 ? line.length() : sp2).toInt() : 0;
+    int deg = sp2 > 0 ? line.substring(sp2 + 1).toInt() : -1;
+    if (n >= 1 && n <= 3 && deg >= -120 && deg <= 280) {
+      servoWrite(n, deg);
+      Serial.printf("servo %d -> %d deg (us=%ld) hold\n", n, deg,
+                    (long)(1000 + (1000LL * (int64_t)deg) / 180LL));
+    } else Serial.println("用法 servo <1-3> <-120..280>");
+  } else if (line == "state") {
+    Serial.printf("state: belt=%s mps=%.4f steps=%lu rmt=%s | hl=%s algo=%d | servo REST=%d°(收回)\n",
+                  beltOn ? "on" : "off", beltMps, (unsigned long)stepsLive(),
+                  stepRmtActive ? "run" : "idle", hlOnline ? "online" : "offline",
+                  (int)g_algo, SERVO_REST_DEG);
+  } else if (line == "reboot") {
+    Serial.println("reboot..."); ESP.restart();
+  } else {
+    Serial.println("未知命令 (help 查看)");
+  }
+}
+
+static void pumpSerial() {
+  static String buf = "";
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n') { onCmd(buf); buf = ""; }
+    else if (c == '\r') { /* ignore */ }
+    else buf += c;
+    if (buf.length() > 120) buf = "";
+  }
+}
+
+// ================= setup / loop =================
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  Serial.println("\n[edge101-train] boot - HuskyLens2 自学习训练固件");
+
+  pinMode(STEPPER_STEP_PIN, OUTPUT);
+  pinMode(STEPPER_DIR_PIN, OUTPUT);
+  digitalWrite(STEPPER_DIR_PIN, LOW);
+  {
+    rmt_tx_channel_config_t cc = {};
+    cc.gpio_num = (gpio_num_t)STEPPER_STEP_PIN;
+    cc.clk_src = RMT_CLK_SRC_APB;
+    cc.resolution_hz = 80000000;
+    cc.mem_block_symbols = 64;
+    cc.trans_queue_depth = 2;
+    cc.intr_priority = 0;
+    rmt_copy_encoder_config_t ec = {};
+    esp_err_t ec_chan = rmt_new_tx_channel(&cc, &stepChan);
+    esp_err_t ec_enc = (ec_chan == ESP_OK) ? rmt_new_copy_encoder(&ec, &stepEnc) : ESP_FAIL;
+    if (ec_chan == ESP_OK && ec_enc == ESP_OK) {
+      stepRmtReady = true;
+      Serial.printf("[step] RMT @GPIO%d 硬件脉冲就绪\n", STEPPER_STEP_PIN);
+    } else {
+      Serial.printf("[step] RMT 初始化失败, 用主循环打脉冲\n");
+    }
+  }
+
+  for (int i = 0; i < 3; i++) {
+    ledcAttach(SERVO_PIN[i], 50, 15);
+    ledcWrite(SERVO_PIN[i], servoDutyRaw(SERVO_REST_DEG));
+  }
+  Serial.printf("[servo] LEDC @50Hz 15bit: GPIO%d/%d/%d 归位 %d°(收回/安全)\n",
+                SERVO_PIN[0], SERVO_PIN[1], SERVO_PIN[2], SERVO_REST_DEG);
+
+  // HuskyLens 2 I2C
+  Wire.begin(HL2_I2C_SDA_PIN, HL2_I2C_SCL_PIN, 400000);
+  hlOnline = hl.begin(Wire);
+  Serial.printf("[hl2] KNOCK %s (SDA=GPIO%d SCL=GPIO%d 400kHz)\n",
+                hlOnline ? "OK" : "失败", HL2_I2C_SDA_PIN, HL2_I2C_SCL_PIN);
+  if (hlOnline) {
+    Serial.print("[hl2] 切自学习分类(algo 6), 等 5s 加载模型... ");
+    hl.switchAlgorithm(g_algo);
+    delay(5000);
+    Serial.println("完成");
+  }
+  Serial.println("[edge101-train] ready (串口 115200, help 查看命令)");
+}
+
+void loop() {
+  pumpSerial();
+}

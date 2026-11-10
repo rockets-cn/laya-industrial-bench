@@ -46,6 +46,25 @@ static const uint8_t  HL2_TX_PIN   = 5;
 static const uint32_t HL2_BAUD     = 38400;
 #endif
 
+// ---------- HuskyLens 2 I2C (DFRobot 官方库 lib/HuskylensV2) — 新方案 ----------
+// 识别物料 (数字孪生"真实侧"): 轮询 getResult -> 按 confmin 过滤 -> 发
+// sort/inbound/vision. 不做选仓 (选仓权在 PC laya 模型). boot 时切自学习
+// 分类算法一次 + 强制等 5s (wiki 警告, 否则系统崩溃).
+#define HL_I2C_ON 1
+static const uint32_t HL_POLL_MS          = 300;   // I2C 轮询周期 (ms; 越大对主循环停摆越小)
+static const uint32_t HL_TIMEOUT_MS       = 200;   // 单次 getResult 超时 (防卡主循环)
+static const double   HL_CONFMIN          = 0.6;   // 置信度门槛 (在线 confmin 可调)
+static const int      HL_ALGO             = 6;     // ALGORITHM_SELF_LEARNING_CLASSIFICATION
+static const uint32_t HL_SWITCH_WAIT_MS   = 5000;  // 切算法后强制等待 (wiki >=5s)
+
+// ---------- 红外接近传感器 (位置基准 T0, GPIO34; 纯输入, 需外接 3.3V 上拉) ----------
+// 物品前缘到 IR = T0; 按带速匀速外推预测到各仓推杆时刻 -> 到点瞬停 + 推杆入库.
+// 极性默认接近=LOW (NPN 开漏); 在线 `irset pol` 可翻.
+static const uint8_t IR_PIN        = 34;
+static const double  IR_DIST1_MM   = 120.0;   // IR -> 1号仓推杆 (占位, irset 在线改)
+static const double  IR_SPACING_MM = 52.0;    // 推杆间距 (spset 在线改)
+static const bool    IR_ACTIVE_LOW = true;    // 接近 = 低电平 (默认 NPN)
+
 // ---------- 步进电机 (42 两相 + MKS SERVO42C 闭环 PCBA, 传送带) ----------
 // 驱动器: Makerbase SERVO42C — 板载 16384 线磁编码器, FOC 矢量三环,
 // 开环/矢量闭环/串口控制三模式; 文档: CSDN article 120565771。
@@ -110,6 +129,10 @@ static const int     SERVO_REST_DEG  = 270; // 收回/安全位 (us=2500) — �
 static const int     SERVO_EJECT_DEG[3] = {-80, -80, -80}; // [1,2,3] 展开/出射角 (us=556) — 拨料时伸出推料
 static const uint32_t SERVO_SWEEP_MS   = 3000; // 一次扫掠总时长 (拨出 1500 + 归位 1500)
 static const uint32_t SERVO_ITEM_GAP_MS = 3500; // 件间间隔 (>= 扫掠时长)
+// 停带推料窗口 (新方案: IR 定时到仓 -> 瞬停 -> 展开 -> hold -> 收回 -> 恢复):
+//   展开 = 270->-80, 收回 = -80->270. hold=0 时无额外驻留 (在线 hold 可调).
+static const uint32_t SERVO_EJECT_MOVE_MS   = 600;  // 270->-80 展开行程 (停带窗口内)
+static const uint32_t SERVO_RETRACT_MOVE_MS = 900;  // -80->270 收回行程
 
 // ---------- 板载以太网 (RJ45, 网线直连) ----------
 // PHY: IP101 (TLK110 驱动), 地址 1; MDC=GPIO4 MDIO=GPIO13 PWR=GPIO2,
@@ -133,5 +156,6 @@ static const sort::MatEntry MATERIAL_MAP[] = {
     {1, 3, "blue_block"},
     {1, 4, "yellow_block"},
     {5, 10, "banana"},        // 示例: 自定义模型 ID10
+    {6, 1, "pcb"},           // 自学习分类 id1 = 手扶 PCB (占位, 训练后确认 id/仓)
 };
 static const int MATERIAL_MAP_LEN = sizeof(MATERIAL_MAP) / sizeof(MATERIAL_MAP[0]);
