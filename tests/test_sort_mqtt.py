@@ -113,6 +113,7 @@ def make_args(no_ack=False, item_ms=120):
     a.broker_host, a.broker_port = "127.0.0.1", BPORT
     a.latency_ms, a.fault_rate, a.no_ack = 20, 0.0, no_ack
     a.item_ms = item_ms
+    a.ir_wait = 0.05      # IR(T0) -> 到仓 行程 (测试用短行程)
     a.belt_fault = None
     return a
 
@@ -383,10 +384,12 @@ def main():
         s1.item_ms = 120        # 恢复模拟设备默认节奏 (后续节依赖)
         s2c.item_ms = 120
 
-    # ---------- 9. 光门触发回归 (divert trigger=photo + 视觉坐标透传) ----------
+    # ---------- 9. IR 触发回归 (divert -> armed -> IR 到仓 -> 推入 + 视觉坐标透传) ----------
+    # 新方案: 执行器单点红外 (IR, T0) 触发, 带速外推到仓, 停带推杆. 网关仍带
+    # divert_trigger 配置 (旧 photo 语义; 执行器/sim 忽略, 仅作兼容保留).
     # 物料选 banana: config/material_map.json 定稿映射 水果->3 号仓 (本节省时
     # 桩全打在 s3 上); yellow/blue 方块->1 号, 红/绿方块->2 号 (70b26db 定稿)
-    print("\n== 9. 光门触发 (trigger=photo) ==")
+    print("\n== 9. IR 触发 (armed->ir_due->done) ==")
     saved_cfg9 = {k: gw.cfg.get(k) for k in ("divert_trigger", "photo_margin_s",
                                              "ack_timeout_s")}
     batch_events = []
@@ -406,10 +409,10 @@ def main():
     try:
         gw.cfg["divert_trigger"] = "photo"
         gw.cfg["photo_margin_s"] = 1.0
-        s3.photo_wait_s = 0.2     # 物品 相机->光门 行程
-        s3.photo_timeout_s = 2.0  # 光门等待窗 (模拟固件 5s)
+        s3.ir_wait_s = 0.2        # 物品 过 IR(T0) -> 到仓 行程
+        s3.ir_timeout_s = 2.0     # 无 IR 沿/无进展 超时 (模拟固件 15s)
 
-        # 9a. vision -> divert trigger=photo -> armed -> 光门 -> 拨出
+        # 9a. vision -> divert -> armed -> IR 到仓 -> 推入
         base10, base10d = gw.stats.batches["done"], s3.diverted_total
         seen_payloads = []
         orig_handle = s3.handle_cmd
@@ -432,11 +435,11 @@ def main():
                                      "frame_id": "t-gate", "x": 120, "y": 80,
                                      "w": 40, "h": 40})
         ok = wait_for(lambda: s3.diverted_total == base10d + 1, 10,
-                      "光门触发拨出")
-        check("photo 触发 -> 拨出 1 件", ok, f"diverted={s3.diverted_total}")
+                      "IR 触发推入")
+        check("IR 触发 -> 推入 1 件", ok, f"diverted={s3.diverted_total}")
         time.sleep(0.2)
         check("批次入账 done", gw.stats.batches["done"] > base10)
-        check("命令携带 trigger=photo",
+        check("命令携带 trigger=photo (网关旧语义, 执行器忽略)",
               any(p.get("trigger") == "photo" for p in seen_payloads),
               f"payloads={seen_payloads[:1]}")
         check("设备状态经过 armed", "armed" in states_seen,
@@ -452,18 +455,18 @@ def main():
               and ev[0]["vision"]["material"] == "banana",
               f"ev={ev[0] if ev else None}")
 
-        # 9c. 光门无物品 (期望的件没到) -> 设备 fault -> 网关锁存
-        s3.photo_dead = True
+        # 9c. IR 无物品 (期望的件没到) -> 设备 fault -> 网关锁存
+        s3.ir_dead = True
         base11f = gw.stats.batches["fault"]
         pub("sort/inbound/vision", {"material": "banana", "confidence": 0.9,
                                      "frame_id": "t-gate-2"})
         ok = wait_for(lambda: gw.stats.batches["fault"] > base11f, 12,
-                      "photo 超时 -> 故障锁存")
-        check("光门超时 -> fault 锁存", ok and gw.fault is not None,
+                      "IR 超时 -> 故障锁存")
+        check("IR 超时 -> fault 锁存", ok and gw.fault is not None,
               f"fault={gw.fault}")
         st, body = http_json(f"http://127.0.0.1:{GPORT}/fault/clear", {})
-        check("photo fault 可人工清除", st == 200 and gw.fault is None)
-        s3.photo_dead = False
+        check("IR fault 可人工清除", st == 200 and gw.fault is None)
+        s3.ir_dead = False
         time.sleep(0.3)
     finally:
         for k, v in saved_cfg9.items():
@@ -506,7 +509,7 @@ def main():
               f"st={st} body={str(body)[:80]}")
         n_before = body.get("count", 0)
         base12 = gw.stats.batches["done"]
-        # red_block -> 2 号分拣器 (s2c), immediate 时序: busy(via=immediate) -> done
+        # red_block -> 2 号分拣器 (s2c), IR 时序: armed(cmd) -> busy(ir_due) -> done
         pub("sort/inbound/vision", {"material": "red_block", "confidence": 0.9,
                                     "frame_id": "t-motion", "x": 200, "y": 90,
                                     "w": 40, "h": 30, "pos_mm": 25.5})
@@ -517,8 +520,11 @@ def main():
         check("时间线有新增", st == 200 and body["count"] > n_before,
               f"count={body.get('count')} before={n_before}")
         evs = [e for e in body.get("motion", []) if e.get("sorter") == 2]
-        check("immediate 运动: busy(via=immediate)",
-              any(e["via"] == "immediate" and e["state"] == "busy" for e in evs),
+        check("接受指令: armed(via=cmd)",
+              any(e["via"] == "cmd" and e["state"] == "armed" for e in evs),
+              f"evs={evs[:3]}")
+        check("IR 到仓: busy(via=ir_due)",
+              any(e["via"] == "ir_due" and e["state"] == "busy" for e in evs),
               f"evs={evs[-3:]}")
         check("完成运动: ready(via=done)",
               any(e["via"] == "done" and e["state"] == "ready" for e in evs))

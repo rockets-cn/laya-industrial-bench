@@ -1,17 +1,26 @@
-"""MQTT 设备模拟器: 1 传送带 + 3 分拣器 (无硬件时闭环测试 + 设备侧行为参照).
+"""MQTT 设备模拟器: 1 传送带 + 3 分拣执行器 (无硬件时闭环测试 + 设备侧行为参照).
+
+镜像 edge101 执行器固件 (2026-11-10 新方案, commit 8fceaf2): 网关 = 指令源
+(物料,仓,数量), 执行器只做物理动作, 不选仓. 逐件执行:
+  单点红外 (IR, T0) -> 带速外推预测到目标仓推杆 -> 到点瞬停 -> 推杆展开
+  (hold=0) -> 收回 -> 恢复带. HuskyLens 视觉 = 上报 (不选仓), 模拟按指令运行,
+  忽略视觉 (执行只跟 (物料,仓,数量), 不受视觉影响).
 
 每个设备 = 状态机 + 周期遥测 (2Hz):
   传送带: stopped --start--> running --pause--> paused --stop--> stopped
-          故障注入 -> fault (reset 恢复)
-  分拣器: ready --divert--> busy --(item_ms × qty, 全拨完才回 ok)--> ready
-          故障 -> fault (reset 恢复); --no-ack 时收到 divert 不回应 (测网关超时)
+          带健康故障注入 (slip/jam) -> fault (reset 恢复)
+  分拣器: ready --divert--> armed --(每件: IR 到仓 -> 停带推杆)--> ready
+          (全推完才回 ok); 无 IR 沿/无进展超时 -> 瞬态 fault (同固件, 可再接指令);
+          --no-ack 时收到 divert 不回应 (测网关超时)
 
 真实 PLC/控制器实现时, 只需满足 docs/sort-mqtt.md 的 命令/应答/遥测 三组 topic,
 本网关即可直接接管.
 
 故障注入: --fault-rate 0.1 (随机故障) --no-ack (divert 永不响应)
           --latency-ms 200 (应答延迟) --fault-sorter 2 (指定分拣器固定故障)
-          --item-ms 900 (每件拨料耗时, 镜像固件 0.9s/件; 默认 900)
+          --item-ms 900 (每件推杆行程窗口: 停带->展开->hold->收回->恢复, 默认 900)
+          --ir-wait 0.15 (物品过 IR -> 到仓 行程 s) --ir-timeout 15.0 (无 IR 超时 s)
+          --ir-dead-sorter 2 (指定分拣器 IR 永远见不到物品, 测超时 fault)
 
 Run: .venv/bin/python sim_devices.py [--broker tcp://127.0.0.1:1883] [--seed 7]
 """
@@ -186,7 +195,22 @@ class ConveyorSim(SimDevice):
 
 
 class SorterSim(SimDevice):
-    """分拣器: divert -> busy -> ready (diverted_total += qty)."""
+    """分拣执行器 (镜像 edge101 执行器固件, 2026-11-10 新方案):
+    单点红外 (IR, T0) -> 带速外推预测到目标仓推杆 -> 到点瞬停 -> 推杆展开
+    (hold=0) -> 收回 -> 恢复带. 逐件执行, 全推完才 ack ok.
+
+    网关 = 指令源 (物料,仓,数量); 本执行器只做物理动作, 不选仓.
+    HuskyLens 视觉 = 上报 (不选仓); 模拟按指令运行, 忽略视觉 (执行只跟指令).
+    命令/应答/遥测/运动事件 契约与固件 publishMotion/publishSorterAck 一致:
+      armed(via=cmd)     -> 接受指令, 等物品过 IR
+      busy(via=ir_due)   -> 物品到仓, 停带 + 推杆展开
+      armed(via=next)    -> 已推 k 件, 等下一件过 IR (k<qty)
+      ready(via=done)    -> 全推完
+      fault(via=timeout) -> 无 IR 沿/无进展超时 (IR 未见物品)
+      ready(via=cancel)  -> reset 取消
+    故障为瞬态 (同固件 curCmd.active=false: 报完 fault 后可再接新指令),
+    锁存由网关做. 带健康 (slip/jam) 在传送带侧, 不在这里.
+    """
 
     def __init__(self, gw_args, rng, n, fixed_fault=False):
         self.n = n
@@ -204,20 +228,22 @@ class SorterSim(SimDevice):
         self.state = "fault" if fixed_fault else "ready"
         self.diverted_total = 0
         self.last_material = None
-        self.item_ms = getattr(gw_args, "item_ms", 900)   # 每件拨料耗时 (ms)
-        # 光门触发模拟: 相机->光门行程 (s) / 光门等待窗 (s) / 该分拣器光门"无物品"
-        self.photo_wait_s = getattr(gw_args, "photo_wait", 0.35)
-        self.photo_timeout_s = getattr(gw_args, "photo_timeout", 3.0)
-        self.photo_dead = getattr(gw_args, "photo_dead", False)
+        # 推杆行程窗口 (ms): 停带 -> 展开(-80°) -> hold(0) -> 收回(270°) -> 恢复.
+        # 镜像固件 SERVO_EJECT_MOVE_MS + hold + SERVO_RETRACT_MOVE_MS.
+        self.item_ms = getattr(gw_args, "item_ms", 900)
+        # 红外 (IR, T0): 物品过 IR -> 带速外推 -> 到目标仓. 模拟固定行程/超时.
+        self.ir_wait_s = getattr(gw_args, "ir_wait", 0.15)        # IR -> 到仓 行程 (s)
+        self.ir_timeout_s = getattr(gw_args, "ir_timeout", 15.0)  # 无 IR 沿/无进展 超时 (s)
+        self.ir_dead = getattr(gw_args, "ir_dead", False)         # IR 永远见不到物品
         self.cur_job = None                       # 当前 job_id (运动事件关联)
 
     def _motion(self, via, state=None, item=0, of=0):
         """运动事件: 状态迁移时间线 (与固件 sort/line1/motion 契约一致).
 
-        via: immediate/photo/virtual/timeout/reset/done/next/cancel/injected
-        (injected = 模拟故障注入, 固件侧无对应). 网关维护 GET /motion 时间线,
-        供"让示意图动起来"的动画还原实际情况.
-        item/of: 逐件件号 (qty>1 时每件各一条事件序列, 与固件逐件扫掠一致).
+        via: cmd/ir_due/next/done/timeout/cancel/reset/injected
+        (injected = 模拟随机故障注入, 固件侧无对应). 网关维护 GET /motion
+        时间线, 供"让示意图动起来"的动画还原实际情况.
+        item/of: 逐件件号 (qty>1 时每件各一条事件序列, 与固件逐件推件一致).
         """
         payload = {"sorter": self.n, "state": state or self.state, "via": via,
                    "job_id": self.cur_job or "", "ts": _now(), "src": "sim"}
@@ -237,83 +263,69 @@ class SorterSim(SimDevice):
             if self.state == "fault":
                 self.state = "ready"
                 self._ack(job_id, action, "ok")
-                self._motion("reset")
-            elif self.state == "armed":
-                self.state = "ready"      # 取消光门预置: 不拨料
+                self._motion("reset", "ready")
+            elif self.state in ("armed", "busy"):
+                self.state = "ready"      # 取消执行中指令: 不推料
                 self._ack(job_id, action, "ok", note="cancelled")
-                self._motion("cancel")
+                self._motion("cancel", "ready")
             else:
-                self._ack(job_id, action, "ok")   # 幂等目标态: no-op ok
+                self._ack(job_id, action, "ok", note="idle")   # 幂等目标态: no-op ok
             return
         if action != "divert":
             return
         if self.state == "fault":
             self._ack(job_id, action, "fault", note="sorter fault")
             return
-        if self.state in ("busy", "armed"):
+        if self.state in ("armed", "busy"):
             # 与固件 Sorter::handleCmd 一致: 执行中只回 busy-ack, 不重复执行
             self._ack(job_id, action, "busy", note=f"state={self.state}")
             return
         qty = int(payload.get("qty", 1))
         self.last_material = payload.get("material")
         self.cur_job = job_id
-        trigger = payload.get("trigger", "immediate")
+        # 接受指令: 进入 armed, 等物品过 IR (同固件 publishMotion armed/cmd).
+        # 不立即 ack: 全部推完才 ack ok (同 .bak 语义, 网关据此等待).
+        self.state = "armed"
+        self._motion("cmd", "armed", item=1, of=qty)
 
-        def finish(sleep_ms=None):
-            # sleep_ms: 拨料耗时 (immediate 路径整段计; photo 路径逐件已扫掠, 传 None)
-            # 推料期间带子实际停转 (镜像固件 BeltHold), 但 conveyor 状态机不变
-            # (真机: 步进暂停不改变 running 态; 动画侧按运动事件停带).
-            if sleep_ms is not None:
-                time.sleep(sleep_ms / 1000.0)
-            if self.rng.random() < self.fault_rate:
-                self.state = "fault"
-                self._ack(job_id, action, "fault", note="injected")
-                self._motion("injected", "fault", item=qty, of=qty)
-            else:
-                self.diverted_total += qty
-                self.state = "ready"
-                self._ack(job_id, action, "ok", note=self.last_material)
-                self._motion("done", "ready", item=qty, of=qty)
-
-        if trigger == "photo":
-            # 光门触发, 逐件执行 (与固件一致: 一件 = 一次光门落沿 + 一次扫掠):
-            # 每件各等一次落沿, 拨完一件回 armed 等下一件 (via=next), 全部完成
-            # 才回 ok; photo_dead 模拟"期望的物品没到光门" (超时 -> fault, 与
-            # 固件 kPhotoTimeoutMs 对齐, 每件各计一个等待窗).
-            self.state = "armed"
-            self._motion("photo", "armed", item=1, of=qty)
-
-            def arm_then_run():
-                for k in range(1, qty + 1):
-                    if self.photo_dead:
-                        time.sleep(self.photo_timeout_s)
-                        if self.state == "armed":
-                            self.state = "fault"
-                            self._ack(job_id, action, "fault",
-                                      note="photo timeout")
-                            self._motion("timeout", "fault", item=k, of=qty)
-                        return
-                    time.sleep(self.photo_wait_s)
-                    if self.state != "armed":   # 等待期间被 reset 取消
-                        return
-                    self.state = "busy"
-                    self._motion("photo", "busy", item=k, of=qty)
-                    time.sleep(self.item_ms / 1000.0)   # 本件扫掠: 拨出->归位 (带面停转, 状态不变)
-                    if k < qty:
-                        self.state = "armed"   # 回 armed 等下一件光门落沿
-                        self._motion("next", "armed", item=k, of=qty)
+        def run_all():
+            for k in range(1, qty + 1):
+                if self.ir_dead:
+                    # 期望的物品没到 IR (无沿/无进展) -> 超时 fault (同固件
+                    # IR_WAIT_TIMEOUT_MS). 故障瞬态: 报完回 ready, 可再接指令.
+                    time.sleep(self.ir_timeout_s)
+                    if self.state in ("armed", "busy"):
+                        self._ack(job_id, action, "fault",
+                                  note="IR timeout / no item at T0")
+                        self._motion("timeout", "fault", item=k, of=qty)
+                        self.state = "ready"
+                    return
+                time.sleep(self.ir_wait_s)          # 物品过 IR -> 带速外推 -> 到仓
+                if self.state not in ("armed",):   # 等待期间被 reset 取消
+                    return
+                self.state = "busy"                # 到点瞬停 + 推杆展开
+                self._motion("ir_due", "busy", item=k, of=qty)
+                time.sleep(self.item_ms / 1000.0)  # 停带 -> 展开 -> hold -> 收回 -> 恢复带
+                self.diverted_total += 1
+                if k < qty:
+                    self.state = "armed"           # 等下一件过 IR
+                    self._motion("next", "armed", item=k, of=qty)
+                else:
+                    self.state = "ready"
+                    if self.rng.random() < self.fault_rate:
+                        self._ack(job_id, action, "fault", note="injected")
+                        self._motion("injected", "fault", item=qty, of=qty)
                     else:
-                        finish()                      # 最后一件扫掠已完成, 直接收尾
+                        self._ack(job_id, action, "ok", note=self.last_material or "")
+                        self._motion("done", "ready", item=qty, of=qty)
 
-            threading.Thread(target=arm_then_run, daemon=True).start()
-        else:
-            self.state = "busy"
-            self._motion("immediate", "busy", item=1, of=qty)
-            threading.Thread(target=finish, args=(self.item_ms * qty,),
-                             daemon=True).start()
+        threading.Thread(target=run_all, daemon=True).start()
 
     def tele_extra(self):
-        return {"state": self.state, "diverted_total": self.diverted_total,
+        # 与固件一致: 有执行中指令 (armed/busy) 遥测报 busy, 否则 ready; 故障报 fault.
+        st = ("fault" if self.state == "fault"
+              else "busy" if self.state in ("armed", "busy") else "ready")
+        return {"state": st, "diverted_total": self.diverted_total,
                 "last_material": self.last_material}
 
 
@@ -325,13 +337,14 @@ def parse_args():
     ap.add_argument("--fault-sorter", type=int, default=0,
                     help="指定 1/2/3 号分拣器固定故障")
     ap.add_argument("--item-ms", type=int, default=900,
-                    help="分拣器每件拨料耗时 ms (镜像固件: 拨出 400ms + 件间 500ms)")
-    ap.add_argument("--photo-wait", type=float, default=0.35,
-                    help="trigger=photo 时物品相机->光门行程 s (模拟固定延迟)")
-    ap.add_argument("--photo-timeout", type=float, default=3.0,
-                    help="trigger=photo 时 armed 等待窗 s (模拟固件 5s 光门超时)")
-    ap.add_argument("--photo-dead-sorter", type=int, default=0,
-                    help="指定 1/2/3 号分拣器光门永远无物品 (测 photo 超时 fault)")
+                    help="分拣器每件推杆行程窗口 ms (停带->展开->hold->收回->恢复, "
+                         "镜像固件 SERVO_EJECT+hold+SERVO_RETRACT)")
+    ap.add_argument("--ir-wait", type=float, default=0.15,
+                    help="物品过 IR(T0) -> 带速外推 -> 到仓 行程 s (模拟固定延迟)")
+    ap.add_argument("--ir-timeout", type=float, default=15.0,
+                    help="无 IR 沿/无进展 超时 s (镜像固件 IR_WAIT_TIMEOUT_MS)")
+    ap.add_argument("--ir-dead-sorter", type=int, default=0,
+                    help="指定 1/2/3 号分拣器 IR 永远见不到物品 (测超时 fault)")
     ap.add_argument("--no-ack", action="store_true",
                     help="分拣器 divert 永不回应 (测网关超时/重试)")
     ap.add_argument("--belt-fault", choices=["slip", "jam"], default=None,
@@ -355,7 +368,7 @@ def main():
     devs: list = [ConveyorSim(a, rng)]
     for n in (1, 2, 3):
         devs.append(SorterSim(a, rng, n, fixed_fault=(a.fault_sorter == n)))
-        devs[-1].photo_dead = (a.photo_dead_sorter == n)
+        devs[-1].ir_dead = (a.ir_dead_sorter == n)
     for d in devs:
         d.start()
     print(f"[sim] 就绪: 传送带 + 3 分拣器 "
