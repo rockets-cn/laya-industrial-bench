@@ -1,0 +1,20 @@
+# 本地 MQTT broker (amqtt, broker_local.py) 0.0.0.0:1883
+# 分拣栈地基: 网关/固件都连它. 物理链路 EDGE 101 经网线接入, 必须绑 0.0.0.0 (非 127.0.0.1).
+# 安装: cp deploy/laya-mqtt-broker.service ~/.config/systemd/user/
+#       systemctl --user daemon-reload
+#       systemctl --user enable --now laya-mqtt-broker
+# 日志: journalctl --user -u laya-mqtt-broker -f
+[Unit]
+Description=Laya local MQTT broker (amqtt, 0.0.0.0:1883)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/rockets/laya-industrial-bench
+Environment=HOST=0.0.0.0 PORT=1883
+ExecStart=/home/rockets/laya-industrial-bench/.venv/bin/python broker_local.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

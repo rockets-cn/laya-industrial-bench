@@ -5,13 +5,13 @@
 # 日志: journalctl --user -u laya-loop-ui -f
 [Unit]
 Description=Laya industrial decision loop web UI (port 8002)
-After=network.target laya-jev-api.service
-Wants=laya-jev-api.service
+After=network-online.target laya-jev-api.service laya-sort-gateway.service
+Wants=laya-jev-api.service laya-sort-gateway.service
 
 [Service]
 WorkingDirectory=/home/rockets/laya-industrial-bench
 ExecStart=/home/rockets/laya-industrial-bench/.venv/bin/python loop_ui.py
-Restart=on-failure
+Restart=always
 RestartSec=3
 
 [Install]

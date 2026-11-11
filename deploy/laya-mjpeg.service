@@ -1,0 +1,18 @@
+# MJPEG 相机流 (mjpeg_live.py) 0.0.0.0:8125, C110 /dev/video0, 默认 b=0.6
+# 给孪生网页 / 录像拉帧 (C110 只允许一个进程开 /dev/video0, 录像器从这里拉).
+# 安装: cp deploy/laya-mjpeg.service ~/.config/systemd/user/
+#       systemctl --user daemon-reload
+#       systemctl --user enable --now laya-mjpeg
+# 日志: journalctl --user -u laya-mjpeg -f
+[Unit]
+Description=Laya MJPEG camera stream (0.0.0.0:8125)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/rockets/laya-industrial-bench
+ExecStart=/home/rockets/laya-industrial-bench/.venv/bin/python mjpeg_live.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
