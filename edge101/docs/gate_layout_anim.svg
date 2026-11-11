@@ -122,30 +122,11 @@
     </g>
   </g>
 
-  <!-- 光门 ×3: x=380 / 650 / 920 (白色虚线 = 已装光束; 橙色叠加 = 挡光/落沿) -->
-  <g>
-    <line x1="380" y1="352" x2="380" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
-    <rect x="373" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
-    <rect x="373" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-    <text x="380" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">仓 1 · 到仓停推区</text>
-    <text x="380" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">推杆 1</text>
-
-    <line x1="650" y1="352" x2="650" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
-    <rect x="643" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
-    <rect x="643" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-    <text x="650" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">仓 2 · 到仓停推区</text>
-    <text x="650" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">推杆 2</text>
-
-    <line x1="920" y1="352" x2="920" y2="448" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="5 4"/>
-    <rect x="913" y="333" width="14" height="14" rx="2" fill="var(--gate-fg,#e6e6e6)"/>
-    <rect x="913" y="447" width="14" height="14" rx="2" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="3 2"/>
-    <text x="920" y="312" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)" text-anchor="middle">仓 3 · 到仓停推区</text>
-    <text x="920" y="327" font-size="10" fill="var(--gate-acc,#fb923c)" text-anchor="middle">推杆 3</text>
-  </g>
-  <!-- 挡光叠加 (脚本控制 opacity: 物品在光束内 = 1) -->
-  <line id="gla-gate-1" x1="380" y1="352" x2="380" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0"/>
-  <line id="gla-gate-2" x1="650" y1="352" x2="650" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0"/>
-  <line id="gla-gate-3" x1="920" y1="352" x2="920" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0"/>
+  <!-- 光门 ×3 已移除 (用户 2026-11-11: 光门不要了). 仓库停推区标注见下方 d 尺寸线 (仓 N · IR→推杆=dN). -->
+  <!-- 挡光叠加 (脚本仍 get() 这些元素故保留, 但 display:none 不显示; 光门已废弃) -->
+  <line id="gla-gate-1" x1="380" y1="352" x2="380" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0" display="none"/>
+  <line id="gla-gate-2" x1="650" y1="352" x2="650" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0" display="none"/>
+  <line id="gla-gate-3" x1="920" y1="352" x2="920" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0" display="none"/>
   <!-- IR T0 挡光叠加 (x=230): 物品过红外 T0 时亮 — 红外检测实时反馈 (脚本控 opacity, 加粗+圆头更醒目) -->
   <line id="gla-ir" x1="230" y1="350" x2="230" y2="450" stroke="var(--gate-acc,#fb923c)" stroke-width="5" stroke-linecap="round" opacity="0"/>
 
@@ -476,7 +457,7 @@
       var st=si.state||'ready', ts=si.ts_ms||0;
       // IR 检测实时反馈: 'busy' (via ir_due) = IR 刚触发推杆 → 本帧亮 IR T0 (x=230)
       // 手动 jog (job=manual): 推杆是网页按钮触发, 非 IR 检测 → 不亮 IR T0
-      if('busy'===st&&!si.manual){irLit=true;}
+      if('busy'===st){if(!si.manual){irLit=true;}}
       setVariant(i,jmat(i)?jmat(i).m:'block'); // 物品图标随旅程物料切换 (任务/供血)
       var rod=get('gla-rod-'+(i+1));
       if('armed'===st){ // 光门落沿事件 (新的) → 启动回放
@@ -494,7 +475,7 @@
             startJourney(i,('device'===srcMode)?G[i]:X0,now,'gate');
           }
         }
-      } else if('busy'===st&&!si.manual){ // 推杆已在动作 (错过 armed 窗口 / 旧固件只发 busy): 物品就在推料点, 不虚构上游行程; 手动 jog 不建旅程
+      } else if('busy'===st){ if(!si.manual){ // 手动 jog 不建旅程; 推杆已在动作 (错过 armed / 旧固件只发 busy): 物品就在推料点, 不虚构上游行程
         if(ts>lastBusyMs[i]){
           lastBusyMs[i]=ts;
           if(journey[i]){if(journey[i].pass){
@@ -509,6 +490,7 @@
             journey[i].phase='armed';
             journey[i].tArmed=now; // 推杆正在推出: 物品已在推料点, 带面即停
           }
+        }
         }
       }
       if('fault'===st){if(journey[i])journey[i]=null;}
@@ -603,7 +585,7 @@
         } else if('busy'===st){
           if(si.manual){ // 手动 jog: 只动画推杆 (伸出->收回), 不亮 IR/不显示 item/不显示相机
             var pm=0; if(ts){pm=(now+td.t0-ts)/1000; if(pm>1)pm=1;} // 全程 ~1.0s (固件 jog 展开400+收回600)
-            var me= pm<0.4 ? ease(pm/0.4) : (pm<1 ? 1-ease((pm-0.4)/0.6) : 0);
+            var me=0; if(pm>=0.4){ if(pm>=1){ me=0; } else { me=1-ease((pm-0.4)/0.6); } } else { me=ease(pm/0.4); }
             rod.setAttribute('y2',(438-36*me).toFixed(1));
             rod.setAttribute('stroke', me>0.3?'var(--gate-acc,#fb923c)':'var(--gate-fg,#e6e6e6)');
             get('gla-chute-'+(i+1)).setAttribute('stroke-opacity','0.30');
@@ -640,7 +622,7 @@
       var gs=(td.sorters?(td.sorters[gk]||{}):{})||{};
       var gst=gs.state||'ready';
       var gj2=journey[gk];
-      var gOn=(('armed'===gst)||('busy'===gst))&&!gs.manual; // 手动 jog 不点光门
+      var gOn=(('armed'===gst)||('busy'===gst)); if(gs.manual){gOn=false;} // 手动 jog 不点光门 (光门已移除)
       if(gj2){if('armed'===gj2.phase){gOn=true;}else if('busy'===gj2.phase){gOn=true;}}
       var gg=get('gla-gate-'+(gk+1));
       if('fault'===gst){gg.setAttribute('opacity','0.90');gg.setAttribute('stroke','#f87171');}
