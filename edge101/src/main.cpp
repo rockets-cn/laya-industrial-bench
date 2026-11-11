@@ -132,12 +132,13 @@ static int g_push_seq = 0;    // 推件序号 (motion 事件 item 号)
 // 非阻塞状态机 (jogTick 每 loop 推进一步), motion busy/ready 供数字孪生同步.
 struct Jog {
     bool active = false;
-    int  bin   = 0;
+    int  seq   = 0;           // 该推杆运动序号 (motion 事件 item 号)
     int  phase = 0;           // 0=展开行程 2=收回行程
     uint32_t phase_at = 0;
 };
-static Jog jog;
-static int g_jog_seq = 0;     // 手动推杆序号 (motion 事件 item 号)
+static Jog jogs[4];           // index=bin(1..3); 按仓独立, 3 推杆可同时动 (各自伺服)
+static int g_jog_seq = 0;     // 手动推杆全局序号
+static inline bool jogAnyActive() { return jogs[1].active || jogs[2].active || jogs[3].active; }
 
 // 遥测计数.
 static uint32_t g_diverted[3] = {0, 0, 0};   // 各仓累计推件
@@ -274,7 +275,7 @@ static void removePend(int i) {
 // 皮带位置 P 到仓监控 + 执行: 找 p_mm 最小且已到达 (P>=p_mm, 未明显越过) 的 pend ->
 // 瞬停推. P=stepsLive()/SPM (RMT 累计, 停带时冻结). 按 p_mm 升序推 -> 3->1 跳仓也正确.
 static void pushTick() {
-    if (!push.active && !jog.active && g_pendN > 0) {
+    if (!push.active && !jogAnyActive() && g_pendN > 0) {
         double P = (double)stepsLive() / STEPS_PER_MM;
         int best = -1;
         for (int i = 0; i < g_pendN; i++)
@@ -343,19 +344,21 @@ static void pushTick() {
 // 手动推杆 jog 状态机 (非阻塞): 展开 -80° -> 收回 270°. 不控带子/不动队列,
 // 仅供网页/串口手动测试推杆行程. motion busy(展开)/ready(收回完) 供数字孪生同步.
 static void jogTick() {
-    if (!jog.active) return;
-    uint32_t now = millis();
-    if (jog.phase == 0) {                  // 展开行程: 270 -> -80
-        if (now - jog.phase_at >= SERVO_EJECT_MOVE_MS) {
-            jog.phase = 2;
-            jog.phase_at = now;
-            servoWrite(jog.bin, SERVO_REST_DEG);   // 到位即收回
-        }
-    } else {                               // 收回行程: -80 -> 270
-        if (now - jog.phase_at >= SERVO_RETRACT_MOVE_MS) {
-            jog.active = false;
-            publishMotion(jog.bin, "ready", "cmd", g_jog_seq, 0, "manual");
-            Serial.printf("[jog] %d 号仓 手动推杆完成\n", jog.bin);
+    for (int n = 1; n <= 3; n++) {
+        if (!jogs[n].active) continue;
+        uint32_t now = millis();
+        if (jogs[n].phase == 0) {          // 展开行程: 270 -> -80
+            if (now - jogs[n].phase_at >= SERVO_EJECT_MOVE_MS) {
+                jogs[n].phase = 2;
+                jogs[n].phase_at = now;
+                servoWrite(n, SERVO_REST_DEG);   // 到位即收回
+            }
+        } else {                           // 收回行程: -80 -> 270
+            if (now - jogs[n].phase_at >= SERVO_RETRACT_MOVE_MS) {
+                jogs[n].active = false;
+                publishMotion(n, "ready", "cmd", jogs[n].seq, 0, "manual");
+                Serial.printf("[jog] %d 号仓 手动推杆完成\n", n);
+            }
         }
     }
 }
@@ -519,24 +522,24 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
             // 手动推杆 (网页按钮 / 测试): 纯伺服 jog, 不碰带子/队列.
             // 立即回 ok (命令已接受), 实际 展开->收回 由 jogTick 驱动,
             // motion busy/ready 供数字孪生同步.
-            if (push.active || jog.active) {
+            if (jogs[n].active || push.active) {
                 publishSorterAck(n, job_id, "push", "busy", "推杆忙");
                 return;
             }
-            jog.active = true;
-            jog.bin = n;
-            jog.phase = 0;
-            jog.phase_at = millis();
-            g_jog_seq++;
+            jogs[n].active = true;
+            jogs[n].seq = ++g_jog_seq;
+            jogs[n].phase = 0;
+            jogs[n].phase_at = millis();
             servoWrite(n, SERVO_EJECT_DEG[n - 1]);
             g_prog_ms = millis();
-            publishMotion(n, "busy", "cmd", g_jog_seq, 0, "manual");
+            publishMotion(n, "busy", "cmd", jogs[n].seq, 0, "manual");
             Serial.printf("[jog] %d 号仓 手动推杆 展开 job=%s\n", n, job_id);
             publishSorterAck(n, job_id, "push", "ok", "jog");
         } else if (action && !strcmp(action, "reset")) {
-            bool had = (g_count > 0 || g_pendN > 0 || push.active);
+            bool had = (g_count > 0 || g_pendN > 0 || push.active || jogAnyActive());
             g_head = 0; g_count = 0; g_pendN = 0;
             push.active = false;
+            for (int n = 1; n <= 3; n++) jogs[n].active = false;  // 取消在途手动推杆
             servoRestAll();
             publishSorterAck(n, job_id, "reset", "ok", had ? "cancelled" : "idle");
             if (had) publishMotion(n, "ready", "cancel", 0, 0, job_id);

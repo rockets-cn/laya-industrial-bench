@@ -588,7 +588,7 @@ PAGE = """<!doctype html>
 <option value="sim">模拟（本地孪生）</option>
 <option value="device">真实（物理设备）</option>
 </select></span>
-<span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有活 400ms / 待机 600ms)</span>
+<span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有运动 120ms / 待机 500ms)</span>
 </div>
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
   <span style="font-size:11.5px;color:#8a91a0">手动控制 <span style="color:#5b6270">（真实源 · 点即真机动作 · 网页同步）:</span></span>
@@ -658,12 +658,18 @@ window.addEventListener('unhandledrejection',e=>{const m=$('micstate');
 async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(d)});
  if(!r.ok)throw new Error((await r.text()).slice(0,300));return r.json()}
 // ---- 手动控制 (真实源): 传送带 起/停 + 3 推杆 手动推出, 走网关原子端点, 网页随 /twin 同步 ----
-function updateCtlButtons(src){
+function updateCtlButtons(src, sorters){
  const can=(src==='device');
  const cb=document.getElementById('btnBelt');
  if(cb){cb.disabled=!can;
   cb.textContent=(can?(lastConveyor==='running'?'⏸ 停止传送带':'▶ 启动传送带'):'⏯ 传送带 (切真实源可用)');}
- document.querySelectorAll('.pushbtn').forEach(b=>{b.disabled=!can;});
+ // 推杆按钮: 随 /twin motion (busy=行程中) 实时显示「推杆中」并禁用; 完成后自动恢复
+ document.querySelectorAll('.pushbtn').forEach(b=>{
+  const n=+b.dataset.n;
+  const busy=(can&&sorters)?(sorters[n-1]&&sorters[n-1].state==='busy'):false;
+  b.disabled=!can||busy;
+  b.textContent=busy?('⏳ 推杆 '+n+' 中'):('🔧 推杆 '+n);
+ });
 }
 async function beltToggle(){
  if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
@@ -678,13 +684,14 @@ async function beltToggle(){
 }
 async function pushBin(n){
  if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
- const b=document.querySelector('.pushbtn[data-n="'+n+'"]');if(b)b.disabled=true;
  try{
   const r=await fetch('/api/push',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sorter:n})});
   const j=await r.json().catch(()=>({}));
-  if(!r.ok)alert('推杆 '+n+' 未成功: '+(j.note||j.error||('HTTP '+r.status)));
+  if(!r.ok){
+   // busy (同仓/自动推在途) 静默: 按钮已由 /twin motion 同步显示「推杆中」, 不弹窗; 仅硬错误才提示
+   if(!(j.note&&j.note.indexOf('忙')>=0))alert('推杆 '+n+' 未成功: '+(j.note||j.error||('HTTP '+r.status)));
+  }
  }catch(e){alert('推杆 '+n+' 失败: '+e.message);}
- setTimeout(()=>{if(b)b.disabled=false;},1800); // 推杆行程 ~1.5s; 网页随 /twin motion (busy=伸出/ready=收回) 同步
 }
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
@@ -919,10 +926,11 @@ async function refreshTwin(){
     status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
- updateCtlButtons(src); // 手动控制按钮: 真实源可用 + 传送带按钮随带态改文案
+ updateCtlButtons(src, st); // 手动控制按钮: 真实源可用 + 推杆随 motion 显示「推杆中」 + 传送带随带态改文案
  // 模型 vs 实际对照表: 仅 jobs 变化时重渲 (网关 /jobs 逐批次 命令 vs 执行 vs HL)
  {const jsig2=JSON.stringify(d.jobs||[]);if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
- scheduleTwin(src==='sim'?250:300); // 模拟源 250ms: sim armed 窗口仅 350ms, 轮询必须更密才不漏首件全旅程; 真实源 300ms (配合固件 IR 沿即时上报, 降低 IR 反馈延迟)
+ const anyBusy=st.some(s=>s.state==='busy')||(src==='device'&&lastConveyor==='running');
+ scheduleTwin(src==='sim'?250:(anyBusy?120:500)); // 有运动(推杆忙/带在跑)→120ms 紧跟真机; 待机 500ms; 模拟 250ms
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
