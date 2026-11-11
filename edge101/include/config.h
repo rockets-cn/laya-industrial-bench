@@ -138,6 +138,10 @@ static const uint32_t SERVO_ITEM_GAP_MS = 3500; // 件间间隔 (>= 扫掠时长
 //   展开 = 270->-80, 收回 = -80->270. hold=0 时无额外驻留 (在线 hold 可调).
 static const uint32_t SERVO_EJECT_MOVE_MS   = 600;  // 270->-80 展开行程 (停带窗口内)
 static const uint32_t SERVO_RETRACT_MOVE_MS = 900;  // -80->270 收回行程
+// 手动推杆 jog (网页按钮 / 测试) 专用行程: 比真推短, 让「推杆中」按钮停留更短.
+// 展开仍 < 真推 600ms (舵机仍能完全展开), 仅网页手动测试用, 不影响自动推杆.
+static const uint32_t SERVO_JOG_EJECT_MS   = 400;  // 手动 jog 展开
+static const uint32_t SERVO_JOG_RETRACT_MS = 600;  // 手动 jog 收回 (合计 ~1000ms)
 
 // ---------- 板载以太网 (RJ45, 网线直连) ----------
 // PHY: IP101 (TLK110 驱动), 地址 1; MDC=GPIO4 MDIO=GPIO13 PWR=GPIO2,

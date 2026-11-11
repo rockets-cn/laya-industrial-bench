@@ -348,13 +348,13 @@ static void jogTick() {
         if (!jogs[n].active) continue;
         uint32_t now = millis();
         if (jogs[n].phase == 0) {          // 展开行程: 270 -> -80
-            if (now - jogs[n].phase_at >= SERVO_EJECT_MOVE_MS) {
+            if (now - jogs[n].phase_at >= SERVO_JOG_EJECT_MS) {
                 jogs[n].phase = 2;
                 jogs[n].phase_at = now;
                 servoWrite(n, SERVO_REST_DEG);   // 到位即收回
             }
         } else {                           // 收回行程: -80 -> 270
-            if (now - jogs[n].phase_at >= SERVO_RETRACT_MOVE_MS) {
+            if (now - jogs[n].phase_at >= SERVO_JOG_RETRACT_MS) {
                 jogs[n].active = false;
                 publishMotion(n, "ready", "cmd", jogs[n].seq, 0, "manual");
                 Serial.printf("[jog] %d 号仓 手动推杆完成\n", n);
