@@ -85,10 +85,20 @@
   </g>
   <!-- 滚轮: 辐条随带面线速度旋转 -->
   <circle cx="70" cy="400" r="16" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <line id="gla-spoke-1" x1="70" y1="400" x2="70" y2="384" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5" opacity="0.6"/>
+  <g id="gla-spoke-1" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5" opacity="0.6">
+    <line x1="70" y1="400" x2="70" y2="385"/>
+    <line x1="70" y1="400" x2="85" y2="400"/>
+    <line x1="70" y1="400" x2="70" y2="415"/>
+    <line x1="70" y1="400" x2="55" y2="400"/>
+  </g>
   <circle cx="70" cy="400" r="3" fill="var(--gate-fg,#e6e6e6)"/>
   <circle cx="1110" cy="400" r="16" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
-  <line id="gla-spoke-2" x1="1110" y1="400" x2="1110" y2="384" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5" opacity="0.6"/>
+  <g id="gla-spoke-2" stroke="var(--gate-fg,#e6e6e6)" stroke-width="1.5" opacity="0.6">
+    <line x1="1110" y1="400" x2="1110" y2="385"/>
+    <line x1="1110" y1="400" x2="1125" y2="400"/>
+    <line x1="1110" y1="400" x2="1110" y2="415"/>
+    <line x1="1110" y1="400" x2="1095" y2="400"/>
+  </g>
   <circle cx="1110" cy="400" r="3" fill="var(--gate-fg,#e6e6e6)"/>
 
   <!-- 物品 ×3 (脚本驱动: 3 号口顺序, 件距 270px = 0.9m).
@@ -420,7 +430,7 @@
     lastFrameMs=now;
     var tx=(beltT/1000*VJ)%80;
     get('gla-treads').setAttribute('transform','translate('+tx.toFixed(2)+',0)');
-    var ang=((beltT/1000*3.6)%360); // 轮辐随带面时间缓慢旋转 (冻结即停)
+    var ang=((beltT/1000*VJ)/16*57.2958)%360; // 轮辐随带面线速度旋转 (无滑移=带速/轮半径, 与循环演示同速; 停带即冻结)
     get('gla-spoke-1').setAttribute('transform','rotate('+ang.toFixed(1)+' 70 400)');
     get('gla-spoke-2').setAttribute('transform','rotate('+ang.toFixed(1)+' 1110 400)');
     // 环境供血 (仅模拟源): 无真实任务时随机物料上带 — 间距不均匀 (1.5s~5.5s),
