@@ -885,12 +885,12 @@ async function refreshTwin(){
   scheduleTwin(1500);
   return;
  }
- const st=[{state:'ready',ts_ms:0},{state:'ready',ts_ms:0},{state:'ready',ts_ms:0}];
+ const st=[{state:'ready',ts_ms:0,manual:false},{state:'ready',ts_ms:0,manual:false},{state:'ready',ts_ms:0,manual:false}];
  (d.events||[]).forEach(ev=>{
   if(!ev||ev.state==null)return; // reset/cancel 只记 via 无 state, 不改状态
   if((ev.src||'device')!==src)return; // 数据源过滤: 只还原所选来源的运动事件
   const n=ev.sorter;
-  if(n>=1&&n<=3)st[n-1]={state:ev.state,ts_ms:Date.parse(ev.ts)||0};
+  if(n>=1&&n<=3)st[n-1]={state:ev.state,ts_ms:Date.parse(ev.ts)||0,manual:(ev.job_id==='manual')};
  });
  const evs=(d.events||[]).filter(ev=>{if(!ev)return false;return (ev.src||'device')===src;}),last=evs[evs.length-1];
  // 模拟源: 传送带持续运行 (孪生画面环境供血, 随机物料完整过相机/光门/拨入);
