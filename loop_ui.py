@@ -420,6 +420,8 @@ async def twin():
         out["active_job"] = h.get("active_job")
         out["queue"] = h.get("queue") or 0
         out["conveyor"] = h.get("conveyor")  # 传送带实时态 (真实源按此显示带子运行)
+        out["ir_present"] = bool(h.get("ir_present", False))  # 红外 T0 实时检测 (同步反馈到孪生)
+        out["ir_edge_count"] = int(h.get("ir_edge_count", 0))  # 红外 T0 上升沿累计 (事件驱动, 供孪生锁存不漏)
         with urllib.request.urlopen(GATEWAY_URL + "/motion", timeout=0.4) as r:
             m = json.loads(r.read().decode())
         out["events"] = list(m.get("motion", []))[-8:]
@@ -821,11 +823,11 @@ async function refreshTwin(){
  if(jsig!==lastGlaJobSig){lastGlaJobSig=jsig;lastGlaJobList=merged;if(gla)gla.setJob(merged);}
  const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})${(last.of>0&&last.item>0)?` · 第${last.item}/${last.of}件`:''}`
   :'数字孪生在线 · 等待事件…';
- const sig=JSON.stringify([src,beltOn,d.conveyor||'',d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'',(src==='device'&&vev)?vev.ts:'']);
+ const sig=JSON.stringify([src,beltOn,d.conveyor||'',d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'',!!d.ir_present,d.ir_edge_count||0,(src==='device'&&vev)?vev.ts:'']);
  if(sig!==twinSig){
   twinSig=sig;
   if(gla){gla.setSrc&&gla.setSrc(src);
-   gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
+   gla.setTwin({online:true,belt_mps:d.belt_mps||1,belt_on:beltOn,ir_present:!!d.ir_present,ir_edge_count:d.ir_edge_count||0,sorters:st,t0:Date.now()-(window.performance?performance.now():0),
     active_job:d.active_job||null,
     vision_label:visionLabel,vision_until:visionUntil,
     vision_last:vev?{ts_ms:Date.parse(vev.ts)||0,frame_id:vev.frame_id||'',yard:vev.yard||0}:null,
@@ -834,7 +836,7 @@ async function refreshTwin(){
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
  // 模型 vs 实际对照表: 仅 jobs 变化时重渲 (网关 /jobs 逐批次 命令 vs 执行 vs HL)
  {const jsig2=JSON.stringify(d.jobs||[]);if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
- scheduleTwin(src==='sim'?250:600); // 模拟源 250ms: sim armed 窗口仅 350ms, 轮询必须更密才不漏首件全旅程; 真实源 600ms
+ scheduleTwin(src==='sim'?250:300); // 模拟源 250ms: sim armed 窗口仅 350ms, 轮询必须更密才不漏首件全旅程; 真实源 300ms (配合固件 IR 沿即时上报, 降低 IR 反馈延迟)
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',

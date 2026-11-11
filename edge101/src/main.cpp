@@ -732,6 +732,12 @@ void loop() {
 
     // 红外: 沿判 (物品前缘到 IR = T0).
     bool pres = irItemPresent();
+    // 实时反馈: IR 态一变就立即发 ir_present (不等 500ms 遥测周期) — 数字孪生同步更快
+    if (pres != g_ir_prev && mqtt.connected()) {
+        mqtt.publish(sort::conveyorTeleTopic().c_str(),
+                     sort::conveyorTele(conv.state(), conv.speed_mps,
+                                        stepsLive(), "", "", pres ? 1 : 0).c_str(), false);
+    }
     if (pres && !g_ir_prev) {
         g_ir_prev = true;
         g_ir_count++;
@@ -762,7 +768,7 @@ void loop() {
         lastTeleMs = millis();
         mqtt.publish(sort::conveyorTeleTopic().c_str(),
                      sort::conveyorTele(conv.state(), conv.speed_mps,
-                                        stepsLive(), "").c_str(), false);
+                                        stepsLive(), "", "", pres ? 1 : 0).c_str(), false);
         for (int n = 1; n <= 3; n++)
             mqtt.publish(sort::sorterTeleTopic(n).c_str(),
                          sort::sorterTele(curCmd.active && curCmd.bin == n ? "busy" : "ready",

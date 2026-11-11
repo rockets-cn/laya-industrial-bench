@@ -146,6 +146,8 @@
   <line id="gla-gate-1" x1="380" y1="352" x2="380" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0"/>
   <line id="gla-gate-2" x1="650" y1="352" x2="650" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0"/>
   <line id="gla-gate-3" x1="920" y1="352" x2="920" y2="448" stroke="var(--gate-acc,#fb923c)" stroke-width="3" opacity="0"/>
+  <!-- IR T0 挡光叠加 (x=230): 物品过红外 T0 时亮 — 红外检测实时反馈 (脚本控 opacity, 加粗+圆头更醒目) -->
+  <line id="gla-ir" x1="230" y1="350" x2="230" y2="450" stroke="var(--gate-acc,#fb923c)" stroke-width="5" stroke-linecap="round" opacity="0"/>
 
   <!-- 推杆 ×3 (舵机驱动): x=530 / 800 / 1070, 机座在带面下侧; 杆端 y: 收回 438 / 推出 402 -->
   <g>
@@ -258,6 +260,7 @@
     var best=-1,bmsg=DEF;
     var camOn=false;
     for(var j=0;3>j;j++){if(t>=TC[j]){if(TC[j]+0.5>t)camOn=true;}}
+    var irOn=0;
     for(var i=0;3>i;i++){
       var s=S[i],tg=TG[i],td=TD[i],tc=TC[i];
       var op=0,x=X0,y=400;
@@ -282,6 +285,9 @@
         else if(tg+18/V+0.25>=t)go=1-(t-tg-18/V)/0.25;
       }
       get('gla-gate-'+(i+1)).setAttribute('opacity',go.toFixed(2));
+      // IR T0 挡光: 物品整体在 x=230 光束内 (前沿过线 → 后沿出梁) — 红外检测实时反馈
+      var irT=S[i]+(IRX-9-X0)/V;
+      if(t>=irT){if(irT+18/V>=t)irOn=1;}
       // 推杆
       var ry=rodY(t,i),rod=get('gla-rod-'+(i+1));
       rod.setAttribute('y2',ry.toFixed(1));
@@ -296,6 +302,8 @@
       ev(tg,'物品 '+(i+1)+' 过 IR(T0) → 带速外推 → 到仓 '+(i+1)+' 瞬停推杆（hold=0 · 时间 2:1 放慢）');
       ev(td,'推杆 '+(i+1)+' 收回 → 物品 '+(i+1)+' 拨入 '+(i+1)+' 号料道 ✓');
     }
+    // IR T0 实时反馈: 物品过 x=230 时亮 (红外检测)
+    get('gla-ir').setAttribute('opacity',irOn?'1':'0');
     // 相机识别闪烁 (任一物品过相机 0.5s 内)
     get('gla-fan').setAttribute('opacity',camOn?'0.35':'0.10');
     get('gla-cam').setAttribute('stroke',camOn?'var(--gate-acc,#fb923c)':'var(--gate-bd,#262b36)');
@@ -338,14 +346,24 @@
   var VJ=140;                    // 带面/物品行走速度 px/s (2:1 放慢口径; 带纹与物品同速)
   var BEND=1140;                 // 带面右端 (下游出口): 无指令物品直通从此处离场
   var CAMX=150;                  // HuskyLens 2 相机 x (识别内容显示位置)
+  var IRX=230;                   // 红外 T0 位置 x (检测实时反馈: 物品过此线 = IR 触发)
   var visLabel='', visUntil=0;   // 相机识别显示: 内容 + 墙钟截止
   var gateLit=[false,false,false]; // 本帧: 各门是否有物品在过门时间窗 (多物品 OR, 循环后统一点亮)
+  var irLit=false;                 // 本帧: 是否有物品过 IR T0 (x=230) — 红外检测实时反馈
+  var irLitUntil=0;                // IR 锁存截止 (墙钟): ir_present/沿 一变 true 就亮并保持 ~0.3s (过线窗口短, 锁存保证看得清)
+  var lastIrEdgeCount=-1;          // 已见过的 IR 上升沿计数 (ir_edge_count): 一增加就锁存 (事件驱动, 轮询错过瞬时态也不漏)
   function gateOr(j){ // 物品过门时间窗 (带面时间: 门前 200ms → 门后 900ms, 掉帧不丢)
     for(var gk=0;3>gk;gk++){
       if(G[gk]>=j.x0){
         var tc=j.b0+(G[gk]-j.x0)/VJ*1000; // 过门时刻 (带面时间)
         if(beltT>=tc-200){if(tc+900>=beltT)gateLit[gk]=true;}
       }
+    }
+  }
+  function irOr(j){ // 物品过 IR T0 (x=230) 时间窗 (带面时间: 线前 200ms → 线后 700ms, 掉帧不丢)
+    if(IRX>=j.x0){
+      var tc=j.b0+(IRX-j.x0)/VJ*1000;
+      if(beltT>=tc-200){if(tc+700>=beltT)irLit=true;}
     }
   }
   function startJourney(i,xFrom,now,kind){
@@ -397,7 +415,8 @@
   function jmat(i){var jj=journey[i];return jj?(jj.mat?jj.mat:jobMats[i]):jobMats[i];} // 旅程物料: 供血项自带, 任务项取注入
   function twinFrame(now){
     var td=twinData||{};
-    gateLit[0]=false;gateLit[1]=false;gateLit[2]=false; // 多物品 OR 聚合: 每帧从头累加
+    gateLit[0]=false;gateLit[1]=false;gateLit[2]=false; // 本帧重置: 过门时间窗 OR 聚合 (多物品)
+    irLit=false; // 本帧重置: 物品过 IR T0 (x=230) 即置 true (红外检测实时反馈)
     // 推料窗口: 任一旅程处于 armed/busy (推杆推入中) → 全带停止, 推完才恢复
     var pushing=false;
     for(var pi=0;3>pi;pi++){
@@ -455,6 +474,8 @@
     for(var i=0;3>i;i++){
       var si=td.sorters?(td.sorters[i]||{}):{};
       var st=si.state||'ready', ts=si.ts_ms||0;
+      // IR 检测实时反馈: 'busy' (via ir_due) = IR 刚触发推杆 → 本帧亮 IR T0 (x=230)
+      if('busy'===st){irLit=true;}
       setVariant(i,jmat(i)?jmat(i).m:'block'); // 物品图标随旅程物料切换 (任务/供血)
       var rod=get('gla-rod-'+(i+1));
       if('armed'===st){ // 光门落沿事件 (新的) → 启动回放
@@ -524,6 +545,7 @@
             if(!j.pass)showLabel(i);
           }
           gateOr(j); // 光门虚线: 物品经过即亮 (本帧 OR 聚合, 循环后统一点亮, 多物品互不抹除)
+          irOr(j);   // IR T0: 物品过 x=230 即亮 (红外检测实时反馈)
           if(!msgJ){
             if(j.pass)msgJ=nm+' 沿带面行走 · 无下发指令直通';
             else msgJ=nm+' 沿带面行走 → '+(i+1)+'号仓 (HuskyLens 2 识别)';
@@ -614,6 +636,14 @@
       else if(gOn||gateLit[gk]){gg.setAttribute('opacity','0.80');gg.setAttribute('stroke','var(--gate-acc,#fb923c)');}
       else{gg.setAttribute('opacity','0');gg.setAttribute('stroke','var(--gate-acc,#fb923c)');}
     }
+    // IR T0 实时反馈: 物品过 x=230 或 固件上报 ir_present (红外检测同步, 不依赖分拣指令)
+    // 锁存: 亮并保持 ~0.3s。双触发: ① IR 上升沿计数 ir_edge_count 一增加 (事件驱动, 轮询错过瞬时态也不漏); ② ir_present 瞬时态
+    var ecount=(td.ir_edge_count||0);
+    if(lastIrEdgeCount>=0){if(ecount>lastIrEdgeCount){irLitUntil=now+300;}}
+    lastIrEdgeCount=ecount;
+    if(td.ir_present){irLitUntil=now+300;}
+    var irOnDev=irLit; if(irLitUntil>now){irOnDev=true;}
+    get('gla-ir').setAttribute('opacity',irOnDev?'0.85':'0');
     // 相机识别显示 (HuskyLens 2 处: 物料名 + 去向)
     // 模拟源: 物品过相机时显示任务物料; 真实源: 按"实际看到的" —
     // 页面传入的最近视觉事件 (td.vision_label + 有效期 vision_until)

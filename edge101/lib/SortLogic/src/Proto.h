@@ -35,16 +35,18 @@ inline std::string ackJson(const char* job_id, const char* action,
            ",\"ts\":" + jsonStr(ts) + "}";
 }
 
-// 传送带遥测: {state, speed_mps, steps_total, ts}
+// 传送带遥测: {state, speed_mps, steps_total, ts, note, ir_present}
+// ir_present: 红外 T0 (GPIO34) 实时"物品在 IR"态 (0/1), 供数字孪生同步反馈 (不依赖分拣指令)
 inline std::string conveyorTele(const char* state, double speed,
                                 uint64_t steps, const char* ts = "",
-                                const char* note = "") {
+                                const char* note = "", int ir_present = 0) {
     char speed_s[32];
     snprintf(speed_s, sizeof(speed_s), "%.2f", speed);
     return "{\"state\":" + jsonStr(state) + ",\"speed_mps\":" + speed_s +
            ",\"steps_total\":" + std::to_string(steps) +
            ",\"ts\":" + jsonStr(ts) +
-           ",\"note\":" + jsonStr(note ? note : "") + "}";
+           ",\"note\":" + jsonStr(note ? note : "") +
+           ",\"ir_present\":" + std::to_string(ir_present ? 1 : 0) + "}";
 }
 
 // 分拣器遥测: {state, diverted_total, last_material, ts}

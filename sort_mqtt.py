@@ -231,6 +231,8 @@ class SortGateway:
         self.active_lock = threading.Lock()
         self.dev_state = {}                        # {"conveyor": ..., "sorter1": ...}
         self.conveyor_note = ""                    # 最近一次 conveyor 遥测 note (带健康监测原因)
+        self.ir_present = False                    # 红外 T0 实时"物品在 IR"态 (固件每 500ms 上报 + 沿即时)
+        self.ir_edge_count = 0                     # 红外 T0 上升沿累计 (物体过 IR 次数): 事件驱动, 绝不漏, 供孪生锁存
         self._pending = {}                         # (kind, name, job_id) -> ack 槽位
         self._pending_lock = threading.Lock()
         self._rr_counter = {}                      # round_robin 每物料轮转计数
@@ -294,6 +296,10 @@ class SortGateway:
             if m.group(2) == "telemetry":
                 self.dev_state["conveyor"] = payload.get("state", "unknown")
                 self.conveyor_note = payload.get("note") or ""
+                _new_ir = bool(payload.get("ir_present", False))
+                if _new_ir and not self.ir_present:
+                    self.ir_edge_count += 1   # 上升沿: 一件物体过 IR (事件驱动记录, 绝不漏)
+                self.ir_present = _new_ir
                 if self.dev_state["conveyor"] == "fault":
                     self._latch_conveyor_fault()
             else:
@@ -754,7 +760,11 @@ class SortGateway:
                                       # 传送带实时态 (running/stopped/paused/fault): 数字孪生按实际带态显示
                                       "conveyor": gw.dev_state.get("conveyor", "unknown"),
                                       # 带健康监测原因 (固件 BeltWatch: belt ok / belt slip / belt jam)
-                                      "conveyor_note": gw.conveyor_note})
+                                      "conveyor_note": gw.conveyor_note,
+                                      # 红外 T0 实时"物品在 IR"态 (0/1): 数字孪生同步反馈
+                                      "ir_present": gw.ir_present,
+                                      # 红外 T0 上升沿累计 (物体过 IR 次数): 事件驱动, 供孪生锁存不漏
+                                      "ir_edge_count": gw.ir_edge_count})
                 elif self.path == "/stats":
                     s = gw.stats.summary()
                     s["fault"] = gw.fault
