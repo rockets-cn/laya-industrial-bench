@@ -588,7 +588,7 @@ PAGE = """<!doctype html>
 <option value="sim">模拟（本地孪生）</option>
 <option value="device">真实（物理设备）</option>
 </select></span>
-<span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有运动 120ms / 待机 500ms)</span>
+<span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有运动 70ms / 待机 500ms, 点击即时刷新)</span>
 </div>
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
   <span style="font-size:11.5px;color:#8a91a0">手动控制 <span style="color:#5b6270">（真实源 · 点即真机动作 · 网页同步）:</span></span>
@@ -681,6 +681,7 @@ async function beltToggle(){
   if(!r.ok)alert('传送带 '+action+' 未成功: '+(j.note||j.error||('HTTP '+r.status)));
  }catch(e){alert('传送带控制失败: '+e.message);}
  if(b)b.disabled=false; // 网页随 /twin 带态 (conveyor=running/stopped) 自动改文案
+ scheduleTwin(0); // 立即轮询一次: 按钮文案(启动/停止) + 带态即时更新
 }
 async function pushBin(n){
  if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
@@ -692,6 +693,7 @@ async function pushBin(n){
    if(!(j.note&&j.note.indexOf('忙')>=0))alert('推杆 '+n+' 未成功: '+(j.note||j.error||('HTTP '+r.status)));
   }
  }catch(e){alert('推杆 '+n+' 失败: '+e.message);}
+ scheduleTwin(0); // 立即轮询一次: 推杆按钮「推杆中」+ SVG 动画即时更新, 不等下一 tick
 }
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
@@ -930,7 +932,7 @@ async function refreshTwin(){
  // 模型 vs 实际对照表: 仅 jobs 变化时重渲 (网关 /jobs 逐批次 命令 vs 执行 vs HL)
  {const jsig2=JSON.stringify(d.jobs||[]);if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
  const anyBusy=st.some(s=>s.state==='busy')||(src==='device'&&lastConveyor==='running');
- scheduleTwin(src==='sim'?250:(anyBusy?120:500)); // 有运动(推杆忙/带在跑)→120ms 紧跟真机; 待机 500ms; 模拟 250ms
+ scheduleTwin(src==='sim'?250:(anyBusy?70:500)); // 有运动(推杆忙/带在跑)→70ms 紧跟真机; 待机 500ms; 模拟 250ms
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
