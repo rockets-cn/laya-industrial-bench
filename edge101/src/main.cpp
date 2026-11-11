@@ -90,6 +90,10 @@ static double  g_ir_spacing = IR_SPACING_MM;  // 推杆间距
 static bool    g_ir_low     = IR_ACTIVE_LOW;  // 接近=低电平 (默认 NPN)
 static uint32_t g_hold_ms   = 0;             // hold=0 定案 (在线 hold 可调)
 static double  g_confmin    = HL_CONFMIN;    // HuskyLens 置信度门槛
+// 各仓到 IR 触点的实际距离 (标定定案; 非等间距: 1→2=62mm, 2→3=57mm).
+// 带速已标定=准(52.49mm/s, 过冲系数1.000), 故落点=精确等于 d.
+// 下标=仓号(1/2/3), [0] 占位. 取代原等间距 d1+(bin-1)*spacing.
+static double  g_bin_dist_mm[4] = { 0.0, BIN_DIST_MM_1, BIN_DIST_MM_2, BIN_DIST_MM_3 };
 
 // 红外 (GPIO34, 位置基准 T0).
 static uint32_t g_ir_count = 0;              // 累计过 IR 物品数 (遥测/顺序对账)
@@ -298,7 +302,9 @@ static void pushTick() {
 static void onIrEdge() {
     if (!curCmd.active || push.active || push.pend) return;
     if (conv.st != sort::DevState::kRunning || conv.speed_mps <= 0.0) return;
-    double d_bin = g_ir_d1_mm + (curCmd.bin - 1) * g_ir_spacing;
+    double d_bin = (curCmd.bin >= 1 && curCmd.bin <= 3)
+                       ? g_bin_dist_mm[curCmd.bin]
+                       : g_ir_d1_mm + (curCmd.bin - 1) * g_ir_spacing;
     uint32_t now = millis();
     uint32_t at = sort::Track::predictGateMs(now, 0.0, d_bin, conv.speed_mps);
     if (at <= now) {
@@ -522,9 +528,10 @@ static void onSerialCmd(const String& line) {
         g_diverted[n - 1]++;
         Serial.printf("push %d done (manual; 带子未动)\n", n);
     } else if (line == "ir") {
-        Serial.printf("ir: pin=GPIO%d count=%lu present=%d pol=接近%s d1=%.0fmm spacing=%.0fmm\n",
+        Serial.printf("ir: pin=GPIO%d count=%lu present=%d pol=接近%s | 仓距离 1=%.0f 2=%.0f 3=%.0f mm\n",
                       IR_PIN, (unsigned long)g_ir_count, irItemPresent() ? 1 : 0,
-                      g_ir_low ? "low" : "high", g_ir_d1_mm, g_ir_spacing);
+                      g_ir_low ? "low" : "high",
+                      g_bin_dist_mm[1], g_bin_dist_mm[2], g_bin_dist_mm[3]);
     } else if (line.startsWith("irset pol")) {
         g_ir_low = !g_ir_low;
         Serial.printf("irset pol: 接近=%s\n", g_ir_low ? "low" : "high");

@@ -5,7 +5,7 @@
   "http_port": 8123,
   "sorter_count": 3,
   "conveyor_id": "line1",
-  "conveyor_speed_mps": 1.0,
+  "conveyor_speed_mps": 0.0525,
   "ack_timeout_s": 3.0,
   "ack_retries": 2,
   "divert_timeout_per_item_s": 1.0,

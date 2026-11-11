@@ -61,8 +61,13 @@ static const uint32_t HL_SWITCH_WAIT_MS   = 5000;  // 切算法后强制等待 (
 // 物品前缘到 IR = T0; 按带速匀速外推预测到各仓推杆时刻 -> 到点瞬停 + 推杆入库.
 // 极性默认接近=LOW (NPN 开漏); 在线 `irset pol` 可翻.
 static const uint8_t IR_PIN        = 34;
-static const double  IR_DIST1_MM   = 120.0;   // IR -> 1号仓推杆 (占位, irset 在线改)
-static const double  IR_SPACING_MM = 52.0;    // 推杆间距 (spset 在线改)
+// 各仓到 IR 触点的实际距离 (标定定案 2026-11-11, 真机 9 连测; 非等间距 1→2=62, 2→3=52).
+// 带速标定=准 (52.49mm/s, 过冲系数1.000), 故落点=精确等于 d. main.cpp 用这三个值.
+static const double  BIN_DIST_MM_1 = 125.0;   // 1号仓
+static const double  BIN_DIST_MM_2 = 187.0;   // 2号仓
+static const double  BIN_DIST_MM_3 = 239.0;   // 3号仓
+static const double  IR_DIST1_MM   = BIN_DIST_MM_1;   // legacy (irset 在线默认)
+static const double  IR_SPACING_MM = 52.0;            // legacy (irset/spset 显示; 选仓已按 BIN_DIST 查表)
 static const bool    IR_ACTIVE_LOW = true;    // 接近 = 低电平 (默认 NPN)
 
 // ---------- 步进电机 (42 两相 + MKS SERVO42C 闭环 PCBA, 传送带) ----------
