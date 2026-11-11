@@ -108,8 +108,9 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
 .venv/bin/python jev_api.py    # 或 systemctl --user start laya-jev-api
 ollama serve                   # 或 systemctl --user start ollama-serve
 
-# 3) Web 数字孪生控制台（:8002）— 置顶常开分拣线光门运行示意 (数字孪生:
+# 3) Web 数字孪生控制台（:8002）— 置顶常开分拣线运行示意 (数字孪生:
 #    模拟/真实数据源, 真实源在 HuskyLens 上方显示摄像头实时画面)、
+#    3 推杆 + 传送带起/停手动控制按钮 (→ 网关 → 固件, 网页/真机同步)、
 #    语音/文本指令、麦克风弹出授权 + 按住说话/录音识别 (唤醒词可选)、全链路 trace
 .venv/bin/python loop_ui.py    # 或 systemctl --user start laya-loop-ui
 
@@ -170,7 +171,7 @@ journalctl --user -u laya-loop-ui -f
 | `bench_pipeline.py` | LLM 意图整理 → Laya 终审 对比管线（`llm_json`/`http_post` 工具函数） |
 | `bench_jev.py` / `bench_split.py` / `bench_oob.py` / `bench_voice.py` | API 基准 / 单请求多问 vs 拆分 A/B / 超纲验收 / 全语音管线 |
 | `jev_api.py` | Jev 兼容 HTTP API（`:8000`，`POST /v1/systemone`；模型含 `jev-fruits` 微调模型） |
-| `loop_ui.py` | Web 数字孪生控制台（`:8002`）：置顶常开分拣线光门运行示意（数字孪生: 模拟/真实数据源, 真实源在 HuskyLens 上方显示摄像头实时画面, `/cam/stream` 代理 :8125 MJPEG）、领域切换（水果/方块/混合/仓库分拣）、预设、麦克风弹出菜单授权+按住说话/录音识别（唤醒词可选开关）、全链路 trace；两段式语音（`/asr` 先出识别文字, `/run` 复用不重复识别, 失败回落单发）；纯转发不载模型 |
+| `loop_ui.py` | Web 数字孪生控制台（`:8002`）：置顶常开分拣线运行示意（数字孪生: 模拟/真实数据源, 真实源在 HuskyLens 上方显示摄像头实时画面, `/cam/stream` 代理 :8125 MJPEG, **3 推杆 + 传送带起/停手动控制按钮** 走 `/api/{push,belt}` 代理网关→固件、网页/真机同步、手动 jog 不误触发 IR T0/相机）、领域切换（水果/方块/混合/仓库分拣）、预设、麦克风弹出菜单授权+按住说话/录音识别（唤醒词可选开关）、全链路 trace；两段式语音（`/asr` 先出识别文字, `/run` 复用不重复识别, 失败回落单发）；纯转发不载模型 |
 | `teacher_offline.py` | 水果域离线教师：qwen4b 造语料 + 交叉标注 + Laya 微调 |
 | `teacher_blocks.py` | 方块域离线教师：生成 + 交叉标注 + 规则层审计 → `teacher/blocks_corpus.jsonl` |
 | `teacher/` | 语料与训练/评测数据（jsonl） |
@@ -188,7 +189,7 @@ journalctl --user -u laya-loop-ui -f
 | `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
 | `tests/test_sort_mqtt.py` | 分拣网关 E2E 52 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
-| `edge101/docs/gate_layout_anim.svg` | 分拣线光门运行示意（俯视 · 动画版 · 数字孪生双模式）：3 路时序光门装在各推杆前侧/上游；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、45° 料道拨入, 每轮随机 3 种物料），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源 + 逐件件号, 页面可按 模拟/真实 数据源过滤；任务下发后逐件回放 带首→相机→光门→拨入 全旅程；模拟源无指令时环境供血: 随机物料直通 (过光门不推, 带尾离场), 收到指令才拨入指定仓库, 不 /dispatch 不记台账）；物品 5 种内嵌矢量物料图标 + 任务/供血料道标签（`__gla.setJob`/`__gla.setSrc` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
+| `edge101/docs/gate_layout_anim.svg` | 分拣线运行示意（俯视 · 动画版 · 数字孪生双模式 · 网页可手动控制）：3 路推杆 + 相机在带首（光门/料道视觉已精简, 仓库标识用「仓 N · IR→推杆=dN」）；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、每轮随机 3 种物料），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源 + 逐件件号, 页面可按 模拟/真实 数据源过滤；任务下发后逐件回放 带首→相机→光门→拨入 全旅程；模拟源无指令时环境供血: 随机物料直通 (过光门不推, 带尾离场), 收到指令才拨入指定仓库, 不 /dispatch 不记台账）；物品 5 种内嵌矢量物料图标 + 任务/供血料道标签（`__gla.setJob`/`__gla.setSrc` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
@@ -220,12 +221,21 @@ journalctl --user -u laya-loop-ui -f
   `python3 -c "import sqlite3; c=sqlite3.connect('data/yard_ledger.db'); c.execute('DELETE FROM moves'); c.commit(); c.execute('VACUUM')"`
   两者都等价于重建空库；删文件方式（`rm data/yard_ledger.db`）必须先停服务再重启, 不推荐。
 
-## 分拣线光门运行示意（动画版 · 数字孪生双模式）
+## 分拣线运行示意（动画版 · 数字孪生双模式 · 网页可手动控制）
 
 `edge101/docs/gate_layout_anim.svg`（静态参考版 `gate_layout.svg` 仍在）：
 
-- **布局**：俯视 3 路分拣器，每路时序光门装在该推杆**前侧（上游）**；相机在带首，
-  推料点→45° 料道拨入各仓库。
+- **布局**：俯视 3 路分拣器，相机在带首；推杆在推料点，物料过红外 T0 后按带速外推
+  到仓、到点瞬停推杆拨入。**视觉已精简 (2026-11-11)**：光门 ×3（虚线光束/传感器方块/
+  到仓停推区标注）与 45° 料道线/箭头/「N号料道」标注已从网页移除（仓库标识改由
+  尺寸线区「仓 N · IR→推杆=dN」提供）；传送带两端滚轮辐条随带面线速度旋转。
+  触发逻辑（光门落沿 / beltT 时间轴 / 全旅程回放）内部不变。
+- **网页手动控制（2026-11-11）**：`loop_ui` 提供 **3 推杆 + 传送带起/停** 按钮，走
+  `/api/{push,belt}` 代理网关 `:8123` → 固件。手动推杆 = 固件按仓独立 jog 状态机
+  （纯伺服展开→收回, 不碰带子/队列, 3 推杆可同时动）, 手动 jog 单独行程定时器
+  （展开 400ms + 收回 600ms ≈ 1.0s, 真机自动推杆仍 600/900）。`/twin` motion 事件
+  带 `job_id="manual"` 标记 → 网页**只动画推杆**（不亮 IR T0 / 不建 journey /
+  不显相机识别 / 不点光门）, 真分拣 (job≠manual, via=ir_due) 行为不变。
 - **双模式**（同一 SVG 内嵌脚本，按 `window.__gla` 钩子切换）：
   - **循环演示**（默认/离线）：rAF 循环按固件口径取真实值再整体 2:1 放慢：
     带速 1.0 m/s（1px≈3.3mm）、光门落沿（物品前沿触光束）→ 推杆 400ms 伸出 →
