@@ -71,18 +71,33 @@ static volatile bool ethUp = false;
 static bool netifReady = false;
 static esp_netif_t* findEthNetif();
 
-// ================= 网关指令 (物料,仓,数量): 逐件执行 =================
-struct Cmd {
-    int bin = 0;
-    String material;
-    int qty = 0;
-    int remaining = 0;
-    String job_id;
-    bool active = false;
-    uint32_t last_prog_ms = 0;   // 最近一次 IR 沿/推件 完成时刻 (无进展超时用)
+// ================= 网关指令 (物料,仓,数量): 队列 + 皮带位置 P 到仓 =================
+// 连续物料 (件间距 <~50mm): 旧"单指令+wall-clock 外推"会吞掉后续件的 IR 沿.
+// 现改: 每件过 IR 时绑到"队列下一件"(FIFO), 按皮带累计位移 P (=steps/SPM, RMT 硬件
+// 累计, 停带时冻结) 预测到仓点 p_mm = P(T0)+d_bin. 停带时长被 P 天然吸收 -> 不累积
+// 误差. pend 按 p_mm 升序瞬停推 (3->1 跳仓等非单调序列也正确: 每件到仓时恰在其仓).
+struct QItem {            // 待过 IR 的件 (网关下发, FIFO; 每 IR 沿消费一条)
+    int bin;              // 目标仓 1..3
+    bool last;            // 该 job 的最后一件 (推完 ack ok)
+    char job[24];
+    char mat[16];
 };
-static Cmd curCmd;
-static uint32_t IR_WAIT_TIMEOUT_MS = 15000;  // 有命令但无 IR 沿/无推件 -> fault
+static const int MAX_Q = 24;
+static QItem g_items[MAX_Q];
+static int g_head = 0, g_count = 0;
+
+struct Pend {             // 已过 IR, 待按皮带 P 到仓 (按 p_mm 升序处理)
+    double p_mm;          // 到仓时的皮带累计位置 (mm) = P(T0)+d_bin
+    int bin;
+    bool last;
+    char job[24];
+    char mat[16];
+};
+static Pend g_pend[MAX_Q];
+static int g_pendN = 0;
+
+static uint32_t g_prog_ms = 0;            // 最近进展 (IR 沿/推件) 时刻, 无进展提示用
+static uint32_t IR_WAIT_TIMEOUT_MS = 15000;
 
 // 在线可调参数 (默认取 config.h, 可被串口命令改).
 static double  g_ir_d1_mm   = IR_DIST1_MM;    // IR -> 1号仓推杆
@@ -99,16 +114,19 @@ static double  g_bin_dist_mm[4] = { 0.0, BIN_DIST_MM_1, BIN_DIST_MM_2, BIN_DIST_
 static uint32_t g_ir_count = 0;              // 累计过 IR 物品数 (遥测/顺序对账)
 static bool     g_ir_prev  = false;          // 上一拍"物品在 IR" 状态 (沿判)
 
-// 待执行/执行中的推件 (IR 沿后, 预测到仓时刻到点: 停带->展开->hold->收回->恢复).
+// 执行中的推件 (P 到仓: 停带->展开->hold->收回->恢复). job/mat/last 随推件带走,
+// 推完据此 ack + motion.
 struct Push {
     bool active = false;      // 正在执行 (停带 + 推杆行程)
-    bool pend  = false;       // 已排程, 未到点
     int  bin   = 0;
-    uint32_t pend_at_ms = 0;  // 到仓(瞬停)时刻
     int  phase = 0;           // 0=展开行程 1=hold 2=收回行程
     uint32_t phase_at = 0;
+    bool last = false;
+    char job[24];
+    char mat[16];
 };
 static Push push;
+static int g_push_seq = 0;    // 推件序号 (motion 事件 item 号)
 
 // 遥测计数.
 static uint32_t g_diverted[3] = {0, 0, 0};   // 各仓累计推件
@@ -237,21 +255,49 @@ static int parseSorterN(const std::string& t) {
     return n;
 }
 
-// ================= 推件 (IR 到仓: 瞬停 -> 展开 -> hold -> 收回 -> 恢复) ========
 // 非阻塞状态机, 每 loop 推进一步. 停带窗口内带子物理停, 物品停在目标仓被拨入料道.
+static void removePend(int i) {
+    for (int k = i; k < g_pendN - 1; k++) g_pend[k] = g_pend[k + 1];
+    g_pendN--;
+}
+// 皮带位置 P 到仓监控 + 执行: 找 p_mm 最小且已到达 (P>=p_mm, 未明显越过) 的 pend ->
+// 瞬停推. P=stepsLive()/SPM (RMT 累计, 停带时冻结). 按 p_mm 升序推 -> 3->1 跳仓也正确.
 static void pushTick() {
-    if (push.pend && !push.active && millis() >= push.pend_at_ms) {
-        push.pend = false;
-        push.active = true;
-        push.phase = 0;
-        push.phase_at = millis();
-        beltHold.sweepStart();      // 停带
-        stopStepRmt();
-        servoWrite(push.bin, SERVO_EJECT_DEG[push.bin - 1]);   // 展开 -80°
-        publishMotion(push.bin, "busy", "ir_due",
-                      curCmd.qty - curCmd.remaining + 1, curCmd.qty,
-                      curCmd.job_id.c_str());
-        Serial.printf("[push] %d 号仓 到点瞬停, 展开推杆\n", push.bin);
+    if (!push.active && g_pendN > 0) {
+        double P = (double)stepsLive() / STEPS_PER_MM;
+        int best = -1;
+        for (int i = 0; i < g_pendN; i++)
+            if (g_pend[i].p_mm <= P &&
+                (best < 0 || g_pend[i].p_mm < g_pend[best].p_mm))
+                best = i;
+        if (best >= 0) {
+            double over = P - g_pend[best].p_mm;
+            if (over > 30.0) {           // 明显越过 -> 漏推, 丢弃不阻塞后续
+                Serial.printf("[push] %d 号仓件越过 %.0fmm(>30) 漏推 job=%s\n",
+                              g_pend[best].bin, over, g_pend[best].job);
+                removePend(best);
+                return;
+            }
+            int bin = g_pend[best].bin;
+            push.active = true;
+            push.bin = bin;
+            push.phase = 0;
+            push.phase_at = millis();
+            push.last = g_pend[best].last;
+            strncpy(push.job, g_pend[best].job, sizeof(push.job) - 1);
+            push.job[sizeof(push.job) - 1] = 0;
+            strncpy(push.mat, g_pend[best].mat, sizeof(push.mat) - 1);
+            push.mat[sizeof(push.mat) - 1] = 0;
+            removePend(best);
+            beltHold.sweepStart();       // 停带
+            stopStepRmt();
+            servoWrite(bin, SERVO_EJECT_DEG[bin - 1]);   // 展开 -80°
+            g_push_seq++;
+            g_prog_ms = millis();
+            publishMotion(bin, "busy", "ir_due", g_push_seq, 0, push.job);
+            Serial.printf("[push] %d 号仓 到点瞬停(P=%.0fmm), 展开推杆 job=%s\n",
+                          bin, P, push.job);
+        }
     }
     if (!push.active) return;
     uint32_t now = millis();
@@ -271,67 +317,60 @@ static void pushTick() {
     } else {                        // 收回行程: -80 -> 270
         if (now - push.phase_at >= SERVO_RETRACT_MOVE_MS) {
             push.active = false;
-            beltHold.sweepEnd();      // 恢复带 (若网关态 running)
+            if (beltHold.sweepEnd()) startStepRmt();   // 恢复带 (重启 RMT, 连续流必需)
             g_diverted[push.bin - 1]++;
-            int item = curCmd.qty - curCmd.remaining + 1;
-            curCmd.last_prog_ms = now;
-            if (curCmd.active) {
-                curCmd.remaining--;
-                if (curCmd.remaining <= 0) {
-                    publishSorterAck(push.bin, curCmd.job_id.c_str(), "divert",
-                                     "ok", curCmd.material.c_str());
-                    publishMotion(push.bin, "ready", "done", item, curCmd.qty,
-                                  curCmd.job_id.c_str());
-                    Serial.printf("[cmd] %s 完成: %d 号仓 %d 件 (%s)\n",
-                                  curCmd.job_id.c_str(), push.bin, curCmd.qty,
-                                  curCmd.material.c_str());
-                    curCmd.active = false;
-                } else {
-                    publishMotion(push.bin, "armed", "next", item, curCmd.qty,
-                                  curCmd.job_id.c_str());
-                    Serial.printf("[push] %d 号仓 已推 %d/%d, 等下一件过 IR\n",
-                                  push.bin, curCmd.qty - curCmd.remaining,
-                                  curCmd.qty);
-                }
-            }
+            g_prog_ms = now;
+            if (push.last)
+                publishSorterAck(push.bin, push.job, "divert", "ok", push.mat);
+            publishMotion(push.bin, "ready", "done", g_push_seq, 0, push.job);
+            Serial.printf("[cmd] %s 完成: %d 号仓 (%s)\n",
+                          push.job, push.bin, push.mat);
         }
     }
 }
 
-// 有活跃命令 + 无推件进行中 + 带子应转 时, IR 沿排程一次到仓推件.
+// IR 沿 (物品前缘到 IR = T0): 绑到队列下一件, 按皮带位置 P 排程到仓点 p_mm.
+// 连续物料关键: 即便前一件推件在途, 也照常消费队列 + 记 P(T0), 不被 push 挡住
+// (旧 onIrEdge 的 push.pend/active guard 正是吞掉后续件 IR 沿的根源).
 static void onIrEdge() {
-    if (!curCmd.active || push.active || push.pend) return;
-    if (conv.st != sort::DevState::kRunning || conv.speed_mps <= 0.0) return;
-    double d_bin = (curCmd.bin >= 1 && curCmd.bin <= 3)
-                       ? g_bin_dist_mm[curCmd.bin]
-                       : g_ir_d1_mm + (curCmd.bin - 1) * g_ir_spacing;
-    uint32_t now = millis();
-    uint32_t at = sort::Track::predictGateMs(now, 0.0, d_bin, conv.speed_mps);
-    if (at <= now) {
-        Serial.printf("[ir] 到仓窗口已过 (%d 号仓 d=%.0fmm), 跳过此件\n",
-                      curCmd.bin, d_bin);
+    if (g_count == 0) return;              // 无待分拣件: 只计数 (g_ir_count 已 +1)
+    if (conv.st != sort::DevState::kRunning || conv.speed_mps <= 0.0) {
+        Serial.printf("[ir] T0 但带子未运行, 件保留排队 (待分 %d)\n", g_count);
         return;
     }
-    push.pend = true;
-    push.bin = curCmd.bin;
-    push.pend_at_ms = at;
-    curCmd.last_prog_ms = now;
-    Serial.printf("[ir] T0 -> %d 号仓 d=%.0fmm, %lums 后瞬停推件 (v=%.3f m/s)\n",
-                  curCmd.bin, d_bin, (unsigned long)(at - now), conv.speed_mps);
+    QItem it = g_items[g_head];
+    g_head = (g_head + 1) % MAX_Q;
+    g_count--;
+    int bin = (it.bin >= 1 && it.bin <= 3) ? it.bin : 1;
+    double P = (double)stepsLive() / STEPS_PER_MM;
+    double d_bin = g_bin_dist_mm[bin];
+    double p_mm = P + d_bin;
+    if (g_pendN >= MAX_Q) {
+        Serial.printf("[ir] 推队列满, 丢弃 %d 号仓件 job=%s\n", bin, it.job);
+        return;
+    }
+    g_pend[g_pendN].p_mm = p_mm;
+    g_pend[g_pendN].bin = bin;
+    g_pend[g_pendN].last = it.last;
+    strncpy(g_pend[g_pendN].job, it.job, sizeof(g_pend[g_pendN].job) - 1);
+    g_pend[g_pendN].job[sizeof(g_pend[g_pendN].job) - 1] = 0;
+    strncpy(g_pend[g_pendN].mat, it.mat, sizeof(g_pend[g_pendN].mat) - 1);
+    g_pend[g_pendN].mat[sizeof(g_pend[g_pendN].mat) - 1] = 0;
+    g_pendN++;
+    g_prog_ms = millis();
+    Serial.printf("[ir] T0 -> %d 号仓 P=%.0fmm p_mm=%.0fmm (待推 %d, 待分 %d)\n",
+                  bin, P, p_mm, g_pendN, g_count);
 }
 
-// 命令无进展 (无 IR 沿/无推件) 超时 -> fault, 避免挂死.
+// 队列件等待过久 (带未运行/无物品到 IR) -> 提示 (不 fault: 带起/放料即自动继续).
+static uint32_t g_last_wait_warn = 0;
 static void cmdTimeoutTick() {
-    if (!curCmd.active) return;
-    if (push.active || push.pend) return;      // 推件进行中不算无进展
-    if (millis() - curCmd.last_prog_ms > IR_WAIT_TIMEOUT_MS) {
-        publishSorterAck(curCmd.bin, curCmd.job_id.c_str(), "divert", "fault",
-                         "no IR edge / no progress (带未运行或无物品到 IR)");
-        publishMotion(curCmd.bin, "fault", "timeout", 0, 0, curCmd.job_id.c_str());
-        Serial.printf("[cmd] %s 超时 fault (无 IR 沿/无推件 >%lums)\n",
-                      curCmd.job_id.c_str(), (unsigned long)IR_WAIT_TIMEOUT_MS);
-        curCmd.active = false;
-    }
+    if (g_count == 0) return;               // 无待分拣件
+    if (millis() - g_prog_ms < IR_WAIT_TIMEOUT_MS) return;
+    if (millis() - g_last_wait_warn < IR_WAIT_TIMEOUT_MS) return;  // 15s 内只提一次
+    g_last_wait_warn = millis();
+    Serial.printf("[warn] %d 件待分但 >%lums 无 IR 沿 (带子 running? 已放料?)\n",
+                  g_count, (unsigned long)IR_WAIT_TIMEOUT_MS);
 }
 
 // ================= HuskyLens 2 (I2C): 识别物料 -> 发真实侧视觉事件 ===========
@@ -410,9 +449,8 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
             } else if (!strcmp(action, "reset")) {
                 beltHold.conveyorStop();
                 stopStepRmt();
-                curCmd.active = false;
+                g_head = 0; g_count = 0; g_pendN = 0;
                 push.active = false;
-                push.pend = false;
                 servoRestAll();
             }
         }
@@ -422,32 +460,34 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
         if (action && !strcmp(action, "divert")) {
             const char* material = doc["material"] | "";
             int qty = doc["qty"] | 1;
-            if (curCmd.active) {
-                publishSorterAck(n, job_id, "divert", "busy",
-                                 "上一指令执行中, 排队稍候");
-                return;
-            }
             if (qty < 1 || qty > 100) {
                 publishSorterAck(n, job_id, "divert", "fault", "qty 非法");
                 return;
             }
-            curCmd = Cmd{};
-            curCmd.bin = n;
-            curCmd.material = material;
-            curCmd.qty = qty;
-            curCmd.remaining = qty;
-            curCmd.job_id = job_id;
-            curCmd.active = true;
-            curCmd.last_prog_ms = millis();
-            publishMotion(n, "armed", "cmd", 1, qty, job_id);
-            Serial.printf("[cmd] 接受: %d 号仓 %d 件 (%s) job=%s [带子需 running + 物品过 IR]\n",
-                          n, qty, material, job_id);
-            // 不立即 ack: 全部推完才 ack ok (同 .bak 语义, 网关据此等待).
+            if (g_count + qty > MAX_Q) {
+                publishSorterAck(n, job_id, "divert", "fault", "队列满 (<=24 件)");
+                return;
+            }
+            for (int k = 0; k < qty; k++) {
+                int idx = (g_head + g_count) % MAX_Q;
+                g_items[idx].bin = n;
+                g_items[idx].last = (k == qty - 1);   // 该 job 最后一件 (推完 ack ok)
+                strncpy(g_items[idx].job, job_id, 23);
+                g_items[idx].job[23] = 0;
+                strncpy(g_items[idx].mat, material, 15);
+                g_items[idx].mat[15] = 0;
+            }
+            g_count += qty;
+            g_prog_ms = millis();
+            publishMotion(n, "armed", "cmd", 0, 0, job_id);
+            Serial.printf("[cmd] 入队: %d 号仓 %d 件 (%s) job=%s (待分 %d)\n",
+                          n, qty, material, job_id, g_count);
+            publishSorterAck(n, job_id, "divert", "queued",
+                             "已入队; 过 IR 后按皮带位置 P 到仓 (最后件推完回 ok)");
         } else if (action && !strcmp(action, "reset")) {
-            bool had = curCmd.active;
-            curCmd.active = false;
+            bool had = (g_count > 0 || g_pendN > 0 || push.active);
+            g_head = 0; g_count = 0; g_pendN = 0;
             push.active = false;
-            push.pend = false;
             servoRestAll();
             publishSorterAck(n, job_id, "reset", "ok", had ? "cancelled" : "idle");
             if (had) publishMotion(n, "ready", "cancel", 0, 0, job_id);
@@ -489,15 +529,14 @@ static void onSerialCmd(const String& line) {
         Serial.println("hold <ms> | confmin <0..1> | vision <material> | servo <n> <deg>");
         Serial.println("track | stepstat | mqtt | eth | reboot");
     } else if (line == "state") {
-        Serial.printf("conveyor=%s v=%.3fm/s steps=%llu | cmd=%s bin=%d rem=%d/%d job=%s | push=%s ir=%lu\n",
-                      conv.state(), conv.speed_mps, (unsigned long long)stepsLive(),
-                      curCmd.active ? curCmd.material.c_str() : "-",
-                      curCmd.active ? curCmd.bin : 0,
-                      curCmd.active ? curCmd.remaining : 0,
-                      curCmd.active ? curCmd.qty : 0,
-                      curCmd.active ? curCmd.job_id.c_str() : "-",
-                      push.active ? "active" : (push.pend ? "pend" : "idle"),
-                      (unsigned long)g_ir_count);
+        Serial.printf("conveyor=%s v=%.3fm/s P=%.0fmm | 待分=%d 待推=%d | push=%s ir=%lu 已推=%lu/%lu/%lu\n",
+                      conv.state(), conv.speed_mps,
+                      (double)stepsLive() / STEPS_PER_MM,
+                      g_count, g_pendN,
+                      push.active ? "active" : "idle",
+                      (unsigned long)g_ir_count,
+                      (unsigned long)g_diverted[0], (unsigned long)g_diverted[1],
+                      (unsigned long)g_diverted[2]);
     } else if (line == "belt stop") {
         conv.handleCmd("stop", 0.0);
         beltHold.conveyorStop();
@@ -771,10 +810,10 @@ void loop() {
                                         stepsLive(), "", "", pres ? 1 : 0).c_str(), false);
         for (int n = 1; n <= 3; n++)
             mqtt.publish(sort::sorterTeleTopic(n).c_str(),
-                         sort::sorterTele(curCmd.active && curCmd.bin == n ? "busy" : "ready",
+                         sort::sorterTele(push.active && push.bin == n ? "busy" : "ready",
                                           g_diverted[n - 1],
-                                          curCmd.active && curCmd.bin == n
-                                              ? curCmd.material.c_str() : "").c_str(),
+                                          push.active && push.bin == n
+                                              ? push.mat : "").c_str(),
                          false);
     }
 
