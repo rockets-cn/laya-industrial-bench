@@ -854,6 +854,54 @@ class SortGateway:
                 elif self.path == "/fault/clear":
                     had = gw.clear_fault("http")
                     self._send(200, {"cleared": had is not None, "had": had})
+                elif self.path == "/belt":
+                    # 原子传送带控制 (网页按钮): start/stop/resume/pause -> 固件 conveyor/cmd
+                    action = body.get("action")
+                    if action not in ("start", "stop", "resume", "pause"):
+                        self._send(422, {"error": "action 需 start|stop|resume|pause"})
+                        return
+                    if gw.fault:
+                        self._send(409, {"error": "fault latched, clear first",
+                                        "fault": gw.fault})
+                        return
+                    job = {"job_id": gw._new_job_id()}
+                    ok, note = gw._conveyor_cmd(job, action)
+                    self._send(200 if ok else 502,
+                               {"ok": ok, "note": note, "action": action})
+                elif self.path == "/push":
+                    # 原子手动推杆 (网页按钮): push <n> -> 固件 sorter{n}/cmd action=push
+                    # 立即 ack (jog 展开->收回由固件驱动), motion busy/ready 供孪生同步
+                    try:
+                        n = int(body.get("sorter", 0))
+                    except Exception:
+                        n = 0
+                    if n not in (1, 2, 3):
+                        self._send(422, {"error": "sorter 需 1|2|3"})
+                        return
+                    if gw.fault:
+                        self._send(409, {"error": "fault latched, clear first",
+                                        "fault": gw.fault})
+                        return
+                    job_id = gw._new_job_id()
+                    payload = {"job_id": job_id, "action": "push", "ts": _now()}
+                    # 手动推杆: 一次性等待, busy 立即返回 (jog 只在收到命令时 ack 一次,
+                    # 不重 ack; 若用 _send_with_retry 的 busy 延长逻辑会白等 3x3s).
+                    if not gw.client:
+                        self._send(503, {"error": "gateway mqtt not connected"})
+                        return
+                    gw.client.publish(gw._cmd_topic("sorter", "sorter%d" % n),
+                                      json.dumps(payload), qos=1)
+                    result, note = gw._wait_ack("sorter", "sorter%d" % n,
+                                                job_id, float(gw.cfg["ack_timeout_s"]))
+                    if result == "ok":
+                        self._send(200, {"ok": True, "job_id": job_id,
+                                         "note": "jog", "sorter": n})
+                    elif result == "busy":
+                        self._send(409, {"ok": False, "sorter": n,
+                                         "note": note or "推杆忙: 另一推杆正在动作, 稍后再试"})
+                    else:
+                        self._send(502, {"ok": False, "sorter": n,
+                                         "note": note or "推杆未应答 (设备未上线?)"})
                 else:
                     self._send(404, {"error": "not found"})
 

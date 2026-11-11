@@ -404,6 +404,53 @@ async def dispatch(request: Request):
         raise HTTPException(503, f"分拣网关不可达 ({GATEWAY_URL}): {e}")
 
 
+def _gw_post(path: str, payload: dict, timeout: int = 10):
+    """转发到网关 HTTP 端点, 透传状态码与 JSON (原子控制: 传送带/手动推杆)."""
+    req = urllib.request.Request(
+        GATEWAY_URL + path, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return JSONResponse(json.loads(r.read().decode()), status_code=r.status)
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode() or "{}")
+        except Exception:
+            detail = {}
+        raise HTTPException(e.code, detail.get("error", f"gateway error {e.code}"))
+    except Exception as e:
+        raise HTTPException(503, f"分拣网关不可达 ({GATEWAY_URL}): {e}")
+
+
+@app.post("/api/belt")
+async def api_belt(request: Request):
+    """网页按钮: 传送带 起/停 -> 网关 /belt -> 固件 conveyor/cmd."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(422, "bad json")
+    action = body.get("action")
+    if action not in ("start", "stop", "resume", "pause"):
+        raise HTTPException(422, "action 需 start|stop|resume|pause")
+    return _gw_post("/belt", {"action": action})
+
+
+@app.post("/api/push")
+async def api_push(request: Request):
+    """网页按钮: 手动推杆 -> 网关 /push -> 固件 sorter{n}/cmd action=push."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(422, "bad json")
+    try:
+        n = int(body.get("sorter", 0))
+    except Exception:
+        n = 0
+    if n not in (1, 2, 3):
+        raise HTTPException(422, "sorter 需 1|2|3")
+    return _gw_post("/push", {"sorter": n})
+
+
 @app.get("/twin")
 async def twin():
     """数字孪生状态 (代理 MQTT 网关 :8123 的 /health + /motion):
@@ -543,6 +590,13 @@ PAGE = """<!doctype html>
 </select></span>
 <span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有活 400ms / 待机 600ms)</span>
 </div>
+<div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
+  <span style="font-size:11.5px;color:#8a91a0">手动控制 <span style="color:#5b6270">（真实源 · 点即真机动作 · 网页同步）:</span></span>
+  <button id="btnBelt" onclick="beltToggle()" title="传送带 起/停 (真机 + 网页同步)" style="min-width:104px">⏯ 传送带</button>
+  <button class="pushbtn" data-n="1" onclick="pushBin(1)" title="1 号推杆 手动推出">🔧 推杆 1</button>
+  <button class="pushbtn" data-n="2" onclick="pushBin(2)" title="2 号推杆 手动推出">🔧 推杆 2</button>
+  <button class="pushbtn" data-n="3" onclick="pushBin(3)" title="3 号推杆 手动推出">🔧 推杆 3</button>
+</div>
 <!-- 真数据源: 摄像头实时画面 (MJPEG :8125 → /cam/stream), 缩小放 HuskyLens 2 上方; 定位由 JS 按 SVG CTM 计算 -->
 <img id="gla-camimg" alt="" draggable="false" onerror="camImgErr()" onload="camImgOk()"
      style="display:none;position:absolute;z-index:20;border:1px solid #2c3342;border-radius:8px;background:#0a0c10;box-shadow:0 6px 18px rgba(0,0,0,.5);pointer-events:none">
@@ -603,6 +657,35 @@ window.addEventListener('unhandledrejection',e=>{const m=$('micstate');
  if(m)m.textContent='Promise错误: '+(e.reason&&e.reason.message||e.reason);console.error('UNHANDLED',e.reason)});
 async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(d)});
  if(!r.ok)throw new Error((await r.text()).slice(0,300));return r.json()}
+// ---- 手动控制 (真实源): 传送带 起/停 + 3 推杆 手动推出, 走网关原子端点, 网页随 /twin 同步 ----
+function updateCtlButtons(src){
+ const can=(src==='device');
+ const cb=document.getElementById('btnBelt');
+ if(cb){cb.disabled=!can;
+  cb.textContent=(can?(lastConveyor==='running'?'⏸ 停止传送带':'▶ 启动传送带'):'⏯ 传送带 (切真实源可用)');}
+ document.querySelectorAll('.pushbtn').forEach(b=>{b.disabled=!can;});
+}
+async function beltToggle(){
+ if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
+ const action=(lastConveyor==='running')?'stop':'start';
+ const b=document.getElementById('btnBelt');if(b)b.disabled=true;
+ try{
+  const r=await fetch('/api/belt',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)alert('传送带 '+action+' 未成功: '+(j.note||j.error||('HTTP '+r.status)));
+ }catch(e){alert('传送带控制失败: '+e.message);}
+ if(b)b.disabled=false; // 网页随 /twin 带态 (conveyor=running/stopped) 自动改文案
+}
+async function pushBin(n){
+ if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
+ const b=document.querySelector('.pushbtn[data-n="'+n+'"]');if(b)b.disabled=true;
+ try{
+  const r=await fetch('/api/push',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sorter:n})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)alert('推杆 '+n+' 未成功: '+(j.note||j.error||('HTTP '+r.status)));
+ }catch(e){alert('推杆 '+n+' 失败: '+e.message);}
+ setTimeout(()=>{if(b)b.disabled=false;},1800); // 推杆行程 ~1.5s; 网页随 /twin motion (busy=伸出/ready=收回) 同步
+}
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
 const domain='yard'; // 页面专属仓库分拣 (后端 API 仍支持 fruit/block/mixed 基准域; 域标识保持 yard 不变)
@@ -764,6 +847,7 @@ window.addEventListener('resize',function(){if(camOn)camPlace();});
 // 在线 → SVG 切实时模式 (推杆/光门/料道按运动时间线还原); 离线 → 回落循环演示
 let twinSig='';
 let lastJobsSig=''; // 模型vs实际对照表: 仅 jobs 变化时重渲, 避免每 250ms 闪烁
+let lastConveyor='stopped'; // 真实带态 (belt 按钮起/停判定 + 文案)
 let twinTimer=null;
 function scheduleTwin(ms){if(twinTimer)clearTimeout(twinTimer);twinTimer=setTimeout(refreshTwin,ms);}
 async function refreshTwin(){
@@ -803,6 +887,7 @@ async function refreshTwin(){
  // 模拟源: 传送带持续运行 (孪生画面环境供血, 随机物料完整过相机/光门/拨入);
 // 真实源: 按带子实际态 (推料期间固件/sim 自动停带, 推完自动恢复)
  const beltOn=src==='sim'?true:(d.conveyor==='running');
+ lastConveyor=d.conveyor||'stopped'; // 记录真实带态 (belt 按钮起/停判定)
  // 真实场景: 孪生按"实际看到的"显示 — 最近视觉事件 (HuskyLens 2 实际识别)
  // 提供相机识别标签 (物料+去向+置信度), 并覆盖对应道的物品物料
  const vList=d.vision||[];
@@ -834,6 +919,7 @@ async function refreshTwin(){
     status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
+ updateCtlButtons(src); // 手动控制按钮: 真实源可用 + 传送带按钮随带态改文案
  // 模型 vs 实际对照表: 仅 jobs 变化时重渲 (网关 /jobs 逐批次 命令 vs 执行 vs HL)
  {const jsig2=JSON.stringify(d.jobs||[]);if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
  scheduleTwin(src==='sim'?250:300); // 模拟源 250ms: sim armed 窗口仅 350ms, 轮询必须更密才不漏首件全旅程; 真实源 300ms (配合固件 IR 沿即时上报, 降低 IR 反馈延迟)

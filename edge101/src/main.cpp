@@ -128,6 +128,17 @@ struct Push {
 static Push push;
 static int g_push_seq = 0;    // 推件序号 (motion 事件 item 号)
 
+// 手动推杆 jog (网页按钮 / MQTT "push"): 纯伺服 展开->收回, 不控带子/不动队列.
+// 非阻塞状态机 (jogTick 每 loop 推进一步), motion busy/ready 供数字孪生同步.
+struct Jog {
+    bool active = false;
+    int  bin   = 0;
+    int  phase = 0;           // 0=展开行程 2=收回行程
+    uint32_t phase_at = 0;
+};
+static Jog jog;
+static int g_jog_seq = 0;     // 手动推杆序号 (motion 事件 item 号)
+
 // 遥测计数.
 static uint32_t g_diverted[3] = {0, 0, 0};   // 各仓累计推件
 
@@ -263,7 +274,7 @@ static void removePend(int i) {
 // 皮带位置 P 到仓监控 + 执行: 找 p_mm 最小且已到达 (P>=p_mm, 未明显越过) 的 pend ->
 // 瞬停推. P=stepsLive()/SPM (RMT 累计, 停带时冻结). 按 p_mm 升序推 -> 3->1 跳仓也正确.
 static void pushTick() {
-    if (!push.active && g_pendN > 0) {
+    if (!push.active && !jog.active && g_pendN > 0) {
         double P = (double)stepsLive() / STEPS_PER_MM;
         int best = -1;
         for (int i = 0; i < g_pendN; i++)
@@ -325,6 +336,26 @@ static void pushTick() {
             publishMotion(push.bin, "ready", "done", g_push_seq, 0, push.job);
             Serial.printf("[cmd] %s 完成: %d 号仓 (%s)\n",
                           push.job, push.bin, push.mat);
+        }
+    }
+}
+
+// 手动推杆 jog 状态机 (非阻塞): 展开 -80° -> 收回 270°. 不控带子/不动队列,
+// 仅供网页/串口手动测试推杆行程. motion busy(展开)/ready(收回完) 供数字孪生同步.
+static void jogTick() {
+    if (!jog.active) return;
+    uint32_t now = millis();
+    if (jog.phase == 0) {                  // 展开行程: 270 -> -80
+        if (now - jog.phase_at >= SERVO_EJECT_MOVE_MS) {
+            jog.phase = 2;
+            jog.phase_at = now;
+            servoWrite(jog.bin, SERVO_REST_DEG);   // 到位即收回
+        }
+    } else {                               // 收回行程: -80 -> 270
+        if (now - jog.phase_at >= SERVO_RETRACT_MOVE_MS) {
+            jog.active = false;
+            publishMotion(jog.bin, "ready", "cmd", g_jog_seq, 0, "manual");
+            Serial.printf("[jog] %d 号仓 手动推杆完成\n", jog.bin);
         }
     }
 }
@@ -484,6 +515,24 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
                           n, qty, material, job_id, g_count);
             publishSorterAck(n, job_id, "divert", "queued",
                              "已入队; 过 IR 后按皮带位置 P 到仓 (最后件推完回 ok)");
+        } else if (action && !strcmp(action, "push")) {
+            // 手动推杆 (网页按钮 / 测试): 纯伺服 jog, 不碰带子/队列.
+            // 立即回 ok (命令已接受), 实际 展开->收回 由 jogTick 驱动,
+            // motion busy/ready 供数字孪生同步.
+            if (push.active || jog.active) {
+                publishSorterAck(n, job_id, "push", "busy", "推杆忙");
+                return;
+            }
+            jog.active = true;
+            jog.bin = n;
+            jog.phase = 0;
+            jog.phase_at = millis();
+            g_jog_seq++;
+            servoWrite(n, SERVO_EJECT_DEG[n - 1]);
+            g_prog_ms = millis();
+            publishMotion(n, "busy", "cmd", g_jog_seq, 0, "manual");
+            Serial.printf("[jog] %d 号仓 手动推杆 展开 job=%s\n", n, job_id);
+            publishSorterAck(n, job_id, "push", "ok", "jog");
         } else if (action && !strcmp(action, "reset")) {
             bool had = (g_count > 0 || g_pendN > 0 || push.active);
             g_head = 0; g_count = 0; g_pendN = 0;
@@ -786,6 +835,7 @@ void loop() {
     }
 
     pushTick();
+    jogTick();
     cmdTimeoutTick();
 
     // 以太网/MQTT 重试 + 循环.
