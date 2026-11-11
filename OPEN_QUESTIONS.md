@@ -87,6 +87,31 @@
 - C110 只允许一个进程开 `/dev/video0` → 录像从 MJPEG :8125 拉帧, 不直开相机。
 - 双控制约束: 本机程序 / edge101 / sim 不能同时控同一台机; 真机测试不起 sim。
 
+### 网页 SVG: 无 CDATA, 裸 && / < 非法 (曾整页动画崩, 2026-11-11)
+- `edge101/docs/gate_layout_anim.svg` 内联 `<script>` **没有 CDATA**。直接写 JS 的 `&&` / `<`
+  是**非法 XML** → 整个 SVG 解析失败 → **整页动画停 (网页传送带不动)**。
+- 修法: 逻辑用嵌套 `if` / `>=` / `!==` 避开 `&&` 和 `<`; `&` 用实体 `&amp;`。
+- **改完必验**: `python -c "import xml.dom.minidom as m;m.parse('...svg')"` (XML 合法) + `node --check`
+  (内联脚本 JS 语法)。裸 `&&` 会让 XML 在**第一个 `&`** 处报 "not well-formed (invalid token)"。
+- 手误多打引号 (如 `('busy'===gst')`) 会致字符串未闭合, XML 解析未必报, 靠 `node --check` 暴露。
+
+### 网页: 手动 jog (job=manual) 别误触发 IR T0 / 光门 / 相机
+- 点网页推杆按钮 = 手动 jog (motion 事件 `via=cmd`, `job_id=manual`), 但 SVG `twinFrame` 原把任何
+  `busy` 都当 IR 触发 → 亮 IR T0 + 建 fake journey(上 item) + setVision(相机识别)。物理上 IR/视觉无事件, 纯网页误显。
+- **区分标志 = motion 事件 `job_id==="manual"`**: 手动 jog 不亮 IR T0 / 不建 journey / 不显相机 / 不点光门, 只动画推杆;
+  真分拣 (job!=manual, via=ir_due) 行为不变。`/twin` 事件字段名是 **`job_id`** (网关 `_on_motion` 构造)。
+
+### 网页: 轮辐转速两模式不一致 (孪生太慢像静止)
+- 循环演示 `render(t)` 用 `ang=(t*V)/16*57.2958` = 带速/轮半径 (**物理正确** ~501°/s)。
+- 孪生 `twinFrame` 原 `beltT/1000*3.6` = **3.6°/s (100s/圈) → 肉眼=固定不动**。
+- 修法: 孪生改 `((beltT/1000*VJ)/16*57.2958)%360` 与演示一致; 且每轮 1 辐条→4 辐条 (转起来像轮子而非针闪)。
+
+### 网页视觉清理 (用户 2026-11-11)
+- 光门 ×3 (虚线光束+传感器方块+到仓停推区/推杆标注) 移除; 仓库标注保留尺寸线区「仓 N · IR→推杆=dN」。
+- 料道 ×3 的 marker-end 箭头 (gw-arwm 三角) + 料道线 (display:none) + 「1/2/3号料道」文字标注 都移除。
+- **相机视场锥 (gla-fan) 保留** (用户一度以为是它, 澄清后指料道三角; 误删已恢复)。
+- 移除被 JS `get()` 引用的元素: **保留元素加 `display:none`** (脚本设 opacity 无副作用/不报错), 比删元素+删 N 处 JS 稳。
+
 ## 2026-10-30 修复记录 (用户提交的 5 个问题)
 
 | # | 问题 | 修法 | 验证 |
