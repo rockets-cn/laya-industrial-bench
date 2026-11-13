@@ -1,17 +1,17 @@
 """料场分拣决策回路基准 (语音/文本 -> 规则层 -> Laya -> 校验器 -> (LLM旁路)).
 
-领域: 料场分拣. 三个料场 (1号/2号/3号), 物料复用本仓库已验证的两套白名单
-(水果: 红苹果/绿苹果/香蕉/梨; 方块: 红/绿/黄/蓝 方块), 共 8 种物料.
-语音例: "给1号料场送两个红苹果，3号料场送10个蓝色方块"
-输出:   [{"yard":1,"material":"red_apple","qty":2},
-         {"yard":3,"material":"blue_block","qty":10}]
+领域: 料场分拣. 三个料场 (1号/2号/3号), 物料 = 4 种传感器
+(角度传感器/超声波传感器/人体红外传感器/温湿度传感器), 口语简称也认.
+语音例: "给1号料场送两个角度传感器，3号料场送10个温湿度传感器"
+输出:   [{"yard":1,"material":"angle_sensor","qty":2},
+         {"yard":3,"material":"temp_humidity_sensor","qty":10}]
 
 架构同 bench_industrial.py / bench_block.py (实时路径不含 LLM):
 规则层做 料场号 + 物料 + 数量 抽取 (ms 级, 确定性): 料场号与数量同为白名单
 数值, 由规则层决定 + 校验器检查 (实测基座模型对 "X号" 数字接地不稳, 不终审);
-Laya 每提及一次前向: 物料终审 (8 选 1, state 带当次提及锚点, 实测 conf≈1.0),
+Laya 每提及一次前向: 物料终审 (4 选 1, state 带当次提及锚点, 实测 conf≈1.0),
 与规则层交叉检查; 校验器做 料场白名单 + 物料白名单 + 数量范围 + 交叉检查,
-同料场同物料合并; LLM (qwen3.5) 仅旁路, 任何失败安全降级为 暂停+人工.
+逐件展开 (1 件 = 1 条 qty=1); LLM (qwen3.5) 仅旁路, 任何失败安全降级为 暂停+人工.
 
 Usage:
     .venv/bin/python bench_yard.py [reps]          # 文本模式, 默认 5 reps
@@ -44,7 +44,8 @@ OOB_YARD_RE = re.compile(r"(?<!\d)([4-9]\d*|[四五六七八九十])\s*号")
 MATERIALS = ["angle_sensor", "ultrasonic_sensor", "pir_sensor", "temp_humidity_sensor"]
 MAT_CN = {"angle_sensor": "角度传感器", "ultrasonic_sensor": "超声波传感器",
           "pir_sensor": "人体红外传感器", "temp_humidity_sensor": "温湿度传感器"}
-CN2KEY = {"红": "red", "绿": "green", "黄": "yellow", "蓝": "blue"}
+MAT_CN_SHORT = {"angle_sensor": "角度", "ultrasonic_sensor": "超声波",
+                "pir_sensor": "红外", "temp_humidity_sensor": "温湿度"}
 CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
@@ -64,20 +65,27 @@ def _yard_num_of(token):
         return int(token)
     return _cn_num(token)
 
-# 物料词表 (同 bench_industrial / bench_block 的既有模式)
-FRUIT_RE = re.compile(r"(?:红|绿)?苹果|香蕉|梨")
-BLOCK_RE = re.compile(r"((?:红|绿|黄|蓝)\s*色?\s*)(?:的\s*)?(?:方块|块)"
-                      r"|((?:红|绿|黄|蓝)\s*色?\s*)的(?!红苹果|绿苹果|苹果|香蕉|梨)"
-                      r"|方块")
-# 否定提及 (同 bench_block / bench_industrial)
-BLOCK_NEG_RE = re.compile(r"(?:不要|别要?|不需要|不用)\s*"
-                          r"(((?:红|绿|黄|蓝)\s*色?\s*(?:的\s*)?(?:方块|块)"
-                          r"|(?:红|绿|黄|蓝)\s*色?\s*的(?!\s*(?:苹果|香蕉|梨)))?)")
+# 物料词表 (4 传感器): 全名优先, 口语简称也认 (ASR 噪声); 裸"传感器"= 类型未定
+SENSOR_RE = re.compile(
+    r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
+    r"|角度|超声波|人体红外|红外传感器|红外|温湿度|传感器")
+SENSOR_KEY = {
+    "角度传感器": "angle_sensor", "角度": "angle_sensor",
+    "超声波传感器": "ultrasonic_sensor", "超声波": "ultrasonic_sensor",
+    "人体红外传感器": "pir_sensor", "人体红外": "pir_sensor",
+    "红外传感器": "pir_sensor", "红外": "pir_sensor",
+    "温湿度传感器": "temp_humidity_sensor", "温湿度": "temp_humidity_sensor",
+    "传感器": None}   # 裸"传感器"未说类型 -> 物料未定 (PARTIAL 挂起报人工)
+# 否定提及 (不要/别要/不需要/不用 + 物料词)
+SENSOR_NEG_RE = re.compile(
+    r"(?:不要|别要?|不需要|不用)\s*"
+    r"(角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
+    r"|角度|超声波|人体红外|红外传感器|红外|温湿度)")
 
-# 简繁/同音 -> 领域词 (ASR 噪声)
+# 简繁 -> 领域词 (ASR 噪声); 传感器名短, 同音变体已覆盖在 SENSOR_RE 简称词表里
 T2S = str.maketrans({"紅": "红", "綠": "绿", "黃": "黄", "藍": "蓝",
                      "塊": "块", "個": "个", "離": "离", "號": "号"})
-HOMOPHONE = (("离", "梨"), ("李", "梨"), ("禮", "梨"), ("方快", "方块"))
+HOMOPHONE = []  # 同音变体 (a, b) 对; 传感器名短, 暂无需要 (ASR 变体走 SENSOR_RE 简称词表)
 
 
 def _cn_num(tok):
@@ -112,50 +120,24 @@ _QTY_AFTER = re.compile(
 
 
 def _qty_after(text, end):
-    """后置数量: "红色方块三个" (ASR 语序), 以及 料场号夹在中间的后置
-    "把香蕉放到一号仓库两个" / "香蕉放进2号库三个". 只在边界处认, 避免吞下一项的数量."""
+    """后置数量: "角度传感器三个" (ASR 语序), 以及 料场号夹在中间的后置
+    "把角度传感器放到一号仓库两个" / "红外传感器放进2号库三个". 只在边界处认, 避免吞下一项的数量."""
     m = _QTY_AFTER.match(text[end:])
     return _cn_num(m.group(1)) if m else None
 
 
-def _color_of(group):
-    if not group:
-        return None
-    m = re.match(r"(红|绿|黄|蓝)", group)
-    return CN2KEY[m.group(1)] if m else None
-
-
-def _fruit_action(name):
-    if "苹果" in name:
-        if name.startswith("红"):
-            return "red_apple"
-        if "绿" in name:
-            return "green_apple"
-        return "red_apple"  # 裸"苹果" -> PLC 默认 (同 bench_industrial)
-    return {"香蕉": "banana", "梨": "pear"}[name]
-
-
 def _materials_in(seg):
-    """全文 (否定剥离后): 水果/方块 提及+数量, 按位置排序. 返回 [(pos, end, mention)]"""
+    """全文 (否定剥离后): 传感器 提及+数量, 按位置排序. 返回 [(pos, end, mention)]
+    (裸"传感器" 类型未定 -> material=None, 校验器路由 物料未定 挂起)."""
     found = []
-    for m in FRUIT_RE.finditer(seg):
-        qty = _qty_before(seg, m.start())
-        if qty == 1:
-            q2 = _qty_after(seg, m.end())
-            if q2:
-                qty = q2
-        found.append((m.start(), m.end(), {"material": _fruit_action(m.group(0)),
-                                           "qty": qty}))
-    for m in BLOCK_RE.finditer(seg):
-        color = _color_of(m.group(1) or m.group(2))
+    for m in SENSOR_RE.finditer(seg):
         qty = _qty_before(seg, m.start())
         if qty == 1:
             q2 = _qty_after(seg, m.end())
             if q2:
                 qty = q2
         found.append((m.start(), m.end(),
-                      {"material": (color + "_block") if color else None,
-                       "qty": qty}))
+                      {"material": SENSOR_KEY[m.group(0)], "qty": qty}))
     found.sort(key=lambda x: x[0])
     return found
 
@@ -163,7 +145,7 @@ def _materials_in(seg):
 def _nearest_yard(matches, pos):
     """提及归属最近的料场标记 (距离到标记 span); 等距时归后一个料场.
     现在仅作兜底: 子句内多标记 / 子句无标记 时使用 (主归属见 normalize 的
-    子句切分). '两个红苹果送到3号，五个香蕉给1号' 类倒序句式由子句切分处理."""
+    子句切分). '两个角度传感器送到3号，五个红外给1号' 类倒序句式由子句切分处理."""
     best = None
     for m in matches:
         if m.start() <= pos <= m.end():
@@ -181,7 +163,7 @@ def _nearest_yard(matches, pos):
 
 def _is_reverse_attach(clean, mat_end, marker_start):
     """物料尾与下一个料场标记之间是否只有 标点/空格 + 短运送动词
-    ('两个苹果放到二号' / '香蕉给1号' 倒序黏附信号). 空间隔/纯标点 = 正序."""
+    ('两个角度传感器放到二号' / '红外给1号' 倒序黏附信号). 空间隔/纯标点 = 正序."""
     gap = clean[mat_end:marker_start]
     if len(gap) > 4:
         return False
@@ -194,7 +176,7 @@ def _is_reverse_attach(clean, mat_end, marker_start):
 def _yard_at(clean, cms, pos, mat_end):
     """物料归属: 正序分域为主 — 料场标记拥有 [自身起点, 下一标记起点) 的物料,
     第一个标记之前的内容归第一个标记. 无标点密集句也成立
-    ('一号仓库一个香蕉两个苹果二号仓库…' 中 '两个苹果' 属一号).
+    ('一号仓库一个角度传感器两个超声波二号仓库…' 中 '两个超声波' 属一号).
     倒序黏附覆盖: 物料尾与下一标记间仅隔短运送动词时归该下一标记."""
     if not cms:
         return 0
@@ -235,20 +217,19 @@ def normalize(text):
         return text, [], []
     negated = set()
     clean = text
-    for name in ("香蕉", "苹果", "梨"):
-        pat = re.compile(rf"(?:不要|别要?|不需要|不用)(?:(?!苹果|香蕉|梨).){{0,3}}{name}|{name}(?:不要|不用)")
+    # 否定剥离: 长名优先 (人体红外传感器 先于 人体红外/红外; 角度传感器 先于 角度)
+    for name in ("角度传感器", "超声波传感器", "人体红外传感器", "温湿度传感器",
+                 "人体红外", "红外传感器", "红外", "角度", "超声波", "温湿度"):
+        pat = re.compile(
+            rf"(?:不要|别要?|不需要|不用)(?:(?!角度|超声波|红外|温湿度).){{0,3}}{name}"
+            rf"|{name}(?:不要|不用)")
         if pat.search(clean):
-            negated.add(_fruit_action("红苹果" if name == "苹果" else name))
+            negated.add(SENSOR_KEY[name])
             clean = pat.sub(" ", clean)
-    for m in BLOCK_NEG_RE.finditer(clean):
-        c = _color_of(m.group(1))
-        if c:
-            negated.add(c + "_block")
-    clean = BLOCK_NEG_RE.sub(" ", clean)
     # 归属: 正序分域 + 倒序黏附 (见 _yard_at). 标记在 clean 上重查
     # (剥否定改变了位置). 子句切分/全局最近距离已弃用: 无标点密集句下
-    # 距离判定会把 '一号…两个苹果二号' 的苹果误归二号. 分域用全料场号
-    # (含超纲), 保证 '5号放6个苹果' 的苹果归 5号 而不是并入 2号.
+    # 距离判定会把 '一号…两个角度传感器二号' 的角度传感器误归二号. 分域用全料场号
+    # (含超纲), 保证 '5号放6个红外' 的红外归 5号 而不是并入 2号.
     cms = list(ANY_YARD_RE.finditer(clean))
     mentions = []
     for pos, mend, mm in _materials_in(clean):
@@ -261,7 +242,7 @@ MAT_CRIT = {k: v for k, v in MAT_CN.items()}
 
 
 def laya_decide(mentions, norm_text=""):
-    """One Laya request PER mention: 物料终审 (8 选 1), state 带当次提及锚点.
+    """One Laya request PER mention: 物料终审 (4 选 1), state 带当次提及锚点.
     料场号不终审 (实测基座模型对 "X号" 接地不稳: 1号->2号 p=0.64), 由规则层
     决定 + 校验器白名单检查. 返回 (dt, answers), answers keyed m{i}."""
     answers, t0 = {}, time.perf_counter()
@@ -287,7 +268,7 @@ def validate(mentions, answers):
     """确定性白名单 + 交叉检查 + 数量范围; 逐件展开 (1 件 = 1 条 qty=1 动作,
     同料场同物料不合并): 物理上每件 = 一次光门触发 + 一次推杆扫掠 (固件
     Sorter::stepOne 逐件, sim 镜像), 运动时间线也是逐件事件序列, 数字孪生
-    按件回放. 超纲料场 (yard 不在 1/2/3) 与 物料未定项 (如方块未说颜色) 不进
+    按件回放. 超纲料场 (yard 不在 1/2/3) 与 物料未定项 (如传感器未说类型) 不进
     reasons, 路由到 oob 挂起列表 (部分下发): 返回的 reasons 末尾附带 oob 说明 —
     调用方以 ok=True + reasons 非空 识别 PARTIAL.
     answers=None (LLM 旁路路径): 白名单 + 范围检查."""
@@ -304,10 +285,10 @@ def validate(mentions, answers):
                 oob.append(f"料场未指定, 不下发 ({MAT_CN.get(material, material) if material else '?'} x{m.get('qty', 1)}, 需人工确认)")
             continue
         if material is None:
-            # 物料未定 (典型: 方块未说颜色 — 白名单 4 色无法定夺): 该项挂起报人工,
+            # 物料未定 (典型: 裸"传感器"未说类型 — 白名单 4 类无法定夺): 该项挂起报人工,
             # 不阻塞其他在纲项 (与 超纲料场 同走 PARTIAL 挂起通道; 纯未定单仍因
             # "空订单" ok=False => 暂停, 行为不变)
-            oob.append(f"{yard}号 物料未定, 不下发 (x{m.get('qty', 1)}, 需人工确认颜色/种类)")
+            oob.append(f"{yard}号 物料未定, 不下发 (x{m.get('qty', 1)}, 需人工确认种类)")
             continue
         if answers is not None:
             a_m = answers.get("m" + str(i))
@@ -346,11 +327,11 @@ def validate(mentions, answers):
 
 
 BYPASS_PROMPT = """你是分拣解析器。把这句话解析成 JSON, 只输出 JSON:
-{{"items":[{{"yard":1,"material":"red_apple|green_apple|banana|pear|red_block|green_block|yellow_block|blue_block","qty":1}}]}}
+{{"items":[{{"yard":1,"material":"angle_sensor|ultrasonic_sensor|pir_sensor|temp_humidity_sensor","qty":1}}]}}
 yard 只能是 1/2/3 (对应 1号/2号/3号 料场); 句子没说明是几号料场时 yard 填 0.
-material 对应: red_apple=红苹果, green_apple=绿苹果, banana=香蕉, pear=梨,
-red_block=红色方块, green_block=绿色方块, yellow_block=黄色方块, blue_block=蓝色方块.
-"不要X" 表示 X 不下单, 不列入 items; 数量没说按 1; 没说明颜色的方块不列入.
+material 对应: angle_sensor=角度传感器, ultrasonic_sensor=超声波传感器,
+pir_sensor=人体红外传感器, temp_humidity_sensor=温湿度传感器.
+"不要X" 表示 X 不下单, 不列入 items; 数量没说按 1; 没说明类型的传感器不列入.
 句子: {state}"""
 
 
@@ -387,14 +368,15 @@ def llm_bypass(norm_text, rule_mentions):
     return dt, mentions, reasons
 
 
-# ---- 分配指令 ("99个香蕉平均分到三个仓库") ----
+# ---- 分配指令 ("99个角度传感器平均分到三个仓库") ----
 # 第一层: 确定性展开 (毫秒级, 无 LLM): 平均/平分 N 个 X 到 M 个仓库, 余数给小号
 # 第二层: 规则层拿不到完整结构的分配句 -> LLM 展开 + 校验器总量对账 (路径 EXPAND)
 DIST_KW_RE = re.compile(r"平均|平分|均分|均匀分")
-# 总量+物料: "九十九个香蕉" / "100个香蕉" / "十个梨" / "20个红色方块"
+# 总量+物料: "九十九个角度传感器" / "100个超声波传感器" / "十个红外"
 DIST_TOT_RE = re.compile(
     r"([0-9]+|[一二两三四五六七八九十百]+)\s*(?:个|把|条|块|根|只|颗)?\s*"
-    r"((?:红|绿)?苹果|香蕉|梨|(?:红|绿|黄|蓝)\s*色?\s*(?:的\s*)?(?:方块|块))")
+    r"(角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
+    r"|角度|超声波|人体红外|红外|温湿度)")
 # 目标 "M 个仓库/料场" (M=1..3 -> 前 M 个料场)
 DIST_M_RE = re.compile(r"([一二两三123])\s*(?:个|座|间)?\s*(?:仓库|料场|场地)")
 # 点名 "1号和3号" / "一号 与 三号"
@@ -402,10 +384,8 @@ DIST_EXPL_RE = re.compile(r"([123一二两])\s*号\s*(?:和|、|与|,|，)\s*([1
 
 
 def _dist_material(raw):
-    if "方块" in raw or "块" in raw:
-        c = _color_of(raw)
-        return (c + "_block") if c else None
-    return _fruit_action(raw)
+    m = re.search(SENSOR_RE, raw)
+    return SENSOR_KEY[m.group(0)] if m else None
 
 
 def expand_distribution(text):
@@ -450,12 +430,12 @@ def expand_distribution(text):
 
 
 DIST_EXPAND_PROMPT = """你是分拣解析器。把这条"分配"指令展开成每个料场的 JSON, 只输出 JSON:
-{{"items":[{{"yard":1,"material":"banana","qty":33}}]}}
+{{"items":[{{"yard":1,"material":"angle_sensor","qty":33}}]}}
 规则:
 - yard 只能是 1/2/3 (对应 1号/2号/3号 料场); 指令没指明具体哪几个料场时, 按 1/2/3 号全部料场处理;
-- material 只能从这些里选: red_apple=红苹果, green_apple=绿苹果, banana=香蕉, pear=梨,
-  red_block=红色方块, green_block=绿色方块, yellow_block=黄色方块, blue_block=蓝色方块;
-  没说明颜色的"苹果"按 red_apple, 没说明颜色的"方块"不列入;
+- material 只能从这些里选: angle_sensor=角度传感器, ultrasonic_sensor=超声波传感器,
+  pir_sensor=人体红外传感器, temp_humidity_sensor=温湿度传感器;
+  口语简称 (角度/超声波/红外/温湿度) 对应上述 key; 没说明类型的"传感器"不列入;
 - 指令说把 N 件物料平均/分给若干料场时: **你的职责是判断料场集合**, qty 只写一个参考值
   (规则层会按"余数给小号料场"重算数量); 各项 qty 之和必须等于 N, 分到 0 的料场不列入;
 - 分配对象确实无法确定时 yard 填 0 (会被拒绝并转人工).
@@ -528,57 +508,58 @@ def dist_expand_if_needed(text):
 
 
 CASES = [
-    ("给1号料场送两个红苹果，3号料场送10个蓝色方块",
-     [(1, "red_apple", 1), (3, "blue_block", 1)]),   # 双料场双物料 (逐件展开)
-    ("1号料场要5个黄色方块，2号料场来三个香蕉",
-     [(1, "yellow_block", 1), (2, "banana", 1)]),
-    ("两个红苹果送到3号料场",
-     [(3, "red_apple", 1)]),                          # 物料在料场前 (倒序)
-    ("1号料场送四个梨，不要绿色方块",
-     [(1, "pear", 1)]),                               # 段内否定
-    ("3号料场来8个绿色方块和一把香蕉",
-     [(3, "green_block", 1), (3, "banana", 1)]),
+    ("给1号料场送两个角度传感器，3号料场送10个温湿度传感器",
+     [(1, "angle_sensor", 1), (3, "temp_humidity_sensor", 1)]),   # 双料场双物料 (逐件展开)
+    ("1号料场要5个超声波传感器，2号料场来三个人体红外传感器",
+     [(1, "ultrasonic_sensor", 1), (2, "pir_sensor", 1)]),
+    ("两个角度传感器送到3号料场",
+     [(3, "angle_sensor", 1)]),                          # 物料在料场前 (倒序)
+    ("1号料场送四个超声波传感器，不要人体红外传感器",
+     [(1, "ultrasonic_sensor", 1)]),                               # 段内否定
+    ("3号料场来8个温湿度传感器和一个人体红外传感器",
+     [(3, "temp_humidity_sensor", 1), (3, "pir_sensor", 1)]),
     # 汉字料场号变体 (ASR/口语常见): 二号 曾漏在 YARD_RE 里被误拒
-    ("给二号料场送3个香蕉",
-     [(2, "banana", 1)]),
-    ("两个红苹果放二号仓库",
-     [(2, "red_apple", 1)]),
+    ("给二号料场送3个红外传感器",
+     [(2, "pir_sensor", 1)]),
+    ("两个超声波传感器放二号仓库",
+     [(2, "ultrasonic_sensor", 1)]),
     # 后置数量且料场号夹在物料与数量之间 (真实语音语序: 先报物料再说放到哪几件)
-    ("把香蕉放到一号仓库两个",
-     [(1, "banana", 1)]),
-    ("一号料场送1个梨，二号料场送2个香蕉",
-     [(1, "pear", 1), (2, "banana", 1)]),
+    ("把角度传感器放到一号仓库两个",
+     [(1, "angle_sensor", 1)]),
+    ("一号料场送1个温湿度传感器，二号料场送2个超声波传感器",
+     [(1, "temp_humidity_sensor", 1), (2, "ultrasonic_sensor", 1)]),
     # 无标点密集句 (真实语音): 料场分域, 不能按字符距离归属
-    ("一号仓库一个香蕉两个苹果二号仓库三个苹果四个香蕉三号仓库一个梨一个香蕉",
-     [(1, "banana", 1), (1, "red_apple", 1),
-      (2, "red_apple", 1), (2, "banana", 1),
-      (3, "pear", 1), (3, "banana", 1)]),
+    ("一号仓库一个角度传感器两个超声波传感器二号仓库三个人体红外传感器四个温湿度传感器三号仓库一个角度传感器一个超声波传感器",
+     [(1, "angle_sensor", 1), (1, "ultrasonic_sensor", 1),
+      (2, "pir_sensor", 1), (2, "temp_humidity_sensor", 1),
+      (3, "angle_sensor", 1), (3, "ultrasonic_sensor", 1)]),
     # 口语 '两号' (ASR 常转成 两号 而非 二号)
-    ("一号仓库放两个香蕉两号仓库放三个香蕉三号仓库放四个苹果",
-     [(1, "banana", 1), (2, "banana", 1), (3, "red_apple", 1)]),
+    ("一号仓库放两个角度传感器两号仓库放三个人体红外传感器三号仓库放四个超声波传感器",
+     [(1, "angle_sensor", 1), (2, "pir_sensor", 1), (3, "ultrasonic_sensor", 1)]),
     # 分配指令: Tier-1 确定性展开 (余数给小号料场); 逐件后每料场 1 条 qty=1
-    ("九十九个香蕉平均分到三个仓库里去",
-     [(1, "banana", 1), (2, "banana", 1), (3, "banana", 1)]),
-    ("100个香蕉平均分到三个仓库",
-     [(1, "banana", 1), (2, "banana", 1), (3, "banana", 1)]),
-    ("把40个梨平均分到1号和3号仓库",
-     [(1, "pear", 1), (3, "pear", 1)]),
-    ("两个红苹果平均分到1号和3号",
-     [(1, "red_apple", 1), (3, "red_apple", 1)]),
-    ("两个香蕉平均分到三个仓库",
-     [(1, "banana", 1), (2, "banana", 1)]),
-    ("把香蕉平均分到仓库里", None),                      # 无数量 -> 暂停等人工
+    ("九十九个角度传感器平均分到三个仓库里去",
+     [(1, "angle_sensor", 1), (2, "angle_sensor", 1), (3, "angle_sensor", 1)]),
+    ("100个超声波传感器平均分到三个仓库",
+     [(1, "ultrasonic_sensor", 1), (2, "ultrasonic_sensor", 1),
+      (3, "ultrasonic_sensor", 1)]),
+    ("把40个红外传感器平均分到1号和3号仓库",
+     [(1, "pir_sensor", 1), (3, "pir_sensor", 1)]),
+    ("两个温湿度传感器平均分到1号和3号",
+     [(1, "temp_humidity_sensor", 1), (3, "temp_humidity_sensor", 1)]),
+    ("两个人体红外传感器平均分到三个仓库",
+     [(1, "pir_sensor", 1), (2, "pir_sensor", 1)]),
+    ("把角度传感器平均分到仓库里", None),                      # 无数量 -> 暂停等人工
     # 超纲: 应走 暂停+人工 (expected=None 表示只检查路径)
-    ("给4号料场送两个苹果", None),                     # 料场越纲
-    ("给七号料场送苹果", None),                        # 汉字越纲 (曾致 KeyError)
-    ("送两个红苹果", None),                            # 未指定料场
-    ("1号料场送3个方块", None),                       # 物料颜色未指定
+    ("给4号料场送两个角度传感器", None),                     # 料场越纲
+    ("给七号料场送超声波", None),                        # 汉字越纲 (曾致 KeyError)
+    ("送两个人体红外传感器", None),                            # 未指定料场
+    ("1号料场送3个传感器", None),                       # 传感器类型未指定 -> 物料未定
     # 超纲混入有效指令: 部分下发 — 在纲项照发, 超纲项挂起报人工 (PARTIAL)
-    ("一号料场放三个苹果，2号料场放4个苹果，5号料场放6个苹果",
-     [(1, "red_apple", 1), (2, "red_apple", 1)], "partial"),
-    # 方块未说颜色: 物料未定项挂起报人工, 其余在纲项照发 (PARTIAL)
-    ("一号库径三个方块，2号库径4个苹果，3号库径5个香蕉",
-     [(2, "red_apple", 1), (3, "banana", 1)], "partial"),
+    ("一号料场放三个角度传感器，2号料场放4个超声波传感器，5号料场放6个红外传感器",
+     [(1, "angle_sensor", 1), (2, "ultrasonic_sensor", 1)], "partial"),
+    # 传感器未说类型: 物料未定项挂起报人工, 其余在纲项照发 (PARTIAL)
+    ("一号库径三个传感器，2号库径4个角度传感器，3号库径5个温湿度传感器",
+     [(2, "angle_sensor", 1), (3, "temp_humidity_sensor", 1)], "partial"),
     # 本机运行状态问答 (纯规则层, 答案<=30字): expected = 答案必含子串
     ("现在几点了", "现在", "qa"),
     ("明天是星期几", "明天是星期", "qa"),
@@ -592,8 +573,8 @@ CASES = [
     ("现在仓库里有多少东西？", "件", "qa"),
     # 指定料场 累计库存 (台账; 默认答案) + 物料→仓库 反查
     ("现在3号仓库有多少货？", "3号", "qa"),
-    ("哪个仓库有蓝色方块？", "蓝方块", "qa"),
-    ("苹果在哪个仓库里？", "苹果", "qa"),
+    ("哪个仓库有人体红外传感器？", "人体红外", "qa"),
+    ("角度传感器在哪个仓库里？", "角度", "qa"),
 ]
 
 
@@ -623,8 +604,8 @@ def main():
 
     t_laya, t_bypass, t_e2e = [], [], []
     n_fast = n_expand = n_bypass = n_partial = n_pause = n_qa = n_correct = n_total = 0
-    local_qa.set_last_order([{"yard": 1, "material": "banana", "qty": 2},
-                              {"yard": 2, "material": "red_apple", "qty": 5}])  # 问答用例基准库存
+    local_qa.set_last_order([{"yard": 1, "material": "angle_sensor", "qty": 2},
+                              {"yard": 2, "material": "ultrasonic_sensor", "qty": 5}])  # 问答用例基准库存
     for rep in range(REPS):
         for ci, (state_text, expected, kind) in enumerate(cases):
             t0 = time.perf_counter()

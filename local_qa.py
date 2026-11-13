@@ -15,9 +15,9 @@
                 (显式 最近/上次/刚才 才进; 由 loop_ui 每次 /run 后注入)
              c) 「现在各个仓库分别有多少内容」/「仓库库存」= 全部料场 累计库存
                 (门 _STOCK_RE: 各/分别/库存/仓库里有 等; 与 a 的区别: 不分料场)
-             d) 「哪个仓库有蓝色方块」/「苹果在哪个仓库里」= 物料→仓库 反查
+             d) 「哪个仓库有人体红外传感器」/「角度传感器在哪个仓库里」= 物料→仓库 反查
                 (台账, 哪些料场有该物料库存; 门: 物料词 + 哪 + 有/在/库存;
-                不带颜色 苹果/方块 = 家族查询, 红+绿 / 四色合计)
+                每类传感器独立, 无颜色家族)
 3. 服务状态   "8002还在跑吗" / "网关正常吗" (本机 TCP 端口探测)
 4. 资源占用   "CPU占用多少" / "内存和磁盘" (/proc/loadavg, /proc/meminfo, disk_usage)
 5. LLM 兜底   (可选, 默认关) 规则层认不出的问句, 让 LLM 基于注入事实回答;
@@ -49,7 +49,8 @@ QUERY_BUDGET_S = 3.0    # 整个问答的耗时预算
 PORT_PROBE_S = 0.4      # 单端口 TCP 探测超时
 
 # 分拣物料词: 句子里出现物料名 -> 视为分拣指令, 不进问答 (防误抢)
-_MATER_RE = re.compile(r"香蕉|苹果|梨|方块")
+_MATER_RE = re.compile(r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
+                       r"|角度|超声波|人体红外|红外|温湿度")
 # 料场号
 _YARD_Q_RE = re.compile(r"([123一二两])\s*号\s*(?:料场|仓库|场地|库|位置|区)?")
 _YARD_NUM = {"1": 1, "2": 2, "3": 3, "一": 1, "二": 2, "两": 2, "俩": 2, "三": 3}
@@ -181,10 +182,10 @@ def _ans_yard_stock(text):
 
 
 def _ans_mat_where(text):
-    """物料→仓库 反查: 「哪个仓库有蓝色方块？」/「苹果在哪个仓库里？」— 查台账
-    (yard_ledger) 哪些料场 有该物料(家族) 净库存 (>0). 门: 物料词 + 哪 + (有|在|库存|存),
+    """物料→仓库 反查: 「哪个仓库有人体红外传感器？」/「角度传感器在哪个仓库里？」— 查台账
+    (yard_ledger) 哪些料场 有该物料 净库存 (>0). 门: 物料词 + 哪 + (有|在|库存|存),
     避免误抢 分配指令 (「放到哪个仓库」类无 有/在 库存语义); 全仓 0 答「没有」.
-    不带颜色的 苹果/方块 = 家族查询 (红+绿 / 四色方块 合计)."""
+    简称与全名同 key (「红外」= 人体红外传感器)."""
     m = _MAT_WHERE_PAT.search(text)
     if not m:
         return None
@@ -253,31 +254,26 @@ def _ans_resource(text):
     return " ".join(seg) if seg else "资源查不到"
 
 
-_MATCN = {"red_apple": "红苹果", "green_apple": "绿苹果", "banana": "香蕉",
-          "pear": "梨", "red_block": "红方块", "green_block": "绿方块",
-          "yellow_block": "黄方块", "blue_block": "蓝方块"}
+_MATCN = {"angle_sensor": "角度传感器", "ultrasonic_sensor": "超声波传感器",
+          "pir_sensor": "人体红外传感器", "temp_humidity_sensor": "温湿度传感器"}
 
-# 物料反查用: 允许 颜色+色+方块 口语形态 (「蓝色方块」/「蓝方块」都认);
-# 不带颜色 = 家族查询 (「苹果」= 红+绿, 「方块」= 红绿黄蓝) — 家族放最后匹配
+# 物料反查用: 全名/口语简称都认 (「人体红外」=「人体红外传感器」); 每类独立, 无颜色家族
 _MAT_WHERE_PAT = re.compile(
-    r"(?:红|绿)(?:色)?苹果|(?:红|绿|黄|蓝)(?:色)?方块|苹果|方块|香蕉|梨")
+    r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
+    r"|角度|超声波|人体红外|红外|温湿度")
+
+# 口语形态 -> 物料 key (简称与全名同 key)
+_MAT_WHERE_KEY = {
+    "角度传感器": "angle_sensor", "角度": "angle_sensor",
+    "超声波传感器": "ultrasonic_sensor", "超声波": "ultrasonic_sensor",
+    "人体红外传感器": "pir_sensor", "人体红外": "pir_sensor",
+    "红外传感器": "pir_sensor", "红外": "pir_sensor",
+    "温湿度传感器": "temp_humidity_sensor", "温湿度": "temp_humidity_sensor"}
 
 
 def _mat_where_family(word):
-    """口语形态 -> (物料 key 列表, 显示名). 带颜色 = 单物料; 不带颜色 = 同家族全部
-    (「苹果」= 红苹果+绿苹果, 「方块」= 红绿黄蓝方块)."""
-    if word.endswith("苹果"):
-        if word[0] in "红绿":
-            k = "red_apple" if word[0] == "红" else "green_apple"
-            return [k], _MATCN[k]
-        return ["red_apple", "green_apple"], "苹果"
-    if word.endswith("方块"):
-        if word[0] in "红绿黄蓝":
-            k = {"红": "red_block", "绿": "green_block",
-                 "黄": "yellow_block", "蓝": "blue_block"}[word[0]]
-            return [k], _MATCN[k]
-        return ["red_block", "green_block", "yellow_block", "blue_block"], "方块"
-    return [{"香蕉": "banana", "梨": "pear"}[word]], word
+    """口语形态 -> (物料 key 列表, 显示名). 传感器每类独立: 简称/全名 -> 同一 key."""
+    return [_MAT_WHERE_KEY[word]], _MATCN[_MAT_WHERE_KEY[word]]
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +290,7 @@ def _mat_where_family(word):
 #   - 答案只展示给用户, QA 路径没有任何 PLC/分拣输出 — LLM 答错也不会执行;
 #   - 答案只允许转述注入事实; 超时/失败/空答案/答"不知道" -> hit=False,
 #     该句照旧回落分拣路径 (空订单 -> PAUSE+HUMAN);
-#   - 物料词 (香蕉/苹果/梨/方块) 一律视为分拣指令, 不进问答 (含 LLM 兜底)。
+#   - 物料词 (角度/超声波/红外/温湿度 等传感器) 一律视为分拣指令, 不进问答 (含 LLM 兜底)。
 # 开关: 环境变量 QA_LLM=1 (服务启动时生效, 如 QA_LLM=1 python3 loop_ui.py);
 #       模型可用 QA_LLM_MODEL 覆盖 (默认 qwen3.5:4b, 与旁路同款)。
 # ---------------------------------------------------------------------------
@@ -390,7 +386,7 @@ def answer(text):
     t0 = time.perf_counter()
     t = (text or "").strip()
     # 物料词 = 分拣指令, 绝不进问答 (与规则层同门); 非问句不答。
-    # 例外: 带「哪」的物料问句 = 反查查询 (「哪个仓库有蓝色方块」), 放行给 _ans_mat_where
+    # 例外: 带「哪」的物料问句 = 反查查询 (「哪个仓库有人体红外传感器」), 放行给 _ans_mat_where
     if not t or (_MATER_RE.search(t) and not re.search(r"哪", t)):
         return False, "", 0.0
     if not _QA_KW.search(t):
@@ -412,7 +408,7 @@ def answer(text):
                 return False, "", 0.0
         elif _MAT_WHERE_PAT.search(t) and re.search(r"哪", t) and re.search(
                 r"有|在|库存|存", t):
-            # 物料→仓库 反查: 「哪个仓库有蓝色方块」— 查台账哪些料场有该物料库存
+            # 物料→仓库 反查: 「哪个仓库有人体红外传感器」— 查台账哪些料场有该物料库存
             ans = _ans_mat_where(t)
             if ans is None:
                 return False, "", 0.0
