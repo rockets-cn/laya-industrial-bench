@@ -22,9 +22,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(HERE, "data", "yard_ledger.db")
 
 YARDS = (1, 2, 3)
-# 物料白名单 (与 bench_yard.MATERIALS 一致; 此处独立维护, 台账不依赖分拣域)
-MATERIALS = ("red_apple", "green_apple", "banana", "pear",
-             "red_block", "green_block", "yellow_block", "blue_block")
+# 物料白名单 (与 bench_yard.MATERIALS 一致: 4 种传感器; 此处独立维护, 台账不依赖分拣域)
+MATERIALS = ("angle_sensor", "ultrasonic_sensor", "pir_sensor",
+             "temp_humidity_sensor")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS moves(
@@ -91,7 +91,7 @@ def record_out(yard, material, qty, note="手动出库"):
 
 def stock():
     """当前库存: 累计入 - 累计出 (按 料场×物料). 返回:
-    {"yards": {1: {"total": n, "items": {"red_apple": n, ...}}, 2: ..., 3: ...},
+    {"yards": {1: {"total": n, "items": {"angle_sensor": n, ...}}, 2: ..., 3: ...},
      "grand_total": 各料场净库存合计 (可为负, 如实展示),
      "moves": 总流水行数}"""
     with _conn() as c:

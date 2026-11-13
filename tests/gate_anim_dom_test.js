@@ -64,7 +64,7 @@ g().setTwin(twinBase());
 frames(2, 100);
 
 // ===== S1: sim 源 armed 事件 → 全旅程从带首 X0=40 =====
-g().setJob([{ yard: 2, material: 'pear', label: '梨 × 2', color: '#a3d977', qty: 2 }]);
+g().setJob([{ yard: 2, material: 'ultrasonic_sensor', label: '超声波传感器 × 2', color: '#fb923c', qty: 2 }]);
 const s1 = twinBase(); s1.sorters[1] = { state: 'armed', ts_ms: nowMs - 50 };
 g().setTwin(s1);
 frames(1, 100);
@@ -76,7 +76,7 @@ check('S1 推杆未动作 (y2=438)', rodY2(2) === 438.0);
 let camSawTask = false;
 for (let i = 0; i < 10; i++) {
   g().twinFrame(nowMs += 100);
-  if (el('gla-visiong').getAttribute('opacity') === '1' && el('gla-vision').textContent.indexOf('梨') >= 0) camSawTask = true;
+  if (el('gla-visiong').getAttribute('opacity') === '1' && el('gla-vision').textContent.indexOf('超声波') >= 0) camSawTask = true;
   if (rodY2(2) < 438.0) break; // 已到推料点
 }
 check('S1 相机显示任务物料识别 (' + el('gla-vision').textContent + ')', camSawTask);
@@ -150,8 +150,8 @@ check('S5 带纹持续前进', beltTx() !== before);
 // 后出现的上游物品会把先过门物品点亮的光门擦掉 → 表现为"第一个有反应, 后面的没反应".
 g().setSrc('device'); frames(2, 100);  // 清空带面
 g().setSrc('sim');
-g().setJob([{ yard: 1, material: 'red_apple', label: '红苹果 × 1', color: '#ef4444', qty: 1 },
-            { yard: 2, material: 'pear', label: '梨 × 1', color: '#a3d977', qty: 1 }]);
+g().setJob([{ yard: 1, material: 'angle_sensor', label: '角度传感器 × 1', color: '#60a5fa', qty: 1 },
+            { yard: 2, material: 'pir_sensor', label: '人体红外传感器 × 1', color: '#ef4444', qty: 1 }]);
 const s6 = twinBase(); s6.sorters[0] = { state: 'armed', ts_ms: nowMs - 50 };
 g().setTwin(s6);
 frames(1, 100);  // 物品 A (1号道) 从带首 X0=40 出发
@@ -168,10 +168,10 @@ check('S6 B 上游行走时 A 的光门 1 保持亮 (多物品 OR, 互不抹除)
 // ===== S7: 真实源"实际看到的就上带" — 视觉事件 → 物品在相机处 (CAMX) 出现,
 // 随带面走; 真实推杆事件 (busy) 到达 → 转任务模式, 到推料点停带拨出 =====
 g().setSrc('device'); frames(2, 100);  // 清空带面
-g().setJob([{ yard: 2, material: 'banana', label: '香蕉 ×1', color: '#fbbf24', qty: 1 }]);
+g().setJob([{ yard: 2, material: 'pir_sensor', label: '人体红外传感器 ×1', color: '#ef4444', qty: 1 }]);
 const s7 = twinBase();
 s7.vision_last = { ts_ms: nowMs - 100, frame_id: 's7-1', yard: 2 };
-s7.vision_label = '识别 · 香蕉 → 2号';
+s7.vision_label = '识别 · 人体红外传感器 → 2号';
 s7.vision_until = nowMs + 5000;
 g().setTwin(s7);
 frames(1, 100);

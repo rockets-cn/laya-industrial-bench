@@ -1,6 +1,6 @@
 <svg viewBox="0 0 1180 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分拣线光门安装示意图 (推杆版)"
  style="width:100%;height:auto;display:block">
-  <!-- 颜色: var(--gate-*, 深色回退). 宿主(桌面预览)可定义 --gate-* 覆盖; loop_ui 深色页直接用回退值. -->
+  <!-- 颜色: gate-* 族 CSS 变量 (深色回退). 宿主(桌面预览)可覆盖; loop_ui 深色页直接用回退值. -->
   <defs>
     <marker id="gw-arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="var(--gate-fg,#e6e6e6)"/>
@@ -18,7 +18,7 @@
   <rect x="840" y="76" width="320" height="140" rx="8" fill="var(--gate-bg,#171a21)" stroke="var(--gate-bd,#262b36)"/>
   <text x="856" y="96" font-size="12" font-weight="700" fill="var(--gate-fg,#e6e6e6)">图例</text>
   <rect x="856" y="108" width="12" height="12" rx="2" fill="var(--gate-acc,#fb923c)"/>
-  <text x="876" y="118" font-size="11" fill="var(--gate-mut,#8a91a0)">物品（例 10×10cm 方块）</text>
+  <text x="876" y="118" font-size="11" fill="var(--gate-mut,#8a91a0)">物品（例 10×10cm 传感器模块）</text>
   <line x1="862" y1="124" x2="862" y2="140" stroke="var(--gate-fg,#e6e6e6)" stroke-width="2" stroke-dasharray="4 3"/>
   <rect x="858" y="120" width="8" height="8" fill="var(--gate-fg,#e6e6e6)"/>
   <rect x="858" y="142" width="8" height="8" fill="none" stroke="var(--gate-fg,#e6e6e6)" stroke-dasharray="2 2"/>

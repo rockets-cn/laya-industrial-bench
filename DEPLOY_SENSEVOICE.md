@@ -120,6 +120,8 @@ models/laya-typed-decisions -> laya/typed-decisions
 ```
 
 测试音频在新设备重新生成 (edge-tts 音色 `zh-CN-XiaoxiaoNeural`):
+> 注: 生产线料场域现仅 **4 传感器**（角度/超声波/人体红外/温湿度, 见
+> `bench_yard.py` CASES）, 下面水果句仅服务独立工具 `bench_industrial.py`。
 ```bash
 .venv/bin/python - <<'EOF'
 import asyncio, edge_tts, subprocess, pathlib

@@ -54,6 +54,15 @@ spec.loader.exec_module(by)
 MATERIALS = by.MATERIALS
 YARDS = by.YARDS  # [1, 2, 3] 与分拣器编号 1:1 对应 (1号料场 = 1号分拣器)
 
+# 指令路由台账 (v2: 选仓权 = 语音指令, 不是固定映射表):
+# 相机识别到的物料按 /dispatch 下发的指令需求路由 — demand[material] = 指令序
+# (FIFO) 的 {yard, remaining, job_id} 队列, 与固件 divert 命令队列逐件执行顺序
+# 对应 (带面 FIFO: 第一件认到的角度传感器 → 第一条角度指令的仓). 相机在光门
+# 上游, 视觉事件先于拨出发生; 需求条目的有效期按"带面走完全程"裕量取 TTL,
+# 过期即丢弃 (不虚构路由). 映射表 (material_map) 仅保留给遗留
+# vision_dispatch=True 自动分拣模式与"无指令时"的兜底标注.
+DEMAND_TTL_S = 180.0
+
 DEFAULT_CFG = {
     "broker": "tcp://127.0.0.1:1883",
     "client_id": "sort-gateway",
@@ -117,7 +126,8 @@ class GatewayStats:
         self.items = {"dispatched": 0, "by_sorter": {}, "by_material": {}}
         self.cmd = {"sent": 0, "ack_ok": 0, "ack_timeout": 0, "retries": 0}
         self.vision = {"events": 0, "dispatched": 0, "recorded": 0,
-                       "unknown": 0, "low_conf": 0, "ignored_grace": 0}
+                       "unknown": 0, "low_conf": 0, "ignored_grace": 0,
+                       "deduped": 0}
         self.lat_cmd_ack = deque(maxlen=500)  # 命令->应答 延迟 (s)
         self.lat_batch = deque(maxlen=500)    # 批次 E2E 延迟 (s)
         self._items_ts = deque()               # (ts, qty) 滚动 5min 吞吐窗口
@@ -231,6 +241,8 @@ class SortGateway:
         self.queue_lock = threading.Lock()
         self.active_job = None
         self.active_lock = threading.Lock()
+        self.demands = {}                       # material -> deque({yard, remaining, job_id, t})
+        self.demands_lock = threading.Lock()
         self.dev_state = {}                        # {"conveyor": ..., "sorter1": ...}
         self.conveyor_note = ""                    # 最近一次 conveyor 遥测 note (带健康监测原因)
         self.ir_present = False                    # 红外 T0 实时"物品在 IR"态 (固件每 500ms 上报 + 沿即时)
@@ -240,6 +252,7 @@ class SortGateway:
         self._rr_counter = {}                      # round_robin 每物料轮转计数
         self._rr_lock = threading.Lock()
         self._job_seq = 0
+        self._vd_last = {}                      # 物料 -> 最近一次 vision 下发时刻 (去重)
         # 运动事件时间线 (设备 sort/line1/motion -> 环形缓冲 + relay):
         # 动画还原"实际情况"用, 保留最近 motion_keep 条.
         self.motion = deque(maxlen=int(self.cfg.get("motion_keep", 100)))
@@ -382,7 +395,12 @@ class SortGateway:
         if math.copysign(1, conf) >= 0 and conf < float(self.mat_map.get("confidence_min", 0.5)):
             self.stats.vision_event("low_conf")
             return
-        sorter = self._map_to_sorter(material)
+        # 选仓权 (v2): 优先按语音指令需求路由 (_demand_route, FIFO 与固件
+        # divert 命令队列同序); 无指令时回退映射表 (遗留 vision_dispatch 自动
+        # 分拣模式的选仓逻辑, 兼作无指令时的兜底标注).
+        sorter = self._demand_route(material)
+        if sorter is None:
+            sorter = self._map_to_sorter(material)
         if sorter is None:
             self.stats.vision_event("unknown")
             return
@@ -411,12 +429,23 @@ class SortGateway:
         # 选仓权在 PC laya 模型 (经 sort/inbound/command / POST /dispatch 下发).
         # HuskyLens 视觉事件默认只记录 (喂孪生"真实侧"), 不自动下发; 只有
         # vision_dispatch=True 才按旧行为 dispatch (HL 决定仓).
+        # 去重: HL 对同一件在视野内每帧都报, 不去重会每帧下发一条 divert ->
+        # 固件队列积压幻影件 (真件推完后还干等后续 IR 沿). 同一物料在
+        # vision_dispatch_dedupe_s 窗口内只下发一次 (一件过视野期间只算一件).
         if self.cfg.get("vision_dispatch", False):
-            job = self.enqueue_job(
-                [{"yard": sorter, "material": material, "qty": 1}],
-                source="vision", path="VISION", extra=vision)
-            if job:
-                self.stats.vision_event("dispatched")
+            now = time.time()
+            dedupe_s = float(self.cfg.get("vision_dispatch_dedupe_s", 3.0))
+            if now - self._vd_last.get(material, 0.0) >= dedupe_s:
+                self._vd_last[material] = now
+                job = self.enqueue_job(
+                    [{"yard": sorter, "material": material, "qty": 1}],
+                    source="vision", path="VISION", extra=vision)
+                if job:
+                    self.stats.vision_event("dispatched")
+                else:
+                    self.stats.vision_event("recorded")
+            else:
+                self.stats.vision_event("deduped")
         else:
             self.stats.vision_event("recorded")
 
@@ -432,6 +461,41 @@ class SortGateway:
         if isinstance(s, int) and s in YARDS[:n]:
             return s
         return None
+
+    # ---------- 指令路由台账 (v2: 语音指令指定路由) ----------
+    def _demand_add(self, yard, material, qty, job_id):
+        """divert 命令成功下发后登记需求: 该物料接下来 qty 件按此仓路由."""
+        with self.demands_lock:
+            self.demands.setdefault(material, deque()).append(
+                {"yard": yard, "remaining": qty, "job_id": job_id,
+                 "t": time.time()})
+
+    def _demand_drop_job(self, job_id):
+        """丢弃某 job 的未消费需求 (job 失败/撤销: 不再按它的仓路由)."""
+        with self.demands_lock:
+            for mat in list(self.demands.keys()):
+                dq = self.demands[mat]
+                for e in list(dq):
+                    if e["job_id"] == job_id:
+                        dq.remove(e)
+                if not dq:
+                    del self.demands[mat]
+
+    def _demand_route(self, material):
+        """按指令需求路由: 返回该物料下一件应去的仓 (FIFO, 消耗 1 件).
+        无需求/全部过期 → None (调用方回退映射表)."""
+        with self.demands_lock:
+            dq = self.demands.get(material)
+            if not dq:
+                return None
+            now = time.time()
+            while dq and (now - dq[0]["t"] > DEMAND_TTL_S
+                          or dq[0]["remaining"] <= 0):
+                dq.popleft()
+            if dq and dq[0]["remaining"] > 0:
+                dq[0]["remaining"] -= 1
+                return dq[0]["yard"]
+            return None
 
     # ---------- 作业队列 ----------
     def _new_job_id(self):
@@ -498,6 +562,13 @@ class SortGateway:
     def _run_job(self, job):
         job["outcome"] = "done"
         self._batch_event(job, "accepted")
+        # 指令路由台账登记时机 = job 开始 (命令已受理即生效, 早于物理执行;
+        # 失败 job 由 _fail 作废). source=vision 的 job 是视觉事件自身路由的
+        # 结果 (需求已在 _on_vision 消耗), 不回填 — 否则台账自我膨胀且永不耗尽.
+        if job.get("source") != "vision":
+            for a in job["actions"]:
+                self._demand_add(a["yard"], a["material"], a["qty"],
+                                 job["job_id"])
         # 1. 传送带: 按最近遥测状态转移到 running
         #    (stopped->start / paused->resume / fault->故障等人工 reset)
         cstate = self.dev_state.get("conveyor")
@@ -549,6 +620,7 @@ class SortGateway:
         job["outcome"] = "fault"
         job["fault"] = {"device": device, "error": error, "ts": _now()}
         job["e2e_s"] = time.time() - job["t0"]
+        self._demand_drop_job(job["job_id"])  # 失败 job 的需求作废, 不再按它路由
         self._latch_fault(job)
         self.stats.job_finished(job)
         self._batch_event(job, "fault")
@@ -662,7 +734,11 @@ class SortGateway:
                 pubs += 1
             need_pub = False
             result, note = self._wait_ack(kind, name, job_id, wait_s)
-            if result == "ok":
+            if result in ("ok", "queued"):
+                # ok     = 设备已完成 (sim 全推完才回 ok)
+                # queued = 固件 divert 已入队即回, 物理推杆异步进行, 最后件
+                #          推完固件另发一条 ok (网关 fire-and-forget, 不阻塞等).
+                # 两者都算"命令已被接受" -> 成功, 绝不重发 (重发 = 重复入队).
                 self.stats.cmd_ack(True, time.perf_counter() - t_start,
                                    republished > 0)
                 return True, note

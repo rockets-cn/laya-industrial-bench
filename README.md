@@ -14,7 +14,9 @@
 (白名单校验 + 顺序执行 + 统计分发) → **3 分拣器 + 1 传送带** (MQTT,
 协议契约 [`docs/sort-mqtt.md`](docs/sort-mqtt.md)); 视觉传感器
 (`vision_input.py`, HSV 像素层识别; 或实体 HuskyLens 2) 发物料事件到同一网关,
-网关按 `config/material_map.json` 映射并下发。无硬件时 `sim_devices.py`
+网关按**语音指令路由**（指令需求台账, FIFO 与固件 divert 命令队列同序）下发;
+无指令时回退 `config/material_map.json`（遗留 `vision_dispatch=True` 自动分拣）。
+无硬件时 `sim_devices.py`
 模拟器闭环; 实体硬件用 **EDGE 101 固件** (`edge101/`, 与模拟器行为等价,
 对网关零改动; RMT 硬件脉冲 + 推杆前侧光门时序触发 (未接线走虚拟光门预测)
 见 `edge101/README.md`)。
@@ -38,8 +40,8 @@ E2E 见 `tests/test_sort_mqtt.py`, 固件单测
 | 水果 | "来两个红苹果和一把香蕉" | `[{action: red_apple, qty: 2}, {action: banana, qty: 1}]` | `bench_industrial.py` |
 | 彩色方块 | "10个红色方块，5个绿色方块，7个黄色方块" | `[{color: red, qty: 10}, {color: green, qty: 5}, {color: yellow, qty: 7}]` | `bench_block.py` |
 | 混合 | "两个红苹果和10个红色方块" | 两条规则层并行、各抽各的，动作合并 | `loop_ui.py` `mixed` 模式 |
-| 料场分拣 | "给1号料场送两个红苹果，3号料场送10个蓝色方块" | `[{yard: 1, material: red_apple, qty: 2}, {yard: 3, material: blue_block, qty: 10}]` | `bench_yard.py` |
-| 料场·分配 | "九十九个香蕉平均分到三个仓库里去" | `[{yard:1,qty:33},{yard:2,qty:33},{yard:3,qty:33}]`（见下「分配指令」） | `bench_yard.py` |
+| 料场分拣 | "给1号料场送两个角度传感器，3号料场送10个温湿度传感器" | `[{yard: 1, material: angle_sensor, qty: 2}, {yard: 3, material: temp_humidity_sensor, qty: 10}]` | `bench_yard.py` |
+| 料场·分配 | "九十九个角度传感器平均分到三个仓库里去" | `[{yard:1,qty:33},{yard:2,qty:33},{yard:3,qty:33}]`（见下「分配指令」） | `bench_yard.py` |
 
 领域可插拔：每条回路都是 `normalize()`（词表/正则）+ `laya_decide()` + `validate()` 三件套，
 换词表即新领域。视觉侧另有 `bench_colorblock.py`：Laya 看不到像素，颜色块识别由像素层
@@ -50,7 +52,7 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
 「把 N 个 X 平均/平分到 M 个仓库」这类指令分两层处理，**任何 LLM 输出都过校验器**：
 
 1. **Tier-1 确定性展开**（毫秒级，无 LLM，路径 `FAST`）：规则层直接做除法，
-   整除均分；除不尽时**余数给小号料场**（如 `100 个香蕉 → 1号 34 / 2号 33 / 3号 33`）。
+   整除均分；除不尽时**余数给小号料场**（如 `100 个角度传感器 → 1号 34 / 2号 33 / 3号 33`）。
    目标解析：`M 个仓库`（M=1..3 → 前 M 号）或点名 `1号和3号`。
 2. **Tier-2 LLM 展开**（路径 `EXPAND`）：结构模糊（未指明哪几个料场等）时，LLM 只判断
    **料场集合**；数量由规则层按「余数给小号料场」**确定性重算**（实测 4b 模型不遵守
@@ -59,7 +61,7 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
    **PAUSE+HUMAN**，提案展示给人工。
 
 即：**能算的不让 LLM 算, 算不了/说得模糊的才让 LLM 算, 且 LLM 永远过校验器。**
-无数量的分配句（"把香蕉平均分到仓库里"）不触发 LLM, 照旧 PAUSE+HUMAN 等人工。
+无数量的分配句（"把角度传感器平均分到仓库里"）不触发 LLM, 照旧 PAUSE+HUMAN 等人工。
 
 ### 超纲料场与部分下发（料场域）
 
@@ -67,14 +69,15 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
 
 - **混合订单混入超纲项**（路径 `PARTIAL`, 橙色徽标）: 在纲项照发（按原话数量, 不重算）,
   超纲项挂起并附「超纲料场 N 号不下发 (物料 xN, 需人工确认)」。
-  例: 「一号料场放三个苹果, 2号料场放4个苹果, 5号料场放6个苹果」→ 1号×3 + 2号×4 下发,
-  5号×6 挂起。页面「📤 下发分拣线」按钮对 PARTIAL 同样可用（只含在纲指令）;
-- **方块未说颜色**（同走 PARTIAL 挂起通道）: 「一号放三个方块, 2号放4个苹果」→
-  2号×4 照发, 1号方块挂起「1号 物料未定, 不下发 (x3, 需人工确认颜色/种类)」—
-  白名单 4 色无法定夺, 规则层与 LLM 都不猜颜色; 纯未定单仍整条 PAUSE+HUMAN;
+  例: 「一号料场放三个角度传感器, 2号料场放4个超声波传感器, 5号料场放6个红外传感器」
+  → 1号×3 + 2号×4 下发, 5号×6 挂起。页面「📤 下发分拣线」按钮对 PARTIAL 同样可用（只含在纲指令）;
+- **传感器未说类型**（同走 PARTIAL 挂起通道）: 「一号库径三个传感器, 2号库径4个角度传感器,
+  3号库径5个温湿度传感器」→ 2号×4 + 3号×5 照发, 1号×3 挂起「1号 物料未定, 不下发
+  (x3, 需人工确认类型)」— 白名单 4 类传感器无法定夺, 规则层与 LLM 都不猜类型;
+  纯未定单仍整条 PAUSE+HUMAN;
 - **纯超纲单 / 分配指令目标含超纲**: 整条暂停 PAUSE+HUMAN — 分配句的数量是除出来的,
   目标集合少一个在纲项就会分多, 规则层不重算, 也不让 LLM 重算（Tier-1/Tier-2 均拒展开）;
-- 归属保证: 超纲号占自己的域, 「5号放6个苹果」不会并入邻近 2号 域。
+- 归属保证: 超纲号占自己的域, 「5号放6个红外传感器」不会并入邻近 2号 域。
 
 ### 简单问答（料场页面, `local_qa.py`）
 
@@ -87,7 +90,7 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
   `yard_ledger`, 分拣下发自动记入, 入-出; 门 `_STOCK_RE` 各/分别/库存/总共, 空库答「暂无库存」）;
 - **硬约束**: 答案 ≤ 30 字（超出截断）; 全程 3 s 超时预算（端口探测 0.4 s/个）,
   查不到/超时不编造——该句回落普通分拣路径（空订单 → PAUSE+HUMAN）;
-- **防误抢**: 句中含物料词（香蕉/苹果/梨/方块）视为分拣指令, 不进问答。
+- **防误抢**: 句中含物料词（角度/超声波/红外/温湿度/传感器）视为分拣指令, 不进问答。
 
 **LLM 兜底层（默认关）**: 规则层认不出的长尾问句（组合/措辞差异）可交给 LLM 基于
 **注入事实**（当前时间/服务端口实测/资源/料场白名单/最近分拣指令）作答：
@@ -118,7 +121,7 @@ ollama serve                   # 或 systemctl --user start ollama-serve
 .venv/bin/python bench_industrial.py 3       # 水果域, 语音全流程 (test_audio/tts_*.wav)
 .venv/bin/python bench_industrial.py 3 text  # 水果域, 文本模式
 .venv/bin/python bench_block.py 3            # 彩色方块域
-.venv/bin/python bench_yard.py 3 text        # 料场分拣域 (1/2/3 号料场 × 8 物料)
+.venv/bin/python bench_yard.py 3 text        # 料场分拣域 (1/2/3 号料场 × 4 传感器)
 .venv/bin/python bench_oob.py                # 超纲验收 (PAUSE+HUMAN)
 
 # 5) 分拣线闭环 (MQTT: 1 传送带 + 3 分拣器, 模拟设备)
@@ -165,7 +168,7 @@ journalctl --user -u laya-loop-ui -f
 |---|---|
 | `bench_industrial.py` | 水果域工业回路基准（语音/文本；含 LLM 旁路与 PAUSE+HUMAN 安全降级） |
 | `bench_block.py` | 彩色方块域回路（颜色×数量；简繁/同音/省略/后置数量/混水果） |
-| `bench_yard.py` | 料场分拣域回路（1/2/3 号料场 × 8 物料；料场号规则层决定+校验、物料 Laya 终审、倒序/同音/否定、超纲暂停） |
+| `bench_yard.py` | 料场分拣域回路（1/2/3 号料场 × 4 传感器；料场号规则层决定+校验、物料 Laya 终审、倒序/同音/否定、超纲暂停） |
 | `bench_colorblock.py` | 颜色块像素层识别基准（HSV 阈值 + 可选 Laya 交叉校验；`--camera/--file`） |
 | `bench_fruit.py` | 纯 Laya 水果描述分类（延迟分位 + 分类准确率） |
 | `bench_pipeline.py` | LLM 意图整理 → Laya 终审 对比管线（`llm_json`/`http_post` 工具函数） |
@@ -186,10 +189,10 @@ journalctl --user -u laya-loop-ui -f
 | `broker_local.py` | 本地 MQTT broker (amqtt, 纯 Python, :1883); 生产建议 mosquitto (topic 约定不变) |
 | `vision_input.py` | 视觉传感器接入: 帧 (合成/图片/`--camera N`) → HSV 像素层识别 4 色方块 (ms 级) → 发 `sort/inbound/vision`; 外部带模型传感器可直发同 topic 跳过本模块 |
 | `edge101/` | **物理控制器固件** (EDGE 101 / DFR1283, ESP32): 板载 RJ45 + HuskyLens 2 (UART) + 步进 (MKS SERVO42C 闭环, RMT 硬件脉冲, EN 走 MCP23017) + PCA9685 I2C 3 舵机 + 3 路光门 (推杆推出时序触发, MCP23017 PB0/1/2; 未接线时虚拟光门按带面位置预测); 与 sim_devices 行为等价, 直接实现 `docs/sort-mqtt.md`; 主机单测 `tests/host/run_tests.sh` (142 项), 接线 `docs/wiring.md`, 构建/烧录见 `edge101/README.md` |
-| `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
-| `tests/test_sort_mqtt.py` | 分拣网关 E2E 52 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
+| `config/sort_gateway.json` / `config/material_map.json` | 网关配置 / 物料→分拣器映射 (**占位, 内容为测试用**, 待现场确认, 见 `OPEN_QUESTIONS.md`) |
+| `tests/test_sort_mqtt.py` | 分拣网关 E2E 77 项 (进程内 broker + 模拟设备 + 网关): 下发/故障恢复/视觉/指令路由 (按指令需求优先于映射表)/SCADA/白名单/统计/divert 时序回归/光门触发 (trigger=photo + 坐标透传)/运动事件时间线 (sort/line1/motion + GET /motion + pos_mm 透传) |
 | `docs/sort-mqtt.md` | MQTT 分拣协议契约 (命令/应答/遥测 topic, 状态机, 白名单, 安全降级, PLC 接入清单) |
-| `edge101/docs/gate_layout_anim.svg` | 分拣线运行示意（俯视 · 动画版 · 数字孪生双模式 · 网页可手动控制）：3 路推杆 + 相机在带首（光门/料道视觉已精简, 仓库标识用「仓 N · IR→推杆=dN」）；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、每轮随机 3 种物料），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源 + 逐件件号, 页面可按 模拟/真实 数据源过滤；任务下发后逐件回放 带首→相机→光门→拨入 全旅程；模拟源无指令时环境供血: 随机物料直通 (过光门不推, 带尾离场), 收到指令才拨入指定仓库, 不 /dispatch 不记台账）；物品 5 种内嵌矢量物料图标 + 任务/供血料道标签（`__gla.setJob`/`__gla.setSrc` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
+| `edge101/docs/gate_layout_anim.svg` | 分拣线运行示意（俯视 · 动画版 · 数字孪生双模式 · 网页可手动控制）：3 路推杆 + 相机在带首（光门/料道视觉已精简, 仓库标识用「仓 N · IR→推杆=dN」）；内嵌 rAF 循环双模式 — 离线=循环演示（带速 1.0 m/s、时间 2:1 放慢、推杆 400ms、每轮随机 3 种物料），在线=按网关 `sort/line1/motion` 时间线实时还原（事件带 `src` 来源 + 逐件件号, 页面可按 模拟/真实 数据源过滤；任务下发后逐件回放 带首→相机→光门→拨入 全旅程；模拟源无指令时环境供血: 随机物料直通 (过光门不推, 带尾离场), 收到指令才拨入指定仓库, 不 /dispatch 不记台账）；物品 9 种内嵌矢量物料图标（4 传感器 + 旧 5 兼容 sim 供血）+ 任务/供血料道标签（`__gla.setJob`/`__gla.setSrc` 注入）；`loop_ui` 光门折叠区优先加载此版, 缺失回落静态版 `gate_layout.svg` |
 | `OPEN_QUESTIONS.md` | 未决问题清单 (物料映射/水果视觉/防重复/PLC 细节…), 待讨论 |
 
 **上游 Laya 引擎**（原样保留，文档见 [`LOCAL_SETUP.md`](LOCAL_SETUP.md)）：
@@ -204,7 +207,7 @@ journalctl --user -u laya-loop-ui -f
   按每条 action 记一行入 `data/yard_ledger.db`（`moves` 表）；PAUSE / QA / 空订单无动作不记账；
   超纲挂起项（PARTIAL 的 oob）不下发、不记账。
 - **出库（手动）**：页面「📦 仓库台账」面板内的出库表单
-  （`POST /ledger/out`，料场 1-3 + 8 物料白名单 + 数量 1~999，越界 422）。
+  （`POST /ledger/out`，料场 1-3 + 4 传感器白名单 + 数量 1~999，越界 422）。
 - **库存**：按 料场×物料 维度 累计入 − 累计出；`GET /ledger` 返回库存 + 最近 20 笔流水。
 - **页面**：「📦 仓库台账」按钮展开面板——三料场库存卡（净件数 + 物料明细）+ 最近流水
   （入=绿/出=橙 + 路径标记）+ 出库表单；面板开着时每次成功下发自动刷新。
@@ -286,10 +289,10 @@ journalctl --user -u laya-loop-ui -f
 - **语音指令自动驱动**：`/run` 出可执行下发（FAST/EXPAND/PARTIAL）后, 页面**自动**
   `POST /dispatch` 到网关（不再手点「📤 下发分拣线」按钮, 该按钮保留作手动重下发）,
   动画随即演示该指令的对应操作；下发同时经 `__gla.setJob()` 把任务物料注入 SVG。
-- **物料图标**：每路 1 件物品 5 个内嵌矢量变体（block 色随任务变 / 香蕉弧形 / 梨 /
-  红苹果 / 绿苹果, 内嵌不挂外链, SVG 离线可开）；armed/busy 时切到本任务物料并显示
-  料道标签（如「香蕉 × 2」, 颜色与物料一致）, ready/fault 隐藏。循环演示模式固定展示
-  香蕉/红苹果/蓝方块三种形态。
+- **物料图标**：每路 1 件物品 9 个内嵌矢量变体（4 传感器: 角度圆弧 / 超声波换能器+声波 /
+  人体红外人形+热波 / 温湿度温度计+水滴, 加旧 5 兼容 sim 供血; 内嵌不挂外链, SVG 离线可开）；
+  armed/busy 时切到本任务物料并显示料道标签（如「角度传感器 × 2」, 颜色与物料一致）,
+  ready/fault 隐藏。循环演示模式固定展示 4 种传感器形态。
 - **全旅程回放（模拟数据源）**：任务下发后不止还原推杆状态, 而是逐件回放
   「物品从带首出现 → 缓行过 HuskyLens 2 → 光门落沿触发推杆 → 拨入料道」的
   完整动作序列：每分拣器一个 `journey` 状态机（travel→armed→busy→wait）,

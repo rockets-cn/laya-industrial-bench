@@ -46,7 +46,7 @@ fault 期间 start/stop/pause 回 busy, 只有 `reset` 可走。
 ### 分拣器 `sort/sorter{n}/cmd` (n = 1..3)
 
 ```json
-{"job_id": "j1732345-1", "action": "divert", "material": "red_block",
+{"job_id": "j1732345-1", "action": "divert", "material": "angle_sensor",
  "qty": 5, "trigger": "photo", "ts": "..."}
 ```
 
@@ -112,7 +112,7 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 ```json
 {"state": "running", "speed_mps": 1.0, "items_in": 42, "ts": "2026-10-30T12:00:00+08:00"}
 {"state": "fault", "speed_mps": 1.0, "steps_total": 18234, "note": "belt slip: measured 0.78 vs commanded 1.00 m/s", "ts": ""}
-{"state": "busy", "diverted_total": 17, "last_material": "red_block", "ts": "2026-10-30T12:00:01+08:00"}
+{"state": "busy", "diverted_total": 17, "last_material": "angle_sensor", "ts": "2026-10-30T12:00:01+08:00"}
 ```
 
 - `state` 为必填 (网关状态机依赖); 其余为设备特有可选字段:
@@ -165,12 +165,12 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 
 ```json
 {"source": "scada", "path": "MQTT", "job_id": "j1732345-1",
- "actions": [{"yard": 1, "material": "red_apple", "qty": 1},
-             {"yard": 1, "material": "red_apple", "qty": 1},
-             {"yard": 3, "material": "blue_block", "qty": 1}]}
+ "actions": [{"yard": 1, "material": "angle_sensor", "qty": 1},
+             {"yard": 1, "material": "angle_sensor", "qty": 1},
+             {"yard": 3, "material": "pir_sensor", "qty": 1}]}
 ```
 
-- 动作逐条 (action = 1 件): 规则层把「三个香蕉进一号仓库」展开为 3 条
+- 动作逐条 (action = 1 件): 规则层把「三个角度传感器进一号仓库」展开为 3 条
   `qty=1` 动作 — 逻辑视图 (页面动作列表 / 台账 / 批事件)。
 - 指令合并: 网关下发 PLC 时同 料场+物料 的连续动作合并回一条
   `divert` 命令 (qty=3): 设备状态机按一条命令逐件执行 (每件一次光门
@@ -180,12 +180,19 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 ### `sort/inbound/vision` (QoS1) — 视觉传感器
 
 ```json
-{"material": "blue_block", "confidence": 0.97, "frame_id": "f-1732-7",
- "source": "hsv_block(4ms)", "bbox": [x, y, w, h], "ts": "..."}
+{"material": "angle_sensor", "confidence": 0.97, "frame_id": "f-1732-7",
+ "source": "huskylens2", "bbox": [x, y, w, h], "ts": "..."}
 ```
 
-- 白名单校验 (8 物料) + `confidence >= confidence_min` (默认 0.5, 见
-  `config/material_map.json`) + 物料→分拣器映射 (`fixed` 表或 `round_robin`)。
+- 白名单校验 (4 传感器) + `confidence >= confidence_min` (默认 0.5, 见
+  `config/material_map.json`) + **指令路由** (选仓权 = 语音指令): 网关维护指令
+  需求台账 (`/dispatch` 受理的 yard×物料×qty, FIFO 与固件 divert 命令队列同序),
+  视觉事件按台账消耗路由; 无指令时回退映射表 (`fixed` 表或 `round_robin`,
+  遗留 `vision_dispatch=True` 自动分拣模式)。
+- 定制模型(旧固件)无真实 conf: 旧固件 Data 段 10 字节不上报 conf, SDK 按 V0.4
+  布局把 offset10-13 当 4B float 解出次正规负数 (JSON 后 ≈ -0.0) — 网关用
+  `copysign` 判符号, conf 为负视为「无有效置信度」直接放行 (Python 里
+  `-0.0 >= 0` 为 True, `>=0` 拦不住)。固件升级 V0.4 (14 字节真 conf) 后失效。
 - 未知物料 / 低置信 → 只计数统计, **不下发** (安全降级)。
 - 每个事件 = 1 件物料 (qty 固定 1)。多帧重复上报的防抖策略见
   `OPEN_QUESTIONS.md` 第 4 条 (未决)。
@@ -202,10 +209,9 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 
 ## 白名单
 
-- 物料 (8): `red_apple 红苹果 / green_apple 绿苹果 / banana 香蕉 / pear 梨 /
-  red_block 红块 / green_block 绿块 / yellow_block 黄块 / blue_block 蓝块`
-  (完整值: `red_apple, green_apple, banana, pear, red_block, green_block,
-  yellow_block, blue_block`)
+- 物料 (4 传感器): `angle_sensor 角度传感器 / ultrasonic_sensor 超声波传感器 /
+  pir_sensor 人体红外传感器 / temp_humidity_sensor 温湿度传感器`
+  (完整值: `angle_sensor, ultrasonic_sensor, pir_sensor, temp_humidity_sensor`)
 - yard: `1..3`; qty: 整数 `1..99`; 队列深度 `queue_max` (默认 16, 超出丢弃并计数)。
 
 ## 网关事件与统计 (网关 → 订阅者)
@@ -227,7 +233,7 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
   "batches": {"total": 12, "done": 11, "fault": 1, "reject": 0, "queue_dropped": 0},
   "items": {"dispatched": 96,
             "by_sorter": {"1": 40, "2": 30, "3": 26},
-            "by_material": {"red_apple": 22, "blue_block": 30, "...": 0}},
+            "by_material": {"angle_sensor": 22, "pir_sensor": 30, "...": 0}},
   "cmd": {"sent": 44, "ack_ok": 42, "ack_timeout": 2, "retries": 2},
   "vision": {"events": 96, "dispatched": 90, "unknown": 3, "low_conf": 3},
   "latency_ms": {"cmd_to_ack": {"mean": 31, "p95": 58, "max": 120},
@@ -354,7 +360,8 @@ OPEN_QUESTIONS 第 3 条), 与本次 3 路前侧触发光门职责不同, 互不
   统计周期 / 批间停带 (`stop_conveyor_after_batch`) /
   队列深度 / 台账路径。
 - `config/material_map.json`: 物料→分拣器映射 (`fixed` 表或 `round_robin`) + 置信度下限。
-  **当前映射是占位**, 待现场确认 (OPEN_QUESTIONS 第 1 条)。
+  **仅用于无指令时兜底与遗留 `vision_dispatch=True` 自动分拣**; 实时选仓权在语音指令
+  (网关指令需求台账)。**当前映射是占位**, 待现场确认 (OPEN_QUESTIONS 第 1 条)。
 - 环境变量: `SORT_MQTT_BROKER` (默认 `tcp://127.0.0.1:1883`)、
   `SORT_GATEWAY_PORT` (默认 8123)。
 

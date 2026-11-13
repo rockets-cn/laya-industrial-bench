@@ -27,7 +27,7 @@ spec_bb = importlib.util.spec_from_file_location("bb", os.path.join(HERE, "bench
 bb = importlib.util.module_from_spec(spec_bb)
 spec_bb.loader.exec_module(bb)
 
-# 料场分拣域 (bench_yard.py): 1/2/3 号料场 × 8 种物料, 语音指令分拣下发
+# 料场分拣域 (bench_yard.py): 1/2/3 号料场 × 4 种传感器, 语音指令分拣下发
 spec_by = importlib.util.spec_from_file_location("by", os.path.join(HERE, "bench_yard.py"))
 by = importlib.util.module_from_spec(spec_by)
 spec_by.loader.exec_module(by)
@@ -71,12 +71,13 @@ PRESETS = [
     ("方块 否定", "8个黄色方块，不要绿色方块", "block"),
     ("方块 超纲", "就给我3个方块", "block"),
     ("混合 水果+方块", "两个红苹果和10个红色方块，再来3个蓝色方块", "mixed"),
-    ("仓库 双场双料", "给1号仓库送两个红苹果，3号仓库送10个蓝色方块", "yard"),
-    ("仓库 倒序", "两个红苹果送到3号仓库，1号仓库来五个香蕉", "yard"),
-    ("仓库 否定", "1号仓库送四个梨，不要绿色方块", "yard"),
-    ("仓库 超纲 4号", "给4号仓库送两个苹果", "yard"),
-    ("仓库 超纲 缺场", "送两个红苹果", "yard"),
-    ("仓库 密集无标点", "一号仓库一个香蕉两个苹果二号仓库三个苹果四个香蕉三号仓库一个梨一个香蕉", "yard"),
+    ("仓库 双场双料", "给1号仓库送两个角度传感器，3号仓库送10个温湿度传感器", "yard"),
+    ("仓库 倒序", "两个超声波传感器送到3号仓库，1号仓库来五个人体红外传感器", "yard"),
+    ("仓库 否定", "1号仓库送四个温湿度传感器，不要人体红外传感器", "yard"),
+    ("仓库 分配", "把九十九个角度传感器平均分到三个仓库", "yard"),
+    ("仓库 超纲 4号", "给4号仓库送两个角度传感器", "yard"),
+    ("仓库 超纲 缺场", "送两个人体红外传感器", "yard"),
+    ("仓库 密集无标点", "一号仓库一个角度传感器两个超声波传感器二号仓库三个人体红外传感器四个温湿度传感器三号仓库一个角度传感器一个超声波传感器", "yard"),
 ]
 
 SIDES = {"fruit": bi, "block": bb, "yard": by}
@@ -698,7 +699,8 @@ async function pushBin(n){
 function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
 const domain='yard'; // 页面专属仓库分拣 (后端 API 仍支持 fruit/block/mixed 基准域; 域标识保持 yard 不变)
-const LEDGER_MAT={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
+const LEDGER_MAT={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块',
+ angle_sensor:'角度传感器',ultrasonic_sensor:'超声波传感器',pir_sensor:'人体红外传感器',temp_humidity_sensor:'温湿度传感器'};
 // ---- 常驻库存 (GET /stock; 仓库信息之上, 每仓一个卡, 样式与仓库信息一致; 不用点台账面板) ----
 async function refreshStock(){
  try{
@@ -936,9 +938,11 @@ async function refreshTwin(){
 }
 function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)}
 const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',
- red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块'};
+ red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块',
+ angle_sensor:'角度传感器',ultrasonic_sensor:'超声波传感器',pir_sensor:'人体红外传感器',temp_humidity_sensor:'温湿度传感器'};
 const MATCOL={red_apple:'#ef4444',green_apple:'#4ade80',banana:'#fbbf24',pear:'#a3d977',
- red_block:'#ef4444',green_block:'#4ade80',yellow_block:'#facc15',blue_block:'#60a5fa'};
+ red_block:'#ef4444',green_block:'#4ade80',yellow_block:'#facc15',blue_block:'#60a5fa',
+ angle_sensor:'#60a5fa',ultrasonic_sensor:'#fb923c',pir_sensor:'#ef4444',temp_humidity_sensor:'#4ade80'};
 // ---- 模型 vs 实际对照 (网关 /jobs 逐批次): laya 命令 vs edge101 执行 vs HL 实际看到 ----
 const CMP_JC={ok:{t:'✓ 一致',c:'#4ade80'},mismatch:{t:'⚠ 物料mismatch',c:'#fb923c'},fault:{t:'✗ 执行失败',c:'#f87171'}};
 function mc(m){return (typeof MATCN!=='undefined'&&MATCN[m])||m;}

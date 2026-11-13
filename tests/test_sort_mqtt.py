@@ -130,6 +130,7 @@ def main():
            "divert_timeout_per_item_s": 1.0, "busy_wait_s": 3.0,
            "busy_wait_max_ext": 3,
            "vision_dispatch": True,   # 测试用 HL 自动 dispatch 路径 (设备门/运动行为)
+           "vision_dispatch_dedupe_s": 0.0,  # 测试模拟离散事件(一件=一条), 禁用去重
            "ledger_path": ledger}
     gw = sm.SortGateway(cfg).start()
     print(f"[test] broker :{BPORT}  gateway HTTP :{GPORT}  ledger={ledger}")
@@ -147,9 +148,9 @@ def main():
     base_stats = gw.stats.batches["done"]
     st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
                          {"source": "test",
-                          "actions": [{"yard": 1, "material": "red_apple", "qty": 2},
-                                      {"yard": 2, "material": "banana", "qty": 3},
-                                      {"yard": 3, "material": "blue_block", "qty": 5}]})
+                          "actions": [{"yard": 1, "material": "angle_sensor", "qty": 2},
+                                      {"yard": 2, "material": "ultrasonic_sensor", "qty": 3},
+                                      {"yard": 3, "material": "pir_sensor", "qty": 5}]})
     check("dispatch 202", st == 202, f"st={st} body={body}")
     job_id = body.get("job_id")
     ok = wait_for(lambda: gw.stats.batches["done"] > base_stats, 10, "批次 done")
@@ -161,9 +162,9 @@ def main():
     check("统计 items=10", s["items"]["dispatched"] == 10, f"got {s['items']}")
     check("统计 by_sorter", s["items"]["by_sorter"] == {"1": 2, "2": 3, "3": 5},
           f"got {s['items']['by_sorter']}")
-    check("统计 by_material", s["items"]["by_material"].get("red_apple") == 2
-          and s["items"]["by_material"].get("banana") == 3
-          and s["items"]["by_material"].get("blue_block") == 5)
+    check("统计 by_material", s["items"]["by_material"].get("angle_sensor") == 2
+          and s["items"]["by_material"].get("ultrasonic_sensor") == 3
+          and s["items"]["by_material"].get("pir_sensor") == 5)
     lines = [json.loads(l) for l in open(ledger)]
     check("台账 1 行 done", len(lines) == 1 and lines[0]["outcome"] == "done",
           f"lines={lines}")
@@ -178,7 +179,7 @@ def main():
     base_fault = gw.stats.batches["fault"]
     st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
                       {"source": "test",
-                       "actions": [{"yard": 2, "material": "green_block", "qty": 1}]})
+                       "actions": [{"yard": 2, "material": "ultrasonic_sensor", "qty": 1}]})
     check("故障期 dispatch 202 入队", st == 202, f"st={st}")
     ok = wait_for(lambda: gw.stats.batches["fault"] > base_fault,
                   10, "故障锁存 (2 次超时)")
@@ -186,7 +187,7 @@ def main():
     check("fault 已置位", gw.fault is not None and "sorter2" in (gw.fault.get("device") or ""),
           f"fault={gw.fault}")
     st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
-                         {"actions": [{"yard": 1, "material": "pear", "qty": 1}]})
+                         {"actions": [{"yard": 1, "material": "angle_sensor", "qty": 1}]})
     check("锁存期 dispatch 409", st == 409, f"st={st} body={body}")
     st, body = http_json(f"http://127.0.0.1:{GPORT}/fault/clear", {})
     check("人工清除 200", st == 200 and body.get("cleared"), f"st={st} body={body}")
@@ -198,13 +199,13 @@ def main():
     time.sleep(0.8)
     base_done = gw.stats.batches["done"]
     st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
-                      {"actions": [{"yard": 1, "material": "pear", "qty": 1}]})
+                      {"actions": [{"yard": 1, "material": "angle_sensor", "qty": 1}]})
     check("清除后 dispatch 202", st == 202, f"st={st}")
     ok = wait_for(lambda: gw.stats.batches["done"] > base_done, 10, "恢复后 done")
     check("恢复后批次完成", ok)
 
     # 模型 vs 实际对照: GET /jobs 返回逐批次 (命令物料/仓/数量 vs 执行成败
-    # vs HuskyLens 实际看到). 该批次命令 pear/仓1, 执行 done; 此刻尚无 HL
+    # vs HuskyLens 实际看到). 该批次命令 angle_sensor/仓1, 执行 done; 此刻尚无 HL
     # 视觉事件 -> judgment=ok (执行成功且无意外物料).
     st, body = http_json(f"http://127.0.0.1:{GPORT}/jobs")
     check("/jobs 200", st == 200, f"st={st}")
@@ -212,8 +213,8 @@ def main():
     check("/jobs 有批次", len(jobs) >= 1, f"count={body.get('count')}")
     if jobs:
         top = jobs[0]
-        check("/jobs 最新=pear 批次 (命令/执行/判定)",
-              top["cmd_materials"] == ["pear"] and top["exec_ok"]
+        check("/jobs 最新=angle_sensor 批次 (命令/执行/判定)",
+              top["cmd_materials"] == ["angle_sensor"] and top["exec_ok"]
               and top["judgment"] == "ok",
               f"top={top}")
 
@@ -227,7 +228,7 @@ def main():
     def pub(topic, payload):
         pc.publish(topic, json.dumps(payload), qos=1)
 
-    pub("sort/inbound/vision", {"material": "red_block", "confidence": 0.9,
+    pub("sort/inbound/vision", {"material": "angle_sensor", "confidence": 0.9,
                                  "frame_id": "t-1", "source": "test"})
     ok = wait_for(lambda: gw.stats.vision["dispatched"] == v_base["dispatched"] + 1,
                   8, "vision 正常物料 dispatched")
@@ -237,7 +238,7 @@ def main():
     ok = wait_for(lambda: gw.stats.vision["unknown"] == v_base["unknown"] + 1,
                   8, "vision 未知物料")
     check("vision 未知物料 unknown", ok, f"got {gw.stats.vision}")
-    pub("sort/inbound/vision", {"material": "blue_block", "confidence": 0.1,
+    pub("sort/inbound/vision", {"material": "pir_sensor", "confidence": 0.1,
                                  "frame_id": "t-3", "source": "test"})
     ok = wait_for(lambda: gw.stats.vision["low_conf"] == v_base["low_conf"] + 1,
                   8, "vision 低置信")
@@ -250,7 +251,7 @@ def main():
           st == 200 and body.get("count") == 1 and len(vis) == 1, f"got {st} {body}")
     if vis:
         check("/vision 事件内容 (物料/去向/置信度/时间)",
-              vis[0]["material"] == "red_block" and vis[0]["confidence"] == 0.9
+              vis[0]["material"] == "angle_sensor" and vis[0]["confidence"] == 0.9
               and vis[0]["yard"] in (1, 2, 3) and "ts" in vis[0],
               f"got {vis[0]}")
 
@@ -260,7 +261,7 @@ def main():
     base_rec = gw.stats.vision.get("recorded", 0)
     base_disp_ro = gw.stats.vision["dispatched"]
     base_done_ro = gw.stats.batches["done"]
-    pub("sort/inbound/vision", {"material": "banana", "confidence": 0.9,
+    pub("sort/inbound/vision", {"material": "temp_humidity_sensor", "confidence": 0.9,
                                  "frame_id": "t-rec", "source": "test"})
     ok_ro = wait_for(lambda: gw.stats.vision.get("recorded", 0) == base_rec + 1,
                      6, "record-only 记账")
@@ -270,11 +271,54 @@ def main():
           f"vision={gw.stats.vision}")
     gw.cfg["vision_dispatch"] = True   # 恢复 (后续节 9/10 依赖 HL 自动 dispatch)
 
+    # ---------- 3b. 指令路由 (v2: 语音指令指定路由, 优先于映射表) ----------
+    # 映射表定死 temp_humidity_sensor → 1 号仓, 但指令指定 2 号仓 →
+    # 视觉事件必须按指令路由 (FIFO 逐件消耗); 指令耗尽后回退映射表.
+    with gw.demands_lock:
+        gw.demands.clear()  # 隔离: 前面各节的需求残留不影响本节断言
+    st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                         {"source": "test-cmd-route",
+                          "actions": [{"yard": 2, "material": "temp_humidity_sensor",
+                                       "qty": 2}]})
+    check("指令 dispatch 202", st == 202, f"st={st} body={body}")
+    base14d = s2c.diverted_total
+    ok = wait_for(lambda: s2c.diverted_total == base14d + 2, 10, "指令 job done")
+    check("指令 job done (divert×2)", ok, f"diverted={s2c.diverted_total}")
+    pub("sort/inbound/vision", {"material": "temp_humidity_sensor", "confidence": 0.9,
+                                 "frame_id": "t-cmd-1", "source": "test"})
+    ok = wait_for(lambda: s2c.diverted_total == base14d + 3, 8, "视觉件1 -> 指令仓")
+    check("视觉件 1 -> 指令仓 (2, 不是映射表的 1)", ok,
+          f"diverted={s2c.diverted_total}")
+    st, body = http_json(f"http://127.0.0.1:{GPORT}/vision")
+    vis = body.get("vision", [])
+    check("/vision yard=2 (按指令路由)",
+          vis and vis[-1]["material"] == "temp_humidity_sensor"
+          and vis[-1]["yard"] == 2,
+          f"vis={vis[-1] if vis else None}")
+    pub("sort/inbound/vision", {"material": "temp_humidity_sensor", "confidence": 0.9,
+                                 "frame_id": "t-cmd-2", "source": "test"})
+    ok = wait_for(lambda: s2c.diverted_total == base14d + 4, 8, "视觉件2 -> 指令仓")
+    check("视觉件 2 -> 指令仓 (FIFO 未耗尽)", ok,
+          f"diverted={s2c.diverted_total}")
+    # 指令耗尽 (qty=2 已消耗) → 件 3 无需求, 回退映射表 (1 号仓)
+    base15d = s1.diverted_total
+    pub("sort/inbound/vision", {"material": "temp_humidity_sensor", "confidence": 0.9,
+                                 "frame_id": "t-cmd-3", "source": "test"})
+    ok = wait_for(lambda: s1.diverted_total == base15d + 1, 8, "视觉件3 -> 映射表兜底")
+    check("指令耗尽 -> 映射表兜底 (1 号仓)", ok,
+          f"diverted={s1.diverted_total}")
+    st, body = http_json(f"http://127.0.0.1:{GPORT}/vision")
+    vis = body.get("vision", [])
+    check("/vision yard=1 (映射表兜底)",
+          vis and vis[-1]["material"] == "temp_humidity_sensor"
+          and vis[-1]["yard"] == 1,
+          f"vis={vis[-1] if vis else None}")
+
     # ---------- 4. SCADA 入站命令 ----------
     print("\n== 4. SCADA 入站 sort/inbound/command ==")
     pub("sort/inbound/command",
         {"source": "scada-test", "path": "MQTT",
-         "actions": [{"yard": 3, "material": "yellow_block", "qty": 2}]})
+         "actions": [{"yard": 3, "material": "pir_sensor", "qty": 2}]})
     deadline = time.time() + 8
     while time.time() < deadline:
         lines = [json.loads(l) for l in open(ledger)]
@@ -289,10 +333,10 @@ def main():
     # ---------- 5. 非法 actions 拒绝 ----------
     print("\n== 5. 白名单拒绝 ==")
     base_drop = gw.stats.batches["queue_dropped"]
-    bad = [{"actions": [{"yard": 9, "material": "pear", "qty": 1}]},
+    bad = [{"actions": [{"yard": 9, "material": "angle_sensor", "qty": 1}]},
            {"actions": [{"yard": 1, "material": "durian", "qty": 1}]},
-           {"actions": [{"yard": 1, "material": "pear", "qty": 0}]},
-           {"actions": [{"yard": 1, "material": "pear", "qty": 100}]}]
+           {"actions": [{"yard": 1, "material": "angle_sensor", "qty": 0}]},
+           {"actions": [{"yard": 1, "material": "angle_sensor", "qty": 100}]}]
     sts = []
     for b in bad:
         st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch", b)
@@ -333,25 +377,28 @@ def main():
               f"got {s6['items']['dispatched']}")
     rc.loop_stop(); rc.disconnect()
 
-    # ---------- 7. 视觉传感器 E2E (合成帧 -> HSV 识别 -> divert) ----------
-    print("\n== 7. 视觉传感器 E2E (合成帧) ==")
+    # ---------- 7. 视觉入站 E2E (HSV 单元 + 传感器事件 -> divert) ----------
+    print("\n== 7. 视觉入站 E2E (HSV 单元 + 传感器事件) ==")
     import vision_input as vi  # noqa: E402
     import bench_colorblock as bc  # noqa: E402
     vision = vi.HSVBlockVision(frac_min=0.08)
     frame = bc.make_test_frames()[0][1]  # 单色-红
     r = vision.detect(frame)
-    check("HSV 识别 red_block", r is not None and r.material == "red_block",
+    check("HSV 单元识别 red_block (模拟域工具)", r is not None and r.material == "red_block",
           f"got {r.to_dict() if r else None}")
     check("HSV 置信度>=0.5", r is not None and r.confidence >= 0.5,
           f"got {r.confidence}" if r else "None")
-    base_div = s2c.diverted_total
+    # 真实链路 = HuskyLens 按名识别 4 传感器: 注入传感器视觉事件
+    # (angle_sensor -> 1 号仓, material_map.json 定稿)
+    base_div = s1.diverted_total
     base_vd = gw.stats.vision["dispatched"]
-    pub("sort/inbound/vision", r.to_dict())
-    ok = wait_for(lambda: s2c.diverted_total == base_div + 1
+    pub("sort/inbound/vision", {"material": "angle_sensor", "confidence": 0.9,
+                                 "frame_id": "t-hl", "source": "test"})
+    ok = wait_for(lambda: s1.diverted_total == base_div + 1
                   and gw.stats.vision["dispatched"] == base_vd + 1,
-                  8, "视觉帧 -> divert 2 号分拣器")
-    check("视觉帧 -> 2 号分拣器 divert", ok,
-          f"diverted={s2c.diverted_total} disp={gw.stats.vision['dispatched']}")
+                  8, "视觉事件 -> divert 1 号分拣器")
+    check("视觉事件 -> 1 号分拣器 divert", ok,
+          f"diverted={s1.diverted_total} disp={gw.stats.vision['dispatched']}")
 
     # ---------- 8. divert 时序回归 (实机: ~0.9s/件, 旧固定 3s 超时必炸) ----------
     print("\n== 8. divert 时序回归 (实机时序) ==")
@@ -365,7 +412,7 @@ def main():
         base8, base8d = gw.stats.batches["done"], s1.diverted_total
         st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
                           {"source": "test",
-                           "actions": [{"yard": 1, "material": "red_apple", "qty": 4}]})
+                           "actions": [{"yard": 1, "material": "angle_sensor", "qty": 4}]})
         ok = wait_for(lambda: s1.diverted_total == base8d + 4, 15,
                       "拨 4 件 (实际 3.6s)")
         check("qty=4 超旧 3s 超时 -> 现在成功", ok and st == 202, f"st={st}")
@@ -381,7 +428,7 @@ def main():
         base9, base9d = gw.stats.batches["done"], s2c.diverted_total
         st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
                           {"source": "test",
-                           "actions": [{"yard": 2, "material": "banana", "qty": 1}]})
+                           "actions": [{"yard": 2, "material": "pir_sensor", "qty": 1}]})
         ok = wait_for(lambda: s2c.diverted_total == base9d + 1, 15,
                       "busy 延长后完成")
         check("设备慢 (4s) + 重发撞 busy -> 仍完成", ok and st == 202, f"st={st}")
@@ -401,8 +448,8 @@ def main():
     # ---------- 9. IR 触发回归 (divert -> armed -> IR 到仓 -> 推入 + 视觉坐标透传) ----------
     # 新方案: 执行器单点红外 (IR, T0) 触发, 带速外推到仓, 停带推杆. 网关仍带
     # divert_trigger 配置 (旧 photo 语义; 执行器/sim 忽略, 仅作兼容保留).
-    # 物料选 banana: config/material_map.json 定稿映射 水果->3 号仓 (本节省时
-    # 桩全打在 s3 上); yellow/blue 方块->1 号, 红/绿方块->2 号 (70b26db 定稿)
+    # 物料选 pir_sensor: config/material_map.json 定稿映射 pir_sensor->3 号仓 (本节省时
+    # 桩全打在 s3 上); angle/temp_humidity->1 号, ultrasonic->2 号 (ba38df9 定稿)
     print("\n== 9. IR 触发 (armed->ir_due->done) ==")
     saved_cfg9 = {k: gw.cfg.get(k) for k in ("divert_trigger", "photo_margin_s",
                                              "ack_timeout_s")}
@@ -445,7 +492,7 @@ def main():
                 time.sleep(0.02)
 
         threading.Thread(target=sample_states, daemon=True).start()
-        pub("sort/inbound/vision", {"material": "banana", "confidence": 0.9,
+        pub("sort/inbound/vision", {"material": "pir_sensor", "confidence": 0.9,
                                      "frame_id": "t-gate", "x": 120, "y": 80,
                                      "w": 40, "h": 40})
         ok = wait_for(lambda: s3.diverted_total == base10d + 1, 10,
@@ -466,13 +513,13 @@ def main():
                                   for e in batch_events), 8, "批次事件带 vision.x")
         ev = [e for e in batch_events if (e.get("vision") or {}).get("x") == 120]
         check("批次事件透传视觉坐标", ok and ev and ev[0]["vision"]["y"] == 80
-              and ev[0]["vision"]["material"] == "banana",
+              and ev[0]["vision"]["material"] == "pir_sensor",
               f"ev={ev[0] if ev else None}")
 
         # 9c. IR 无物品 (期望的件没到) -> 设备 fault -> 网关锁存
         s3.ir_dead = True
         base11f = gw.stats.batches["fault"]
-        pub("sort/inbound/vision", {"material": "banana", "confidence": 0.9,
+        pub("sort/inbound/vision", {"material": "pir_sensor", "confidence": 0.9,
                                      "frame_id": "t-gate-2"})
         ok = wait_for(lambda: gw.stats.batches["fault"] > base11f, 12,
                       "IR 超时 -> 故障锁存")
@@ -523,8 +570,8 @@ def main():
               f"st={st} body={str(body)[:80]}")
         n_before = body.get("count", 0)
         base12 = gw.stats.batches["done"]
-        # red_block -> 2 号分拣器 (s2c), IR 时序: armed(cmd) -> busy(ir_due) -> done
-        pub("sort/inbound/vision", {"material": "red_block", "confidence": 0.9,
+        # ultrasonic_sensor -> 2 号分拣器 (s2c), IR 时序: armed(cmd) -> busy(ir_due) -> done
+        pub("sort/inbound/vision", {"material": "ultrasonic_sensor", "confidence": 0.9,
                                     "frame_id": "t-motion", "x": 200, "y": 90,
                                     "w": 40, "h": 30, "pos_mm": 25.5})
         ok = wait_for(lambda: gw.stats.batches["done"] > base12, 10, "批次 done")
@@ -577,7 +624,7 @@ def main():
               f"fault={gw.fault}")
         st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
                              {"source": "test",
-                              "actions": [{"yard": 1, "material": "banana",
+                              "actions": [{"yard": 1, "material": "angle_sensor",
                                            "qty": 1}]})
         check("锁存期 dispatch 409", st == 409, f"st={st} body={body}")
         st, body = http_json(f"http://127.0.0.1:{GPORT}/health")
@@ -595,7 +642,7 @@ def main():
         check("清除后设备回 stopped (reset 下发)", ok, f"dev={gw.dev_state}")
         st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
                              {"source": "test",
-                              "actions": [{"yard": 1, "material": "red_apple",
+                              "actions": [{"yard": 1, "material": "pir_sensor",
                                            "qty": 2}]})
         check("清除后 dispatch 202", st == 202, f"st={st} body={body}")
         ok = wait_for(lambda: gw.stats.batches["done"] > base13, 10,

@@ -102,7 +102,9 @@
   <circle cx="1110" cy="400" r="3" fill="var(--gate-fg,#e6e6e6)"/>
 
   <!-- 物品 ×3 (脚本驱动: 3 号口顺序, 件距 270px = 0.9m).
-       每物 5 变体: block(方块, 颜色脚本设) / banana / pear / red_apple / green_apple,
+       每物 9 变体: block(方块, 颜色脚本设) / banana / pear / red_apple / green_apple
+       (旧 sim 供血兼容) / angle_sensor / ultrasonic_sensor / pir_sensor /
+       temp_humidity_sensor (4 传感器, 真实链路物料);
        内嵌矢量图标 (不依赖外部图片: 独立 XML/离线/内联三态均可用); 脚本按任务物料切换. -->
   <g id="gla-obj-1" opacity="0" transform="translate(40,400)">
     <g transform="scale(2)">
@@ -111,6 +113,10 @@
     <g id="gla-obj-1-pear" display="none"><circle cx="0" cy="2.8" r="5.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><circle cx="0" cy="-3.2" r="3.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><line x1="0" y1="-6.4" x2="0.5" y2="-8.8" stroke="#78350f" stroke-width="1.1"/></g>
     <g id="gla-obj-1-red_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#ef4444" stroke="#991b1b" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#4ade80" transform="rotate(-20 3.2 -6.4)"/></g>
     <g id="gla-obj-1-green_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#4ade80" stroke="#166534" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#bbf7d0" transform="rotate(-20 3.2 -6.4)"/></g>
+    <g id="gla-obj-1-angle_sensor" display="none"><line x1="-6" y1="5" x2="7" y2="5" stroke="#60a5fa" stroke-width="1.4"/><line x1="-6" y1="5" x2="3.9" y2="-4.9" stroke="#60a5fa" stroke-width="1.4"/><path d="M -0.5 5 A 5.5 5.5 0 0 0 -2.11 1.11" fill="none" stroke="#60a5fa" stroke-width="1.2"/><path d="M 5.03 -6.03 L 5.18 -4.9 L 3.9 -6.18 Z" fill="#60a5fa"/><circle cx="-6" cy="5" r="1.3" fill="#60a5fa"/></g>
+    <g id="gla-obj-1-ultrasonic_sensor" display="none"><path d="M -5 -4.5 A 4.5 4.5 0 0 1 -5 4.5 Z" fill="#fb923c"/><path d="M -0.82 -4.98 A 6.5 6.5 0 0 1 -0.82 4.98" fill="none" stroke="#fb923c" stroke-width="1.3" stroke-linecap="round"/><path d="M 1.54 -5.89 A 8.8 8.8 0 0 1 1.54 5.89" fill="none" stroke="#fb923c" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g id="gla-obj-1-pir_sensor" display="none"><circle cx="-3.5" cy="-4.5" r="2.3" fill="#ef4444"/><path d="M -6 6 L -6 0.5 A 2.5 2.5 0 0 1 -1 0.5 L -1 6 Z" fill="#ef4444"/><path d="M 1.5 -4.5 A 5 5 0 0 1 1.5 4.5" fill="none" stroke="#ef4444" stroke-width="1.3" stroke-linecap="round"/><path d="M 4 -2.5 A 3 3 0 0 1 4 2.5" fill="none" stroke="#ef4444" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g id="gla-obj-1-temp_humidity_sensor" display="none"><rect x="-4.2" y="-6.5" width="2.4" height="9.5" rx="1.2" fill="#4ade80"/><circle cx="-3" cy="3" r="3" fill="#4ade80"/><path d="M 3.5 -4.5 C 5.3 -2.2 6.3 -0.6 6.3 0.9 A 2.8 2.8 0 1 1 0.7 0.9 C 0.7 -0.6 1.7 -2.2 3.5 -4.5 Z" fill="#4ade80"/></g>
     </g>
   </g>
   <g id="gla-obj-2" opacity="0" transform="translate(40,400)">
@@ -120,6 +126,10 @@
     <g id="gla-obj-2-pear" display="none"><circle cx="0" cy="2.8" r="5.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><circle cx="0" cy="-3.2" r="3.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><line x1="0" y1="-6.4" x2="0.5" y2="-8.8" stroke="#78350f" stroke-width="1.1"/></g>
     <g id="gla-obj-2-red_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#ef4444" stroke="#991b1b" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#4ade80" transform="rotate(-20 3.2 -6.4)"/></g>
     <g id="gla-obj-2-green_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#4ade80" stroke="#166534" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#bbf7d0" transform="rotate(-20 3.2 -6.4)"/></g>
+    <g id="gla-obj-2-angle_sensor" display="none"><line x1="-6" y1="5" x2="7" y2="5" stroke="#60a5fa" stroke-width="1.4"/><line x1="-6" y1="5" x2="3.9" y2="-4.9" stroke="#60a5fa" stroke-width="1.4"/><path d="M -0.5 5 A 5.5 5.5 0 0 0 -2.11 1.11" fill="none" stroke="#60a5fa" stroke-width="1.2"/><path d="M 5.03 -6.03 L 5.18 -4.9 L 3.9 -6.18 Z" fill="#60a5fa"/><circle cx="-6" cy="5" r="1.3" fill="#60a5fa"/></g>
+    <g id="gla-obj-2-ultrasonic_sensor" display="none"><path d="M -5 -4.5 A 4.5 4.5 0 0 1 -5 4.5 Z" fill="#fb923c"/><path d="M -0.82 -4.98 A 6.5 6.5 0 0 1 -0.82 4.98" fill="none" stroke="#fb923c" stroke-width="1.3" stroke-linecap="round"/><path d="M 1.54 -5.89 A 8.8 8.8 0 0 1 1.54 5.89" fill="none" stroke="#fb923c" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g id="gla-obj-2-pir_sensor" display="none"><circle cx="-3.5" cy="-4.5" r="2.3" fill="#ef4444"/><path d="M -6 6 L -6 0.5 A 2.5 2.5 0 0 1 -1 0.5 L -1 6 Z" fill="#ef4444"/><path d="M 1.5 -4.5 A 5 5 0 0 1 1.5 4.5" fill="none" stroke="#ef4444" stroke-width="1.3" stroke-linecap="round"/><path d="M 4 -2.5 A 3 3 0 0 1 4 2.5" fill="none" stroke="#ef4444" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g id="gla-obj-2-temp_humidity_sensor" display="none"><rect x="-4.2" y="-6.5" width="2.4" height="9.5" rx="1.2" fill="#4ade80"/><circle cx="-3" cy="3" r="3" fill="#4ade80"/><path d="M 3.5 -4.5 C 5.3 -2.2 6.3 -0.6 6.3 0.9 A 2.8 2.8 0 1 1 0.7 0.9 C 0.7 -0.6 1.7 -2.2 3.5 -4.5 Z" fill="#4ade80"/></g>
     </g>
   </g>
   <g id="gla-obj-3" opacity="0" transform="translate(40,400)">
@@ -129,6 +139,10 @@
     <g id="gla-obj-3-pear" display="none"><circle cx="0" cy="2.8" r="5.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><circle cx="0" cy="-3.2" r="3.6" fill="#a3d977" stroke="#4d7c0f" stroke-width="0.8"/><line x1="0" y1="-6.4" x2="0.5" y2="-8.8" stroke="#78350f" stroke-width="1.1"/></g>
     <g id="gla-obj-3-red_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#ef4444" stroke="#991b1b" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#4ade80" transform="rotate(-20 3.2 -6.4)"/></g>
     <g id="gla-obj-3-green_apple" display="none"><circle cx="0" cy="1.2" r="6.2" fill="#4ade80" stroke="#166534" stroke-width="0.8"/><line x1="0" y1="-4.6" x2="0.9" y2="-7.6" stroke="#78350f" stroke-width="1.1"/><ellipse cx="3.2" cy="-6.4" rx="2.5" ry="1.4" fill="#bbf7d0" transform="rotate(-20 3.2 -6.4)"/></g>
+    <g id="gla-obj-3-angle_sensor" display="none"><line x1="-6" y1="5" x2="7" y2="5" stroke="#60a5fa" stroke-width="1.4"/><line x1="-6" y1="5" x2="3.9" y2="-4.9" stroke="#60a5fa" stroke-width="1.4"/><path d="M -0.5 5 A 5.5 5.5 0 0 0 -2.11 1.11" fill="none" stroke="#60a5fa" stroke-width="1.2"/><path d="M 5.03 -6.03 L 5.18 -4.9 L 3.9 -6.18 Z" fill="#60a5fa"/><circle cx="-6" cy="5" r="1.3" fill="#60a5fa"/></g>
+    <g id="gla-obj-3-ultrasonic_sensor" display="none"><path d="M -5 -4.5 A 4.5 4.5 0 0 1 -5 4.5 Z" fill="#fb923c"/><path d="M -0.82 -4.98 A 6.5 6.5 0 0 1 -0.82 4.98" fill="none" stroke="#fb923c" stroke-width="1.3" stroke-linecap="round"/><path d="M 1.54 -5.89 A 8.8 8.8 0 0 1 1.54 5.89" fill="none" stroke="#fb923c" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g id="gla-obj-3-pir_sensor" display="none"><circle cx="-3.5" cy="-4.5" r="2.3" fill="#ef4444"/><path d="M -6 6 L -6 0.5 A 2.5 2.5 0 0 1 -1 0.5 L -1 6 Z" fill="#ef4444"/><path d="M 1.5 -4.5 A 5 5 0 0 1 1.5 4.5" fill="none" stroke="#ef4444" stroke-width="1.3" stroke-linecap="round"/><path d="M 4 -2.5 A 3 3 0 0 1 4 2.5" fill="none" stroke="#ef4444" stroke-width="1.3" stroke-linecap="round"/></g>
+    <g id="gla-obj-3-temp_humidity_sensor" display="none"><rect x="-4.2" y="-6.5" width="2.4" height="9.5" rx="1.2" fill="#4ade80"/><circle cx="-3" cy="3" r="3" fill="#4ade80"/><path d="M 3.5 -4.5 C 5.3 -2.2 6.3 -0.6 6.3 0.9 A 2.8 2.8 0 1 1 0.7 0.9 C 0.7 -0.6 1.7 -2.2 3.5 -4.5 Z" fill="#4ade80"/></g>
     </g>
   </g>
 
@@ -300,10 +314,11 @@
   // ---- 数字孪生同步模式: 页面轮询网关(health/motion)注入真实状态; 离线回落循环演示 ----
   var twinMode=false, twinData=null;
   var PXM=303.0; // 1px≈3.3mm → 1m≈303px
-  var jobMats=[null,null,null]; // 每分拣器任务物料 {m:变体键, label:'香蕉 ×2', color:'#fbbf24'} (页面 setJob 注入)
-  var VARKEYS=['block','banana','pear','red_apple','green_apple'];
+  var jobMats=[null,null,null]; // 每分拣器任务物料 {m:变体键, label:'角度传感器 ×2', color:'#60a5fa'} (页面 setJob 注入)
+  var VARKEYS=['block','banana','pear','red_apple','green_apple',
+               'angle_sensor','ultrasonic_sensor','pir_sensor','temp_humidity_sensor'];
   function setVariant(i,key){
-    for(var k=0;5>k;k++){
+    for(var k=0;9>k;k++){
       get('gla-obj-'+(i+1)+'-'+VARKEYS[k]).setAttribute('display',(VARKEYS[k]===key)?'inline':'none');
     }
     var jm=jmat(i);
@@ -372,11 +387,10 @@
     visLabel=nm+tag;
     visUntil=now+2600;
   }
-  var DEMOS=[{m:'banana',label:'香蕉',color:'#fbbf24'},
-             {m:'pear',label:'梨',color:'#a3d977'},
-             {m:'red_apple',label:'红苹果',color:'#ef4444'},
-             {m:'green_apple',label:'绿苹果',color:'#4ade80'},
-             {m:'block',label:'蓝方块',color:'#60a5fa'}];
+  var DEMOS=[{m:'angle_sensor',label:'角度传感器',color:'#60a5fa'},
+             {m:'ultrasonic_sensor',label:'超声波传感器',color:'#fb923c'},
+             {m:'pir_sensor',label:'人体红外传感器',color:'#ef4444'},
+             {m:'temp_humidity_sensor',label:'温湿度传感器',color:'#4ade80'}];
   function demoPick(){ // 循环演示每轮随机取 3 种物料 (模拟混合带)
     var pool=DEMOS.slice();
     for(var r=2;r>=0;r--){
@@ -393,12 +407,17 @@
   //      带首出现, 缓行过 HuskyLens 2 (识别中), 依次经过三路光门 (光门亮灯,
   //      推杆不动作), 直通到带尾离场. 不截留任何物品: 收到指令后, 对应物料
   //      才按视觉识别结果在指定仓库拨入 (见下方任务旅程). 纯客户端时间线
-  //      (不 /dispatch, 不记台账), 物料池为全量 8 种 (block 变体随颜色区分)
-  var POOL8=[
+  //      (不 /dispatch, 不记台账), 物料池为全量 12 种 (旧 8 + 4 传感器;
+  //      block 变体随颜色区分, 传感器各有独立矢量图标)
+  var POOL12=[
     {m:'banana',label:'香蕉',color:'#fbbf24'},{m:'pear',label:'梨',color:'#a3d977'},
     {m:'red_apple',label:'红苹果',color:'#ef4444'},{m:'green_apple',label:'绿苹果',color:'#4ade80'},
     {m:'block',label:'红色方块',color:'#ef4444'},{m:'block',label:'绿色方块',color:'#4ade80'},
-    {m:'block',label:'黄色方块',color:'#facc15'},{m:'block',label:'蓝色方块',color:'#60a5fa'}];
+    {m:'block',label:'黄色方块',color:'#facc15'},{m:'block',label:'蓝色方块',color:'#60a5fa'},
+    {m:'angle_sensor',label:'角度传感器',color:'#60a5fa'},
+    {m:'ultrasonic_sensor',label:'超声波传感器',color:'#fb923c'},
+    {m:'pir_sensor',label:'人体红外传感器',color:'#ef4444'},
+    {m:'temp_humidity_sensor',label:'温湿度传感器',color:'#4ade80'}];
   var nextAmb=0;
   function jmat(i){var jj=journey[i];return jj?(jj.mat?jj.mat:jobMats[i]):jobMats[i];} // 旅程物料: 供血项自带, 任务项取注入
   function twinFrame(now){
@@ -439,7 +458,7 @@
           for(var fi=0;3>fi;fi++){if(!journey[fi])freeL[freeL.length]=fi;}
           if(freeL.length>0){
             var fl=freeL[Math.floor(Math.random()*freeL.length)];
-            var pm=POOL8[Math.floor(Math.random()*POOL8.length)];
+            var pm=POOL12[Math.floor(Math.random()*POOL12.length)];
             startJourney(fl,X0,now,'pass');
             journey[fl].mat={m:pm.m,label:pm.label,color:pm.color};
             nextAmb=now+1500+Math.floor(Math.random()*4000); // 间隔随机 → 带面件距不均匀
