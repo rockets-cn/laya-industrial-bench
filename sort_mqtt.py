@@ -33,6 +33,7 @@ Run: .venv/bin/python sort_mqtt.py          # broker tcp://127.0.0.1:1883, HTTP 
 """
 
 import json
+import math
 import os
 import re
 import threading
@@ -372,7 +373,13 @@ class SortGateway:
             print(f"[gateway] 视觉未知物料 {material!r} "
                   f"(frame {payload.get('frame_id')})", flush=True)
             return
-        if conf < float(self.mat_map.get("confidence_min", 0.5)):
+        # HuskyLens2 定制模型(旧固件, Data段10字节)不上报真实 conf:
+        # SDK 按 V0.4 布局把 offset10-13 当 4B float 读, 实际是
+        # name_length+名字前3字节 → 解出次正规负数, JSON 序列化后 ≈ -0.0。
+        # 注意: Python 里 -0.0 >= 0 为 True, 必须用 copysign 区分符号。
+        # conf 为负(含 -0.0)视为"无有效置信度", 跳过 confmin 过滤直接放行。
+        # 日后升级 HuskyLens2 固件到 V0.4(14字节, 有真conf)后此分支自动失效。
+        if math.copysign(1, conf) >= 0 and conf < float(self.mat_map.get("confidence_min", 0.5)):
             self.stats.vision_event("low_conf")
             return
         sorter = self._map_to_sorter(material)

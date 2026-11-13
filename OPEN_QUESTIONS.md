@@ -112,6 +112,26 @@
 - **相机视场锥 (gla-fan) 保留** (用户一度以为是它, 澄清后指料道三角; 误删已恢复)。
 - 移除被 JS `get()` 引用的元素: **保留元素加 `display:none`** (脚本设 opacity 无副作用/不报错), 比删元素+删 N 处 JS 稳。
 
+### HuskyLens2 定制模型: 无真实 conf + Python -0.0 陷阱 (2026-11-13)
+- **现象**: 定制模型(129)识别正常(4 种传感器全中), 但网关 `low_conf` 计数狂涨 → 物料全被拦, 不分拣。
+- **根因 1 (固件侧, 无 conf)**: HuskyLens2 **旧固件** (Data 段 10 字节) **不上报 conf**。SDK 按
+  V0.4 新布局把 offset 10-13 当 4 字节 float 读, 实际那 4 字节是 `name_length(1B) + 名字前 3 字节`,
+  按 float 解释 = 次正规负数 (如 0x92A7E80F ≈ -4.5e-18), JSON 序列化后 ≈ **-0.0**。
+  - 实测 4 种传感器: 超声波/人体红外/角度/温湿度, conf 全是次正规负数 (名字字节 MSB 恰好为 1)。
+  - 证据: raw 包 offset 10 = 合法 name_length (15/21/18), offset 14 = 0xE4/0xE5/0xE6 (228+, 非法)。
+    若按 V0.4 (conf 在 10-13, name_len 在 14) 则 offset 14 值全非法 → 证明实际是旧布局。
+- **根因 2 (网关侧, -0.0 陷阱)**: 初版修 `if conf >= 0 and conf < confmin` 仍拦 → 因 **Python 里
+  `-0.0 >= 0` 为 True** (IEEE 754: -0.0 == 0.0)。`conf < 0` 也拦不住 -0.0。
+  - **必须用 `math.copysign(1, conf)` 区分符号**: copysign(-0.0)=-1, copysign(+0.0)=+1。
+  - 最终判定: `math.copysign(1, conf) >= 0` 才走 confmin 过滤 (负含 -0.0 = 无有效 conf → 放行)。
+- **协议 vs 实物**: DFR《HuskyLens2_Protocol_CN》V0.4 (2026-10-29) 明确 "Data 段 10→14 字节" (加 conf),
+  且 RETURN_BLOCKS 表列 conf@offset10(4B)/name_len@offset14。但**手上这台 HuskyLens2 跑的是旧固件
+  (10 字节, 无 conf)**, 协议文档描述的新布局它没实现。**别拿协议文档当实物布局, 以 raw 包实测为准。**
+- **修法 (已落 sort_mqtt.py)**: 网关 conf 过滤前加 `math.copysign(1, conf) >= 0` 前置判断。
+  内置算法 (conf 0~1 正数) 照常过滤, 定制模型 (conf 负含 -0.0) 直接放行。
+- **遗留 / 有机会再更新**: 日后升级 HuskyLens2 固件到 V0.4 (14 字节, 有真 conf) 后, conf 变正数,
+  此放行分支自动失效 (正常走 confmin)。届时可把该分支删掉 + 用真 conf 做质量阈值。
+
 ## 2026-10-30 修复记录 (用户提交的 5 个问题)
 
 | # | 问题 | 修法 | 验证 |
