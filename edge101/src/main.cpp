@@ -429,8 +429,15 @@ static void hlTick() {
     int8_t n = hl.getResult((eAlgorithm_t)HL_ALGO);
     if (n < 0) { g_hl_fail++; return; }        // I2C 无应答, 下轮再试
     g_hl_ok++;
+    // 结果存储槽位: LARGE_MEMORY 未定义时 getResult 存 result[0]; 定义时存 result[toRealID(HL_ALGO)].
+    // (直接读 result[HL_ALGO] 会越界/读残留 —— 已安装定制模型 129 的 I2C 结果实际在 result[0].)
+#ifdef LARGE_MEMORY
+    eAlgorithm_t hlSlot = hl.toRealID((uint8_t)HL_ALGO);
+#else
+    eAlgorithm_t hlSlot = 0;
+#endif
     for (int i = 0; i < n; i++) {
-        Result* r = hl.result[(eAlgorithm_t)HL_ALGO][i];
+        Result* r = hl.result[hlSlot][i];
         if (!r) continue;
         float conf = r->conf;
         int id = (int)r->ID;
@@ -440,7 +447,10 @@ static void hlTick() {
                           id, HL_ALGO, conf);
             continue;
         }
-        if (conf < g_confmin) {
+        // 定制模型 (algo>=128) 不上报真实 conf (RETURN_BLOCKS conf 是保留槽位, 实测≈0/垃圾),
+        // 有检测即通过; 内置算法仍按 confmin 过滤
+        bool confOk = (HL_ALGO >= 128) || (conf >= g_confmin);
+        if (!confOk) {
             Serial.printf("[hl] %s conf=%.2f < confmin %.2f, 丢弃\n",
                           mat, conf, g_confmin);
             continue;

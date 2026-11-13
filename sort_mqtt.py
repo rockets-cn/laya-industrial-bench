@@ -59,7 +59,8 @@ DEFAULT_CFG = {
     "http_port": 8123,
     "sorter_count": 3,
     "conveyor_id": "line1",
-    "conveyor_speed_mps": 1.0,
+    # 标定安全带速 52.5mm/s (默认兜底: 配置文件缺 key/读不到时也用此值, 绝不退回 1.0)
+    "conveyor_speed_mps": 0.0525,
     "ack_timeout_s": 3.0,
     "ack_retries": 2,
     # divert 实际耗时 ≈ 0.9s/件 (固件 SERVO 拨出+件间间隔), 固定 3s 超时

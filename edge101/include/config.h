@@ -54,7 +54,7 @@ static const uint32_t HL2_BAUD     = 38400;
 static const uint32_t HL_POLL_MS          = 300;   // I2C 轮询周期 (ms; 越大对主循环停摆越小)
 static const uint32_t HL_TIMEOUT_MS       = 200;   // 单次 getResult 超时 (防卡主循环)
 static const double   HL_CONFMIN          = 0.6;   // 置信度门槛 (在线 confmin 可调)
-static const int      HL_ALGO             = 6;     // ALGORITHM_SELF_LEARNING_CLASSIFICATION
+static const int      HL_ALGO             = 129;   // 已安装定制模型 (>= ALGORITHM_CUSTOM_BEGIN=128; 129 = 用户 PCB 定制模型)
 static const uint32_t HL_SWITCH_WAIT_MS   = 5000;  // 切算法后强制等待 (wiki >=5s)
 
 // ---------- 红外接近传感器 (位置基准 T0, GPIO34; 纯输入, 需外接 3.3V 上拉) ----------
@@ -166,5 +166,6 @@ static const sort::MatEntry MATERIAL_MAP[] = {
     {1, 4, "yellow_block"},
     {5, 10, "banana"},        // 示例: 自定义模型 ID10
     {6, 1, "pcb"},           // 自学习分类 id1 = 手扶 PCB (占位, 训练后确认 id/仓)
+    {129, 0, "pcb"},        // 已安装定制模型 129 (>=ALGORITHM_CUSTOM_BEGIN=128), 类别0 = 手扶 PCB (2026-11-13 I2C 实测确认 id=0)
 };
 static const int MATERIAL_MAP_LEN = sizeof(MATERIAL_MAP) / sizeof(MATERIAL_MAP[0]);
