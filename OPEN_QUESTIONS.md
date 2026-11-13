@@ -12,7 +12,8 @@
 | 物料集 8 水果/方块 → **4 传感器** | `angle_sensor 角度 / ultrasonic_sensor 超声波 / pir_sensor 人体红外 / temp_humidity_sensor 温湿度`。白名单同步点: `yard_ledger.py` / `bench_yard.py` / `local_qa.py` / `loop_ui.py` / 动画 SVG 图标 + `POOL12` 供血池。旧 8 物料仅 sim 演示域兼容保留 |
 | **路由 v2: 语音指令指定仓库** | 选仓权从固定映射表移到**网关指令需求台账** (`sort_mqtt.py` `demands[material]` FIFO, 条目 `{yard, remaining, job_id, t}`, TTL 180s): `/dispatch` 受理即登记 (job 开始, 早于物理执行), 视觉事件按台账消耗路由; 失败/撤销 job 作废需求; `source=vision` 不回填 (防台账自我膨胀)。`config/material_map.json` 降为**无指令兜底** + 遗留 `vision_dispatch=True` 自动分拣 |
 | HuskyLens2 定制模型 | algo=129 (YOLO 定制), 4 传感器按**名字**识别 (ID 全 0); 旧固件无真实 conf → 网关 `math.copysign` 判符号放行 (见下方踩坑节) |
-| 验证 | bench_yard 170/170; 网关 E2E **77/77** (含 §3b 指令路由优先 5 断言: temp_humidity_sensor 映射表 1 号仓 vs 指令 2 号仓, 视觉先到 2, 耗尽回退 1); 固件主机单测 172/172; 动画 DOM 25/25 |
+| 验证 | bench_yard 185/185; 网关 E2E **77/77** (含 §3b 指令路由优先 5 断言: temp_humidity_sensor 映射表 1 号仓 vs 指令 2 号仓, 视觉先到 2, 耗尽回退 1); 固件主机单测 172/172; 动画 DOM 25/25 |
+| ASR 同音/变体加固 (SenseVoice 探针实测) | ① 词表加 **温度湿度** 变体 ("温湿度传感器" 被识为 "温度湿度传感器"); ② **对称后置数量** "角度传感器五个红外传感器三个" (ASR 语序, 数量在物料后) 按对称确认归位; ③ 无料场标记但句中有物料: 不再静默丢弃 → 报 **"料场未指定, 不下发 (×N, 需人工确认)"** 挂起 (原笼统"空订单"); ④ 该情形跳过 LLM 旁路 (幻觉防护只放行听过的 (料场,物料) 组合, 旁路救不了, 省几十秒等待)。实测: 仓→舱 / 进→接/g / 逗号丢失 等 ASR 噪声全部容忍, 10 句 TTS→ASR→/run 全链路正确 |
 
 > 注: 密集料空推 (A) / 薄件 IR (C) / 3 号仓 ±3mm (D) 与本轮无关, 仍挂起。
 
@@ -57,7 +58,7 @@
 - **待做**: 标定复核或加末端对账。
 
 ### E. 全链路上机验证未完整
-- **未跑**: 语音 → ASR → laya 决策入口; 网关 `POST /dispatch` 真流程 (本轮均为手动 MQTT/串口触发)。
+- **已跑 (2026-11-13)**: 语音 → ASR → 规则层 (/run) 链路, edge-tts 10 句 → SenseVoice → /run 全对 (见上方完成节 ASR 行); 仍**未跑**: 真实麦克风音频、网关 `POST /dispatch` 真流程 (本轮均为手动 MQTT/串口触发)。
 - **待做**: 上实体后跑一次全链路回归。
 
 ### F. vision 去重"3s 窗口"语义错 — 同一件在视野内被重复下发 (挂起, 后面一起调)

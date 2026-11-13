@@ -116,21 +116,37 @@ def _qty_before(text, pos):
 
 
 _QTY_AFTER = re.compile(
-    r"\s*(?:放?(?:到|入|进))?\s*"
+    r"[，、。！？!?,;；\s]*(?:放到|放入|放进|进|放|来|要|送|需)?\s*"
     r"(?:[1-9一二两三四五六七八九十幺壹]+号\s*(?:仓库|料场|场地|库|位置|区)?\s*)?"
     r"([一两二三四五六七八九十\d]+)\s*(?:个|块|条)?\s*(?=[，、。！!?,;；\s]|$)")
 
 
 def _qty_after(text, end):
-    """后置数量: "角度传感器三个" (ASR 语序), 以及 料场号夹在中间的后置
-    "把角度传感器放到一号仓库两个" / "红外传感器放进2号库三个". 只在边界处认, 避免吞下一项的数量."""
+    """后置数量: "角度传感器三个" / "角度传感器来两个" (ASR 语序), 以及 料场号夹在
+    中间的后置 "把角度传感器放到一号仓库两个". 只在边界处认, 避免吞下一项的数量."""
     m = _QTY_AFTER.match(text[end:])
+    return _cn_num(m.group(1)) if m else None
+
+
+_QUANT_LOOSE = re.compile(
+    r"[，、。！？!?,;；\s]*(?:放到|放入|放进|进|放|来|要|送|需)?\s*"
+    r"(?:[1-9一二两三四五六七八九十幺壹]+号\s*(?:仓库|料场|场地|库|位置|区)?\s*)?"
+    r"([一两二三四五六七八九十\d]+)\s*(?:个|块|条)?")
+
+
+def _qty_after_loose(text, end):
+    """宽松后置数量: 物料词后直接跟数量短语, 数量后无需边界标点.
+    仅用于对称句式确认 ("角度传感器五个红外传感器三个" — 两项都后置)."""
+    m = _QUANT_LOOSE.match(text[end:])
     return _cn_num(m.group(1)) if m else None
 
 
 def _materials_in(seg):
     """全文 (否定剥离后): 传感器 提及+数量, 按位置排序. 返回 [(pos, end, mention)]
-    (裸"传感器" 类型未定 -> material=None, 校验器路由 物料未定 挂起)."""
+    (裸"传感器" 类型未定 -> material=None, 校验器路由 物料未定 挂起).
+    数量语序: 前置 ("五个角度传感器") 为默认; 后置 ("角度传感器五个") 在数量后有
+    边界标点时认; 对称后置 ("角度传感器五个红外传感器三个", 2026-11-13 ASR 实测语序)
+    由下方确认逻辑修正 — 相邻两项都带后置数量时, 前一项的"前置数量"其实是自己的后置."""
     found = []
     for m in SENSOR_RE.finditer(seg):
         qty = _qty_before(seg, m.start())
@@ -141,6 +157,16 @@ def _materials_in(seg):
         found.append((m.start(), m.end(),
                       {"material": SENSOR_KEY[m.group(0)], "qty": qty}))
     found.sort(key=lambda x: x[0])
+    # 对称后置修正: "A qty B qty" — B 的前置数量其实紧邻 A 之后, 且 B 自己也有后置
+    for i in range(len(found) - 1):
+        pos, mend, mm = found[i]
+        if mm["qty"] != 1:
+            continue
+        q_a = _qty_after_loose(seg, mend)
+        q_b = _qty_after_loose(seg, found[i + 1][1])
+        if q_a and q_b and found[i + 1][2]["qty"] == q_a:
+            mm["qty"] = q_a
+            found[i + 1][2]["qty"] = q_b
     return found
 
 
@@ -530,6 +556,9 @@ CASES = [
     # SenseVoice 同音变体 (2026-11-13 探针实测: "温湿度" → "温度湿度")
     ("1号料场要两个温度湿度传感器，2号料场要三个角度传感器",
      [(1, "temp_humidity_sensor", 1), (2, "angle_sensor", 1)]),
+    # 对称后置数量 (ASR 实测语序: "A数量B数量" 无标点): 各自数量归各自
+    ("超声波传感器来四个温度湿度传感器两个进一号仓库",
+     [(1, "ultrasonic_sensor", 1), (1, "temp_humidity_sensor", 1)]),   # 逐件展开
     # 无料场标记但句中有物料: 不下发, 报 "料场未指定" (走暂停+人工, 非笼统空订单)
     ("两个角度传感器，十个温湿度传感器",
      None),
