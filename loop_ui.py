@@ -102,7 +102,10 @@ def run_side(side, text):
     dt_l, answers = ns.laya_decide(mentions) if mentions else (0.0, {})
     ok, actions, reasons = ns.validate(mentions, answers)
     path, dt_b, bypass = ("EXPAND" if dist_ms else "FAST"), 0.0, None
-    if not ok:
+    # 所有提及都无有效料场 (yard=0 "料场未指定"): 旁路幻觉防护只放行规则层听过的
+    # (yard,material) 组合, LLM 无法新造料场号 -> 结果确定 PAUSE, 跳过旁路不白等几十秒
+    no_valid_yard = bool(mentions) and all(m.get("yard") not in (1, 2, 3) for m in mentions)
+    if not ok and not no_valid_yard:
         try:
             dt_b, b_mentions, b_reasons = ns.llm_bypass(norm, mentions)
             if b_mentions:
@@ -112,6 +115,8 @@ def run_side(side, text):
             path = "BYPASS" if ok_b else "PAUSE+HUMAN"
         except Exception as e:
             path, actions, reasons = "PAUSE+HUMAN", [], [f"LLM 不可用: {e}"]
+    elif not ok:
+        path = "PAUSE+HUMAN"  # no_valid_yard: 校验器原因 (料场未指定等) 已足够, 直接挂起
     elif reasons:
         # ok=True + 仅超纲挂起说明: 在纲项照发, 超纲项报人工 (部分下发)
         path = "PARTIAL"

@@ -14,7 +14,9 @@
   "divert_trigger": "photo",
   "photo_margin_s": 3.0,
   "stats_period_s": 5.0,
-  "stop_conveyor_after_batch": true,
+  "stop_conveyor_after_batch": false,
   "vision_grace_s": 10.0,
-  "queue_max": 16
+  "queue_max": 16,
+  "vision_dispatch": true,
+  "vision_dispatch_dedupe_s": 3.0
 }

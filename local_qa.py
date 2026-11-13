@@ -49,8 +49,8 @@ QUERY_BUDGET_S = 3.0    # 整个问答的耗时预算
 PORT_PROBE_S = 0.4      # 单端口 TCP 探测超时
 
 # 分拣物料词: 句子里出现物料名 -> 视为分拣指令, 不进问答 (防误抢)
-_MATER_RE = re.compile(r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
-                       r"|角度|超声波|人体红外|红外|温湿度")
+_MATER_RE = re.compile(r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器|温度湿度传感器"
+                       r"|角度|超声波|人体红外|红外|温湿度|温度湿度")
 # 料场号
 _YARD_Q_RE = re.compile(r"([123一二两])\s*号\s*(?:料场|仓库|场地|库|位置|区)?")
 _YARD_NUM = {"1": 1, "2": 2, "3": 3, "一": 1, "二": 2, "两": 2, "俩": 2, "三": 3}
@@ -259,8 +259,8 @@ _MATCN = {"angle_sensor": "角度传感器", "ultrasonic_sensor": "超声波传�
 
 # 物料反查用: 全名/口语简称都认 (「人体红外」=「人体红外传感器」); 每类独立, 无颜色家族
 _MAT_WHERE_PAT = re.compile(
-    r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
-    r"|角度|超声波|人体红外|红外|温湿度")
+    r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器|温度湿度传感器"
+    r"|角度|超声波|人体红外|红外|温湿度|温度湿度")
 
 # 口语形态 -> 物料 key (简称与全名同 key)
 _MAT_WHERE_KEY = {
@@ -268,7 +268,8 @@ _MAT_WHERE_KEY = {
     "超声波传感器": "ultrasonic_sensor", "超声波": "ultrasonic_sensor",
     "人体红外传感器": "pir_sensor", "人体红外": "pir_sensor",
     "红外传感器": "pir_sensor", "红外": "pir_sensor",
-    "温湿度传感器": "temp_humidity_sensor", "温湿度": "temp_humidity_sensor"}
+    "温湿度传感器": "temp_humidity_sensor", "温湿度": "temp_humidity_sensor",
+    "温度湿度传感器": "temp_humidity_sensor", "温度湿度": "temp_humidity_sensor"}
 
 
 def _mat_where_family(word):

@@ -66,21 +66,23 @@ def _yard_num_of(token):
     return _cn_num(token)
 
 # 物料词表 (4 传感器): 全名优先, 口语简称也认 (ASR 噪声); 裸"传感器"= 类型未定
+# "温度湿度" = SenseVoice 实测同音变体 ("温湿度传感器" → "温度湿度传感器", 2026-11-13 探针)
 SENSOR_RE = re.compile(
-    r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
-    r"|角度|超声波|人体红外|红外传感器|红外|温湿度|传感器")
+    r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器|温度湿度传感器"
+    r"|角度|超声波|人体红外|红外传感器|红外|温湿度|温度湿度|传感器")
 SENSOR_KEY = {
     "角度传感器": "angle_sensor", "角度": "angle_sensor",
     "超声波传感器": "ultrasonic_sensor", "超声波": "ultrasonic_sensor",
     "人体红外传感器": "pir_sensor", "人体红外": "pir_sensor",
     "红外传感器": "pir_sensor", "红外": "pir_sensor",
     "温湿度传感器": "temp_humidity_sensor", "温湿度": "temp_humidity_sensor",
+    "温度湿度传感器": "temp_humidity_sensor", "温度湿度": "temp_humidity_sensor",
     "传感器": None}   # 裸"传感器"未说类型 -> 物料未定 (PARTIAL 挂起报人工)
 # 否定提及 (不要/别要/不需要/不用 + 物料词)
 SENSOR_NEG_RE = re.compile(
     r"(?:不要|别要?|不需要|不用)\s*"
-    r"(角度传感器|超声波传感器|人体红外传感器|温湿度传感器"
-    r"|角度|超声波|人体红外|红外传感器|红外|温湿度)")
+    r"(角度传感器|超声波传感器|人体红外传感器|温湿度传感器|温度湿度传感器"
+    r"|角度|超声波|人体红外|红外传感器|红外|温湿度|温度湿度)")
 
 # 简繁 -> 领域词 (ASR 噪声); 传感器名短, 同音变体已覆盖在 SENSOR_RE 简称词表里
 T2S = str.maketrans({"紅": "红", "綠": "绿", "黃": "黄", "藍": "蓝",
@@ -196,7 +198,9 @@ def _yard_at(clean, cms, pos, mat_end):
 
 def normalize(text):
     """确定性: 简繁/同音 -> 否定剥离 -> 物料+数量 全文抽取 -> 正序分域归属.
-    返回 (clean_text, mentions, negated). 无料场 -> 空提及 (信息不足, 上层暂停);
+    返回 (clean_text, mentions, negated). 无料场标记但句中有物料 -> 提及 yard=0,
+    校验器路由到 "料场未指定" 挂起 (报明确原因, 而非笼统空订单);
+    纯无物料句 -> 空提及 (上层暂停)。
     超纲料场 (4号/5号等) 照常参与分域归属, 其物料由校验器路由到 超纲挂起
     (部分下发 PARTIAL), 在纲项不被阻塞."""
     text = text.translate(T2S)
@@ -213,15 +217,15 @@ def normalize(text):
         return text, [{"yard": 0, "material": None, "qty": 1,
                         "oob_msg": f"分配目标含超纲料场 {', '.join(oob_tokens)}, 整条指令不下发 (需人工确认)"}], []
     matches = list(ANY_YARD_RE.finditer(text))
-    if not matches:
-        return text, [], []
     negated = set()
     clean = text
-    # 否定剥离: 长名优先 (人体红外传感器 先于 人体红外/红外; 角度传感器 先于 角度)
+    # 否定剥离: 长名优先 (人体红外传感器 先于 人体红外/红外; 角度传感器 先于 角度;
+    # 温度湿度传感器 先于 温湿度/温度湿度)
     for name in ("角度传感器", "超声波传感器", "人体红外传感器", "温湿度传感器",
-                 "人体红外", "红外传感器", "红外", "角度", "超声波", "温湿度"):
+                 "温度湿度传感器", "人体红外", "红外传感器", "红外", "角度",
+                 "超声波", "温湿度", "温度湿度"):
         pat = re.compile(
-            rf"(?:不要|别要?|不需要|不用)(?:(?!角度|超声波|红外|温湿度).){{0,3}}{name}"
+            rf"(?:不要|别要?|不需要|不用)(?:(?!角度|超声波|红外|温湿度|温度湿度).){{0,3}}{name}"
             rf"|{name}(?:不要|不用)")
         if pat.search(clean):
             negated.add(SENSOR_KEY[name])
@@ -233,8 +237,10 @@ def normalize(text):
     cms = list(ANY_YARD_RE.finditer(clean))
     mentions = []
     for pos, mend, mm in _materials_in(clean):
-        mm["yard"] = _yard_at(clean, cms, pos, mend)
+        mm["yard"] = _yard_at(clean, cms, pos, mend)  # 无料场标记 -> 0, 校验器路由 "料场未指定" 挂起
         mentions.append(mm)
+    if not matches and not mentions:
+        return text, [], []
     return text, mentions, sorted(negated)
 
 
@@ -521,6 +527,12 @@ CASES = [
     # 汉字料场号变体 (ASR/口语常见): 二号 曾漏在 YARD_RE 里被误拒
     ("给二号料场送3个红外传感器",
      [(2, "pir_sensor", 1)]),
+    # SenseVoice 同音变体 (2026-11-13 探针实测: "温湿度" → "温度湿度")
+    ("1号料场要两个温度湿度传感器，2号料场要三个角度传感器",
+     [(1, "temp_humidity_sensor", 1), (2, "angle_sensor", 1)]),
+    # 无料场标记但句中有物料: 不下发, 报 "料场未指定" (走暂停+人工, 非笼统空订单)
+    ("两个角度传感器，十个温湿度传感器",
+     None),
     ("两个超声波传感器放二号仓库",
      [(2, "ultrasonic_sensor", 1)]),
     # 后置数量且料场号夹在物料与数量之间 (真实语音语序: 先报物料再说放到哪几件)
@@ -632,7 +644,9 @@ def main():
             t_laya.append(dt_l)
             ok, actions, reasons = validate(mentions, answers)
             path, dt_b = ("EXPAND" if dist_ms else "FAST"), 0.0
-            if not ok:
+            # 与 loop_ui.run_side 一致: 全部提及 yard=0 时旁路救不了 (幻觉防护), 直接挂起
+            no_valid_yard = bool(mentions) and all(m.get("yard") not in (1, 2, 3) for m in mentions)
+            if not ok and not no_valid_yard:
                 try:
                     dt_b, b_mentions, b_reasons = llm_bypass(norm, mentions)
                     t_bypass.append(dt_b)
@@ -643,6 +657,8 @@ def main():
                     path = "BYPASS" if ok_b else "PAUSE+HUMAN"
                 except Exception as e:
                     path, actions, reasons = "PAUSE+HUMAN", [], [f"LLM 不可用: {e.__class__.__name__}"]
+            elif not ok:
+                path = "PAUSE+HUMAN"  # no_valid_yard: 校验器原因 (料场未指定) 已足够
             elif reasons:
                 # ok=True + 仅 oob 挂起说明: 在纲项照发, 超纲项报人工
                 path = "PARTIAL"

@@ -3,7 +3,7 @@
   "mode": "fixed",
   "fixed": {
     "angle_sensor": 1,
-    "ultrasonic_sensor": 2,
+    "ultrasonic_sensor": 1,
     "pir_sensor": 3,
     "temp_humidity_sensor": 1
   },
