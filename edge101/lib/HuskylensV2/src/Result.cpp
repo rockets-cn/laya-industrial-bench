@@ -12,30 +12,42 @@ Result::Result(const void *buf) {
   height = packet->fourth;
   conf = packet->conf;
   used = 0;
-  String_t *pname = (String_t *)packet->payload;
-  uint16_t headerSize = (uint16_t)((uint32_t)pname - (uint32_t)packet);
-  DBG_KV("sizeof(String_t)=", sizeof(String_t));
-  DBG_KV("pname->length=", pname->length);
-
-  if (head->data_length <= headerSize) {
-    DBG("no string data");
-  } else if (headerSize + sizeof(String_t) * 2 + pname->length >
-             head->data_length) {
-    DBG("string data truncated");
-  } else {
-    String_t *pcontent =
-        (String_t *)(packet->payload + sizeof(String_t) + pname->length);
-    DBG_KV("pcontent->length=", pcontent->length);
-    if (pname->length) {
-      name = pname->toString();
-    }
-    if (headerSize + sizeof(String_t) * 2 + pname->length + pcontent->length <=
-        head->data_length) {
-      if (pcontent->length) {
-        content = pcontent->toString();
+  // 定制模型 payload 布局: name_length(1)+name(UTF-8)+content_length(1)
+  // 注意: HuskyLens 返回包 algo_id=0 (非请求的 129), 不能靠 algo_id 判断
+  if (head->data_length > 11) {
+    uint8_t *data = (uint8_t *)head->data;
+    uint8_t name_len = data[10];
+    if (name_len > 0 && name_len < 60 &&
+        (int)(10 + 1 + name_len + 1) <= head->data_length) {
+      char *nbuf = (char *)malloc(name_len + 1);
+      if (nbuf) {
+        memcpy(nbuf, data + 11, name_len);
+        nbuf[name_len] = 0;
+        name = String(nbuf);
+        free(nbuf);
       }
+    }
+  } else {
+    // 内置算法: SDK String_t 解析
+    String_t *pname = (String_t *)packet->payload;
+    uint16_t headerSize = (uint16_t)((uint32_t)pname - (uint32_t)packet);
+    if (head->data_length <= headerSize) {
+      DBG("no string data");
+    } else if (headerSize + sizeof(String_t) * 2 + pname->length >
+               head->data_length) {
+      DBG("string data truncated");
     } else {
-      DBG("content data truncated");
+      String_t *pcontent =
+          (String_t *)(packet->payload + sizeof(String_t) + pname->length);
+      if (pname->length) {
+        name = pname->toString();
+      }
+      if (headerSize + sizeof(String_t) * 2 + pname->length + pcontent->length <=
+          head->data_length) {
+        if (pcontent->length) {
+          content = pcontent->toString();
+        }
+      }
     }
   }
   DBG_KV("type=", type);

@@ -441,10 +441,19 @@ static void hlTick() {
         if (!r) continue;
         float conf = r->conf;
         int id = (int)r->ID;
-        const char* mat = hlMaterialName(HL_ALGO, id);
+        // 定制模型 (algo>=128): ID 统一为 0, 靠名字区分传感器
+        const char* mat = nullptr;
+        if (HL_ALGO >= 128 && r->name.length() > 0) {
+            const String& nm = r->name;
+            if (nm.indexOf("角度传感器") >= 0)       mat = "angle_sensor";
+            else if (nm.indexOf("超声波传感器") >= 0) mat = "ultrasonic_sensor";
+            else if (nm.indexOf("人体红外传感器") >= 0) mat = "pir_sensor";
+            else if (nm.indexOf("温湿度传感器") >= 0)  mat = "temp_humidity_sensor";
+        }
+        if (!mat) mat = hlMaterialName(HL_ALGO, id);
         if (!mat) {
-            Serial.printf("[hl] 未映射 id=%d (type=%d) conf=%.2f\n",
-                          id, HL_ALGO, conf);
+            Serial.printf("[hl] 未映射 id=%d name=%s (type=%d) conf=%.2f\n",
+                          id, (const char*)r->name.c_str(), HL_ALGO, conf);
             continue;
         }
         // 定制模型 (algo>=128) 不上报真实 conf (RETURN_BLOCKS conf 是保留槽位, 实测≈0/垃圾),
@@ -460,8 +469,9 @@ static void hlTick() {
         std::string p = sort::visionJson(mat, conf, fid, r->xCenter, r->yCenter,
                                          r->width, r->height, -1.0);
         mqtt.publish(sort::visionTopic().c_str(), p.c_str(), true);
-        Serial.printf("[hl] %s id=%d conf=%.2f bbox=(%d,%d,%d,%d) -> vision\n",
-                      mat, id, conf, r->xCenter, r->yCenter, r->width, r->height);
+        Serial.printf("[hl] %s id=%d conf=%.2f bbox=(%d,%d,%d,%d) name=%s -> vision\n",
+                      mat, id, conf, r->xCenter, r->yCenter, r->width, r->height,
+                      (const char*)r->name.c_str());
     }
 }
 #endif

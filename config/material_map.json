@@ -1,15 +1,11 @@
 {
-  "_comment": "视觉识别 -> 仓库映射. 仓库编号 2026-11-04 定稿: 1 号仓=离进口最近(上游), 2 号仓=中间, 3 号仓=出口处白杆(下游). mode: fixed | round_robin. 香蕉->3 号仓已现场验证.",
+  "_comment": "视觉识别 -> 仓库映射. 仓库编号 2026-11-04 定稿: 1 号仓=离进口最近(上游), 2 号仓=中间, 3 号仓=出口处白杆(下游). mode: fixed | round_robin. 4 种传感器 (角度/超声波/人体红外/温湿度).",
   "mode": "fixed",
   "fixed": {
-    "red_apple": 3,
-    "green_apple": 3,
-    "banana": 3,
-    "pear": 3,
-    "red_block": 2,
-    "green_block": 2,
-    "yellow_block": 1,
-    "blue_block": 1
+    "angle_sensor": 1,
+    "ultrasonic_sensor": 2,
+    "pir_sensor": 3,
+    "temp_humidity_sensor": 1
   },
   "confidence_min": 0.3
 }

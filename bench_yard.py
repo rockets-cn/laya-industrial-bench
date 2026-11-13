@@ -41,11 +41,9 @@ YARD_NUM = {"1": 1, "2": 2, "3": 3, "一": 1, "二": 2, "两": 2, "俩": 2,
 # 超纲料场 token (4号/四号/11号 ...): 命中即 暂停+人工
 OOB_YARD_RE = re.compile(r"(?<!\d)([4-9]\d*|[四五六七八九十])\s*号")
 
-MATERIALS = ["red_apple", "green_apple", "banana", "pear",
-             "red_block", "green_block", "yellow_block", "blue_block"]
-MAT_CN = {"red_apple": "红苹果", "green_apple": "绿苹果", "banana": "香蕉", "pear": "梨",
-          "red_block": "红色方块", "green_block": "绿色方块",
-          "yellow_block": "黄色方块", "blue_block": "蓝色方块"}
+MATERIALS = ["angle_sensor", "ultrasonic_sensor", "pir_sensor", "temp_humidity_sensor"]
+MAT_CN = {"angle_sensor": "角度传感器", "ultrasonic_sensor": "超声波传感器",
+          "pir_sensor": "人体红外传感器", "temp_humidity_sensor": "温湿度传感器"}
 CN2KEY = {"红": "red", "绿": "green", "黄": "yellow", "蓝": "blue"}
 CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
