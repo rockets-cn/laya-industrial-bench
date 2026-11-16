@@ -252,7 +252,7 @@ class SortGateway:
         self._rr_counter = {}                      # round_robin 每物料轮转计数
         self._rr_lock = threading.Lock()
         self._job_seq = 0
-        self._vd_last = {}                      # 物料 -> 最近一次 vision 下发时刻 (去重)
+        self._vd_last = {}                      # 物料 -> 最近一次 vision 事件时刻 (存在性去重)
         # 运动事件时间线 (设备 sort/line1/motion -> 环形缓冲 + relay):
         # 动画还原"实际情况"用, 保留最近 motion_keep 条.
         self.motion = deque(maxlen=int(self.cfg.get("motion_keep", 100)))
@@ -429,14 +429,19 @@ class SortGateway:
         # 选仓权在 PC laya 模型 (经 sort/inbound/command / POST /dispatch 下发).
         # HuskyLens 视觉事件默认只记录 (喂孪生"真实侧"), 不自动下发; 只有
         # vision_dispatch=True 才按旧行为 dispatch (HL 决定仓).
-        # 去重: HL 对同一件在视野内每帧都报, 不去重会每帧下发一条 divert ->
-        # 固件队列积压幻影件 (真件推完后还干等后续 IR 沿). 同一物料在
-        # vision_dispatch_dedupe_s 窗口内只下发一次 (一件过视野期间只算一件).
+        # 存在性去重: HL 对同一件在视野内每帧都报. 固定下发窗口 (旧
+        # vision_dispatch_dedupe_s=3s) 短于单件视野停留时间 (带速 0.0525 m/s,
+        # 视野纵深 ~300mm ≈ 5.7s) 时, 同一件被下发 2+ 次 -> 固件 24 件 FIFO
+        # 幻影件净累积 -> 队列满故障 (2026-11-16 实测: 带子 running 期间
+        # ~3s/条下发 vs ~9s/件 IR 消费, 9 分钟内两次队列满). 现改为:
+        # 同一物料间隔 <= vision_dispatch_absence_s 视为"同一件持续在视野内"
+        # 不下发; 间隔超过 (件出视野, 新件入) 才下发一次. 一件 = 一条 divert.
         if self.cfg.get("vision_dispatch", False):
             now = time.time()
-            dedupe_s = float(self.cfg.get("vision_dispatch_dedupe_s", 3.0))
-            if now - self._vd_last.get(material, 0.0) >= dedupe_s:
-                self._vd_last[material] = now
+            absence_s = float(self.cfg.get("vision_dispatch_absence_s", 0.8))
+            continuously_in_view = (now - self._vd_last.get(material, 0.0)) <= absence_s
+            self._vd_last[material] = now
+            if not continuously_in_view:
                 job = self.enqueue_job(
                     [{"yard": sorter, "material": material, "qty": 1}],
                     source="vision", path="VISION", extra=vision)

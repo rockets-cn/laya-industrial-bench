@@ -18,5 +18,5 @@
   "vision_grace_s": 10.0,
   "queue_max": 16,
   "vision_dispatch": true,
-  "vision_dispatch_dedupe_s": 3.0
+  "vision_dispatch_absence_s": 0.8
 }

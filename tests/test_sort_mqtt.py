@@ -130,7 +130,7 @@ def main():
            "divert_timeout_per_item_s": 1.0, "busy_wait_s": 3.0,
            "busy_wait_max_ext": 3,
            "vision_dispatch": True,   # 测试用 HL 自动 dispatch 路径 (设备门/运动行为)
-           "vision_dispatch_dedupe_s": 0.0,  # 测试模拟离散事件(一件=一条), 禁用去重
+           "vision_dispatch_absence_s": 0.0,  # 测试模拟离散事件(一件=一条), 禁用存在性去重
            "ledger_path": ledger}
     gw = sm.SortGateway(cfg).start()
     print(f"[test] broker :{BPORT}  gateway HTTP :{GPORT}  ledger={ledger}")
