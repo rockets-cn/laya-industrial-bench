@@ -457,6 +457,13 @@ async def api_push(request: Request):
     return _gw_post("/push", {"sorter": n})
 
 
+@app.post("/api/fault/clear")
+async def api_fault_clear(request: Request):
+    """网页按钮: 清故障锁存 -> 网关 /fault/clear (清锁存 + 固件 reset 清队列).
+    故障锁存期 /api/belt 与 /api/push 都 409; 先清故障才能起带/推杆."""
+    return _gw_post("/fault/clear", {"via": "http"})
+
+
 @app.get("/twin")
 async def twin():
     """数字孪生状态 (代理 MQTT 网关 :8123 的 /health + /motion):
@@ -602,6 +609,7 @@ PAGE = """<!doctype html>
   <button class="pushbtn" data-n="1" onclick="pushBin(1)" title="1 号推杆 手动推出">🔧 推杆 1</button>
   <button class="pushbtn" data-n="2" onclick="pushBin(2)" title="2 号推杆 手动推出">🔧 推杆 2</button>
   <button class="pushbtn" data-n="3" onclick="pushBin(3)" title="3 号推杆 手动推出">🔧 推杆 3</button>
+  <button id="btnFaultClear" onclick="clearFault()" title="清故障锁存 (顺带固件 reset 清队列); 清后起带/推杆恢复" style="display:none;min-width:112px;background:#7f1d1d;border-color:#b91c1c;color:#fecaca;font-weight:600">⚠️ 清故障</button>
 </div>
 <!-- 真数据源: 摄像头实时画面 (MJPEG :8125 → /cam/stream), 缩小放 HuskyLens 2 上方; 定位由 JS 按 SVG CTM 计算 -->
 <img id="gla-camimg" alt="" draggable="false" onerror="camImgErr()" onload="camImgOk()"
@@ -664,11 +672,14 @@ window.addEventListener('unhandledrejection',e=>{const m=$('micstate');
 async function jpost(u,d){const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(d)});
  if(!r.ok)throw new Error((await r.text()).slice(0,300));return r.json()}
 // ---- 手动控制 (真实源): 传送带 起/停 + 3 推杆 手动推出, 走网关原子端点, 网页随 /twin 同步 ----
-function updateCtlButtons(src, sorters){
+function updateCtlButtons(src, sorters, fault){
  const can=(src==='device');
  const cb=document.getElementById('btnBelt');
  if(cb){cb.disabled=!can;
   cb.textContent=(can?(lastConveyor==='running'?'⏸ 停止传送带':'▶ 启动传送带'):'⏯ 传送带 (切真实源可用)');}
+ // 清故障按钮: 仅真实源且故障锁存时显示; 清后 /belt 与 /push 解除 409
+ const fb=document.getElementById('btnFaultClear');
+ if(fb)fb.style.display=(can&&fault)?'':'none';
  // 推杆按钮: 随 /twin motion (busy=行程中) 实时显示「推杆中」并禁用; 完成后自动恢复
  document.querySelectorAll('.pushbtn').forEach(b=>{
   const n=+b.dataset.n;
@@ -676,6 +687,18 @@ function updateCtlButtons(src, sorters){
   b.disabled=!can||busy;
   b.textContent=busy?('⏳ 推杆 '+n+' 中'):('🔧 推杆 '+n);
  });
+}
+async function clearFault(){
+ if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
+ const b=document.getElementById('btnFaultClear');if(b)b.disabled=true;
+ try{
+  const r=await fetch('/api/fault/clear',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)alert('清故障未成功: '+(j.error||('HTTP '+r.status)));
+  else alert(j.had?('已清故障: '+(j.had.device||'')+' '+(j.had.error||'')+' (队列已重置)'):'当前无故障锁存');
+ }catch(e){alert('清故障失败: '+e.message);}
+ if(b)b.disabled=false;
+ scheduleTwin(0); // 立即轮询: 隐藏清故障按钮 + 恢复起带/推杆可用
 }
 async function beltToggle(){
  if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
@@ -935,7 +958,7 @@ async function refreshTwin(){
     status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
- updateCtlButtons(src, st); // 手动控制按钮: 真实源可用 + 推杆随 motion 显示「推杆中」 + 传送带随带态改文案
+ updateCtlButtons(src, st, d.fault); // 手动控制按钮: 真实源可用 + 推杆随 motion 显示「推杆中」 + 传送带随带态改文案 + 故障锁存时显示「清故障」
  // 模型 vs 实际对照表: 仅 jobs 变化时重渲 (网关 /jobs 逐批次 命令 vs 执行 vs HL)
  {const jsig2=JSON.stringify(d.jobs||[]);if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
  const anyBusy=st.some(s=>s.state==='busy')||(src==='device'&&lastConveyor==='running');

@@ -395,13 +395,14 @@ class SortGateway:
         if math.copysign(1, conf) >= 0 and conf < float(self.mat_map.get("confidence_min", 0.5)):
             self.stats.vision_event("low_conf")
             return
-        # 选仓权 (v2): 优先按语音指令需求路由 (_demand_route, FIFO 与固件
-        # divert 命令队列同序); 无指令时回退映射表 (遗留 vision_dispatch 自动
-        # 分拣模式的选仓逻辑, 兼作无指令时的兜底标注).
-        sorter = self._demand_route(material)
-        if sorter is None:
-            sorter = self._map_to_sorter(material)
-        if sorter is None:
+        # 去向标注 (/vision 孪生显示用): 优先语音指令需求 (peek 不消耗),
+        # 无需求回退映射表标注. 2026-11-18: 标注不再触发消耗 — 需求只在真正
+        # 下发时消耗一次 (见下方 dispatch 分支), 且 vision_dispatch=False 时
+        # 完全不碰需求台账 (视觉只记录, 修"没指令也自动推"后不再误耗需求).
+        label_yard = self._demand_route(material, consume=False)
+        if label_yard is None:
+            label_yard = self._map_to_sorter(material)
+        if label_yard is None:
             self.stats.vision_event("unknown")
             return
         # 视觉坐标 (HL2 像素系 + 固件换算的带面位置 pos_mm) 随批次留痕:
@@ -422,7 +423,7 @@ class SortGateway:
             "t": time.time(),
             "material": material,
             "confidence": conf,
-            "yard": sorter,
+            "yard": label_yard,
             "frame_id": vision.get("frame_id"),
             "pos_mm": vision.get("pos_mm"),
         })
@@ -442,8 +443,13 @@ class SortGateway:
             continuously_in_view = (now - self._vd_last.get(material, 0.0)) <= absence_s
             self._vd_last[material] = now
             if not continuously_in_view:
+                # 新件入视野: 仅在此处消耗 1 件需求并下发 (一件 = 一条 divert).
+                # 需求优先路由, 无需求回退映射表 (HL 自动分拣模式).
+                yard = self._demand_route(material, consume=True)
+                if yard is None:
+                    yard = self._map_to_sorter(material)
                 job = self.enqueue_job(
-                    [{"yard": sorter, "material": material, "qty": 1}],
+                    [{"yard": yard, "material": material, "qty": 1}],
                     source="vision", path="VISION", extra=vision)
                 if job:
                     self.stats.vision_event("dispatched")
@@ -486,9 +492,13 @@ class SortGateway:
                 if not dq:
                     del self.demands[mat]
 
-    def _demand_route(self, material):
-        """按指令需求路由: 返回该物料下一件应去的仓 (FIFO, 消耗 1 件).
-        无需求/全部过期 → None (调用方回退映射表)."""
+    def _demand_route(self, material, consume=True):
+        """按指令需求路由: 返回该物料下一件应去的仓 (FIFO).
+        无需求/全部过期 → None (调用方回退映射表).
+        consume=True: 消耗 1 件 (真正下发时用, 一件=一次消耗);
+        consume=False: 只 peek 不消耗 (/vision 去向标注用, 不触发下发).
+        2026-11-18: 旧版每个视觉事件都消耗 -> 一件在视野停留 5.7s(上百帧)
+        会把整条需求耗光, 后续件丢失路由; 现改为仅在实际下发时消耗."""
         with self.demands_lock:
             dq = self.demands.get(material)
             if not dq:
@@ -498,7 +508,8 @@ class SortGateway:
                           or dq[0]["remaining"] <= 0):
                 dq.popleft()
             if dq and dq[0]["remaining"] > 0:
-                dq[0]["remaining"] -= 1
+                if consume:
+                    dq[0]["remaining"] -= 1
                 return dq[0]["yard"]
             return None
 

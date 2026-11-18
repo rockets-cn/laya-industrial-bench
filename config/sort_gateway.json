@@ -17,6 +17,7 @@
   "stop_conveyor_after_batch": false,
   "vision_grace_s": 10.0,
   "queue_max": 16,
-  "vision_dispatch": true,
+  "vision_dispatch": false,
+  "_vision_dispatch_comment": "false=无指令物料直通带尾, 不自动推 (用户 2026-11-18: 没指令不要自己推); true=HL 自动分拣模式 (按需求/映射表自动下发, 有指令时与语音 job 盲拨叠加会双下发, 重开前先看 OPEN_QUESTIONS 双下发项)",
   "vision_dispatch_absence_s": 0.8
 }
