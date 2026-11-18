@@ -601,6 +601,7 @@ PAGE = """<!doctype html>
 <option value="sim">模拟（本地孪生）</option>
 <option value="device">真实（物理设备）</option>
 </select></span>
+<a id="btn3d" onclick="open3d()" style="font-size:12px;color:#67e8f9;border:1px solid #164e63;border-radius:6px;padding:3px 9px;cursor:pointer;text-decoration:none;background:#0c2a36" title="machine-skill kit 的 3D 数字孪生页 (three.js · 真实尺寸建模 · 影片/爆炸/剖切/故障演示)">🎬 3D 数字孪生</a>
 <span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有运动 70ms / 待机 500ms, 点击即时刷新)</span>
 </div>
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
@@ -886,6 +887,7 @@ window.addEventListener('resize',function(){if(camOn)camPlace();});
 // 在线 → SVG 切实时模式 (推杆/光门/料道按运动时间线还原); 离线 → 回落循环演示
 let twinSig='';
 let lastJobsSig=''; // 模型vs实际对照表: 仅 jobs 变化时重渲, 避免每 250ms 闪烁
+let last3dJobId=''; // 3D 页 (BroadcastChannel 'laya3d'): 仅最新批次转发一次
 let lastConveyor='stopped'; // 真实带态 (belt 按钮起/停判定 + 文案)
 let twinTimer=null;
 function scheduleTwin(ms){if(twinTimer)clearTimeout(twinTimer);twinTimer=setTimeout(refreshTwin,ms);}
@@ -960,7 +962,11 @@ async function refreshTwin(){
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
  updateCtlButtons(src, st, d.fault); // 手动控制按钮: 真实源可用 + 推杆随 motion 显示「推杆中」 + 传送带随带态改文案 + 故障锁存时显示「清故障」
  // 模型 vs 实际对照表: 仅 jobs 变化时重渲 (网关 /jobs 逐批次 命令 vs 执行 vs HL)
- {const jsig2=JSON.stringify(d.jobs||[]);if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
+ {const jsig2=JSON.stringify(d.jobs||[]);
+  const jb=(d.jobs||[])[(d.jobs||[]).length-1];
+  if(jb&&String(jb.job_id||'')!==last3dJobId){last3dJobId=String(jb.job_id||'');
+   if(bc3d)bc3d.postMessage({type:'job',items:(jb.actions||[]).map(a=>({material:a.material,bin:a.yard,qty:a.qty}))});}
+  if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
  const anyBusy=st.some(s=>s.state==='busy')||(src==='device'&&lastConveyor==='running');
  scheduleTwin(src==='sim'?250:(anyBusy?70:500)); // 有运动(推杆忙/带在跑)→70ms 紧跟真机; 待机 500ms; 模拟 250ms
 }
@@ -1283,13 +1289,17 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 })();
 refreshState();
 refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
-(function(){ // 数据源选项: 模拟/真实, 记忆偏好, 切换立即重采
+(function(){ // 数据源选项: 模拟/真实, 记忆偏好, 切换立即重采 + 同步 3D 页
  const sel=$('gla-src');
  if(!sel)return;
  const sv=localStorage.getItem('glaSrc');
  if(sv==='device'||sv==='sim')sel.value=sv;
- sel.addEventListener('change',()=>{localStorage.setItem('glaSrc',sel.value);twinSig='';refreshTwin();});
+ sel.addEventListener('change',()=>{localStorage.setItem('glaSrc',sel.value);twinSig='';refreshTwin();
+  if(bc3d)bc3d.postMessage({type:'src',src:sel.value});});
 })();
+// 3D 数字孪生页 (machine-skill kit · /sortline3d): 同源 BroadcastChannel 转发新批次/数据源
+let bc3d=('BroadcastChannel' in window)?new BroadcastChannel('laya3d'):null;
+function open3d(){const s=$('gla-src');window.open('/sortline3d?src='+((s&&s.value==='device')?'device':'sim'),'laya3d');}
 updateMicUi();
 refreshTwin(); // 光门运行示意: 加载即探测数字孪生 (在线切实时模式, 离线循环演示)
 </script></div></body></html>"""
@@ -1297,6 +1307,22 @@ refreshTwin(); // 光门运行示意: 加载即探测数字孪生 (在线切实�
 # 光门运行示意图嵌入 (edge101/docs/gate_layout_anim.svg 独立资产, 改图不用动本页代码)
 PAGE = PAGE.replace("@GATE_SVG@", GATE_SVG)
 
+
+
+# ---- 3D 数字孪生页 (machine-skill kit · edge101/docs/sortline_3d.html) ----
+@app.get("/sortline3d", response_class=HTMLResponse)
+def sortline_3d_page():
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edge101", "docs", "sortline_3d.html")
+    with open(p, encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/kit/lab-kit.js")
+def kit_lab_js():
+    from fastapi import Response
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edge101", "kit", "lab-kit.js")
+    with open(p, encoding="utf-8") as f:
+        return Response(content=f.read(), media_type="text/javascript; charset=utf-8")
 
 
 @app.get("/audio")

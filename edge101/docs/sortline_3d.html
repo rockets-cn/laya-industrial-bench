@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>DFRobot 工业分拣线 · 3D 数字孪生 (edge101)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.min.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<!-- lab-kit:start -->
+<script type="module" src="../kit/lab-kit.js"></script>
+<!-- lab-kit:end -->
+
+<script type="module">
+import * as THREE from 'three'
+const { Lab, MAT, GEO, clamp, lerp, fmt } = window.LabKit
+
+// ============================================================================
+// 调研 (DFRobot 工业分拣线 · edge101 @192.168.2.2, 数据来自仓库配置/实机实测)
+//   皮带: 42 步进 + SERVO42C 闭环, 0.0525 m/s (52.5 mm/s), 上游→下游 (+x)
+//   IR T0: 透过式红外, 唯一触发点 (件到推杆 b 的时刻 = d_b / v)
+//   仓距: 2026-11-11 真机 9 点标定 (config.h BIN_DIST_MM): 125 / 187 / 239 mm
+//   推杆: 宽角伺服 270°(回)→−80°(伸), 伸出 600 ms / 缩 900 ms, 停带推送, 单件 ~0.9 s
+//   视觉: HuskyLens2 俯视, YOLOv8n 定制模型 dfrobot_industrial_sorting
+//         (864×486 BG3P, conf 0.45, nms 0.2, 15 fps), 4 类:
+//         超声波 / 人体红外(PIR) / 温湿度 / 角度
+//   故障: HL2 固件 FIFO 24 槽, 幻影件重复下发 → 队列满 → FAULT 锁存+停带
+//         (2026-11-16 实机事故; 8c07198 存在性去重后已根治, 此页可作 Break-It)
+//   假设尺寸 (无图纸): 皮带 0.62×0.12 m, 带面顶 h=0.34 m, 铝型材框架;
+//         推杆 = 宽角伺服 + Scotch-yoke (直槽滑块) 曲柄连杆, 推板行程 35 mm
+// ============================================================================
+const V = 0.0525
+const X_CAM = -0.160, X_IR = -0.050
+const X_B = [0.075, 0.137, 0.189]
+const EJECT_S = 0.6, RETRACT_S = 0.9, HOLD_S = 0.12
+const FIFO = 24
+const CRANK_Z = 0.1335, R = 0.0175, ROD_L = 0.100     // Scotch-yoke: 行程 2R = 35 mm
+const ITEM_Z0 = 0.030                                  // 上料位置 (偏出料侧)
+const KINDS = ['ultrasonic_sensor', 'pir_sensor', 'angle_sensor', 'temp_humidity_sensor']
+const MATCN = { angle_sensor: '角度传感器', ultrasonic_sensor: '超声波传感器', pir_sensor: '人体红外传感器', temp_humidity_sensor: '温湿度传感器' }
+const MATMAP = { angle_sensor: 1, ultrasonic_sensor: 2, pir_sensor: 3, temp_humidity_sensor: 1 }  // 测试占位映射 (无指令兜底)
+const MATCOL = { angle_sensor: [0.38, 0.65, 0.98], ultrasonic_sensor: [0.98, 0.569, 0.243], pir_sensor: [0.945, 0.318, 0.318], temp_humidity_sensor: [0.416, 0.816, 0.549] }
+
+const lab = new Lab({
+  prompt: 'DFRobot 工业分拣线: 52.5 mm/s 皮带 · 3 个伺服推杆 · HuskyLens2 俯视识别 4 类传感器 · IR T0 触发 · 45° 滑道分仓 (edge101 数字孪生)',
+  no: 101, title: 'DFRobot 工业分拣线', sub: 'edge101 · 52.5 mm/s · IR T0 · 3 推杆 · HL2',
+  size: 0.66,
+  theme: 'night',
+  view: { az: 42, el: 16, dist: 2.2, target: [0.01, 0.31, 0.03], fov: 30 },
+  cut: { a: [0, 0, 1], b: [0, 1, 0] },
+  pills: ['three.js 0.170', 'PBR', 'machine-skill', 'digital twin'],
+})
+
+// ---------- 材质 ----------
+const M = {
+  frame:  MAT.paint({ color: [0.10, 0.11, 0.125], roughness: 0.5, clearcoat: 0.25 }),
+  rail:   MAT.paint({ color: [0.14, 0.15, 0.17], roughness: 0.45, clearcoat: 0.3 }),
+  rubber: MAT.rubber({ color: [0.05, 0.05, 0.055] }),
+  steel:  MAT.steel({ roughness: 0.28 }),
+  alu:    MAT.aluminium({ roughness: 0.4 }),
+  aluM:   MAT.aluminiumMachined({ roughness: 0.22 }),
+  dark:   MAT.paint({ color: [0.07, 0.07, 0.08], roughness: 0.55 }),
+  pcb:    MAT.paint({ color: [0.03, 0.16, 0.09], roughness: 0.5 }),
+  gold:   MAT.brass({ roughness: 0.3 }),
+  white:  MAT.paint({ color: [0.93, 0.93, 0.94], roughness: 0.22, clearcoat: 0.9 }),
+  chute:  MAT.stainless({ color: [0.60, 0.63, 0.66], roughness: 0.55, finish: 'brushed' }),
+  chuteSide: MAT.stainless({ color: [0.55, 0.58, 0.62], roughness: 0.5, finish: 'brushed' }),
+  glass:  MAT.glass(),
+  hlLed:  MAT.glow({ emissive: [0.35, 1.0, 0.55], emissiveIntensity: 1.2 }),
+  beacon: MAT.glow({ emissive: [1.0, 0.18, 0.12], emissiveIntensity: 0.12 }),
+}
+M.chute.side = THREE.DoubleSide
+M.chuteSide.side = THREE.DoubleSide
+
+// 皮带面滚花纹理 (滚动 → 带面运动感)
+const TREAD_TILE = 0.04
+const treadTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128
+  const g = c.getContext('2d')
+  g.fillStyle = '#141518'; g.fillRect(0, 0, 256, 128)
+  g.strokeStyle = '#27292e'; g.lineWidth = 7
+  for (let x = -64; x < 320; x += 32) { g.beginPath(); g.moveTo(x, -8); g.lineTo(x + 18, 64); g.lineTo(x, 136); g.stroke() }
+  const t = new THREE.CanvasTexture(c)
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  t.repeat.set(0.62 / TREAD_TILE, 1)
+  return t
+})()
+const beltTopM = MAT.rubber({ color: [0.075, 0.075, 0.08], map: treadTex, roughness: 0.92 })
+
+function textTex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h
+  draw(c.getContext('2d'), w, h)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+
+// ---------- 结构 (全部真实米制) ----------
+const frame = new THREE.Group()
+const railL = new THREE.Group(), railR = new THREE.Group()
+for (const [grp, z] of [[railL, -0.075], [railR, 0.075]]) {
+  const r = new THREE.Mesh(GEO.rbox(0.62, 0.045, 0.03, 0.008), M.rail)
+  r.position.set(0, 0.3135, z)
+  grp.add(r)
+}
+frame.add(railL, railR)
+const endL = new THREE.Mesh(GEO.rbox(0.012, 0.045, 0.175, 0.004), M.frame); endL.position.set(-0.326, 0.3135, 0)
+const endR = new THREE.Mesh(GEO.rbox(0.012, 0.045, 0.175, 0.004), M.frame); endR.position.set(0.326, 0.3135, 0)
+frame.add(endL, endR)
+const legs = new THREE.Group(), feet = new THREE.Group(), braces = new THREE.Group()
+for (const x of [-0.28, 0.28]) for (const z of [-0.095, 0.095]) {
+  const leg = new THREE.Mesh(GEO.rbox(0.032, 0.289, 0.032, 0.006), M.frame)
+  leg.position.set(x, 0.1445, z); legs.add(leg)
+  const foot = new THREE.Mesh(GEO.disc(0.026, 0.009, 0.003, 24), M.rubber)
+  foot.position.set(x, 0.0045, z); feet.add(foot)
+  feet.add(foot)
+  const brace = new THREE.Mesh(GEO.rbox(0.016, 0.016, 0.16, 0.004), M.frame)
+  brace.position.set(x, 0.05, 0); braces.add(brace)
+}
+frame.add(legs, feet, braces)
+lab.add(frame, { name: 'frame', explode: [0, -0.10, 0], xray: 'shell', count: 12 })
+lab.add(railL, { name: '侧轨 (上游侧)', explode: [0, 0.05, -0.24], count: 1 })
+lab.add(railR, { name: '侧轨 (推杆侧)', explode: [0, 0.05, 0.24], count: 1 })
+
+// 皮带
+const beltG = new THREE.Group()
+const band = new THREE.Mesh(GEO.rbox(0.634, 0.036, 0.118, 0.016), M.rubber)
+band.position.set(0, 0.329, 0)
+const beltTop = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.114), beltTopM)
+beltTop.rotation.x = -Math.PI / 2
+beltTop.position.set(0, 0.3442, 0)
+beltG.add(band, beltTop)
+lab.add(beltG, { name: '皮带 (42 步进驱动)', explode: [0, 0.30, 0], count: 2, xray: 'shell' })
+
+// 皮带轮 ×2
+const pulL = new THREE.Group(), pulR = new THREE.Group()
+function addPulley(dst, x) {
+  const rimG = GEO.disc(0.021, 0.014, 0.0012, 28); rimG.rotateX(Math.PI / 2)
+  dst.add(new THREE.Mesh(rimG, M.aluM))
+  for (let i = 0; i < 4; i++) {
+    const sp = new THREE.Mesh(GEO.rbox(0.034, 0.004, 0.007, 0.001), M.dark)
+    sp.rotation.z = i * Math.PI / 2 + 0.4
+    dst.add(sp)
+  }
+  const hubG = GEO.disc(0.0065, 0.018, 0.001, 16); hubG.rotateX(Math.PI / 2)
+  dst.add(new THREE.Mesh(hubG, M.steel))
+  dst.position.set(x, 0.329, 0)
+}
+addPulley(pulL, -0.317); addPulley(pulR, 0.317)
+lab.add(pulL, { name: '主动轮 (驱动端)', explode: [-0.20, 0.18, 0], count: 6 })
+lab.add(pulR, { name: '张紧轮 (尾端)', explode: [0.20, 0.18, 0], count: 6 })
+
+// 步进电机 + 电机板
+const motorG = new THREE.Group()
+const mBody = new THREE.Mesh(GEO.rbox(0.055, 0.042, 0.042, 0.005), M.dark); mBody.position.set(-0.335, 0.329, 0.062); motorG.add(mBody)
+const mFan = new THREE.Mesh(GEO.rbox(0.014, 0.05, 0.05, 0.004), M.steel); mFan.position.set(-0.367, 0.329, 0.062); motorG.add(mFan)
+const mShaftG = GEO.disc(0.0035, 0.03, 0.0005, 12); mShaftG.rotateX(Math.PI / 2)
+const mShaft = new THREE.Mesh(mShaftG, M.steel); mShaft.position.set(-0.312, 0.329, 0); motorG.add(mShaft)
+const mPlate = new THREE.Mesh(GEO.rbox(0.08, 0.006, 0.06, 0.002), M.alu); mPlate.position.set(-0.33, 0.353, 0.062); motorG.add(mPlate)
+for (const [dx, dz] of [[-0.022, 0.0145], [0.022, 0.0145], [-0.022, -0.012], [0.022, -0.012]]) {
+  const s = new THREE.Mesh(GEO.disc(0.0028, 0.005, 0.0004, 10), M.steel)
+  s.rotation.x = Math.PI / 2
+  s.position.set(-0.335 + dx, 0.350, 0.062 + dz); motorG.add(s)
+}
+lab.add(motorG, { name: 'NEMA23 42 步进 + SERVO42C', explode: [-0.24, 0.22, 0.10], count: 6 })
+
+// 驱动器 (铝壳散热片)
+const drvG = new THREE.Group()
+const dBody = new THREE.Mesh(GEO.rbox(0.045, 0.052, 0.026, 0.003), M.alu); dBody.position.set(-0.352, 0.332, 0.115); drvG.add(dBody)
+for (let i = 0; i < 5; i++) {
+  const fin = new THREE.Mesh(GEO.rbox(0.04, 0.004, 0.024, 0.001), M.aluM)
+  fin.position.set(-0.352, 0.344 + i * 0.009, 0.115); drvG.add(fin)
+}
+const dTerm = new THREE.Mesh(GEO.rbox(0.03, 0.012, 0.014, 0.002), M.dark); dTerm.position.set(-0.352, 0.308, 0.115); drvG.add(dTerm)
+lab.add(drvG, { name: 'SERVO42C 闭环驱动器', explode: [-0.30, 0.08, 0.24], count: 7 })
+
+// ESP32 控制盒 (edge101)
+const espG = new THREE.Group()
+const ePcb = new THREE.Mesh(GEO.rbox(0.056, 0.040, 0.026, 0.003), M.pcb); ePcb.position.set(-0.02, 0.368, -0.115); espG.add(ePcb)
+const eUsb = new THREE.Mesh(GEO.rbox(0.012, 0.012, 0.028, 0.002), M.steel); eUsb.position.set(0.018, 0.372, -0.115); espG.add(eUsb)
+const eChip = new THREE.Mesh(GEO.rbox(0.014, 0.004, 0.012, 0.001), M.dark); eChip.position.set(-0.03, 0.389, -0.115); espG.add(eChip)
+const ePost = new THREE.Mesh(GEO.rbox(0.03, 0.034, 0.022, 0.004), M.frame); ePost.position.set(-0.02, 0.347, -0.115); espG.add(ePost)
+const eName = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.014), new THREE.MeshBasicMaterial({
+  map: textTex(512, 144, (g, w, h) => {
+    g.fillStyle = '#0b0e13'; g.fillRect(0, 0, w, h)
+    g.fillStyle = '#e8b04a'; g.font = '600 64px "JetBrains Mono", monospace'
+    g.fillText('edge101', 24, 88)
+    g.fillStyle = '#9aa3b2'; g.font = '500 34px "Noto Sans SC", sans-serif'
+    g.fillText('ESP32 · DFRobot 分拣线', 168, 86)
+  }), transparent: true, side: THREE.DoubleSide }))
+eName.position.set(-0.02, 0.368, -0.0965); espG.add(eName)
+lab.add(espG, { name: 'ESP32 控制盒 (edge101)', explode: [0.10, 0.28, -0.18], count: 5 })
+
+// 线缆 (动力 / I2C / 推杆信号)
+const wireG = new THREE.Group()
+const wire1 = new THREE.Mesh(GEO.pipe([[-0.35, 0.355, 0.105], [-0.31, 0.39, -0.02], [-0.16, 0.405, -0.09], [-0.055, 0.385, -0.112]], 0.0022), M.dark)
+const wire2 = new THREE.Mesh(GEO.pipe([[0.018, 0.375, -0.12], [X_CAM + 0.05, 0.46, -0.155], [X_CAM + 0.006, 0.512, -0.105]], 0.0018), M.dark)
+const wire3 = new THREE.Mesh(GEO.pipe([[0.0, 0.372, -0.115], [0.06, 0.355, 0.02], [0.145, 0.344, 0.092]], 0.0018), M.dark)
+wireG.add(wire1, wire2, wire3)
+lab.add(wireG, { name: '线缆 (动力/信号)', explode: [0.06, 0.24, -0.04], count: 3 })
+
+// ---------- HuskyLens2 (俯视相机) ----------
+const camG = new THREE.Group()
+const cBase = new THREE.Mesh(GEO.rbox(0.14, 0.012, 0.08, 0.003), M.frame); cBase.position.set(X_CAM, 0.302, -0.13); camG.add(cBase)
+const cCol = new THREE.Mesh(GEO.rbox(0.024, 0.25, 0.024, 0.005), M.frame); cCol.position.set(X_CAM, 0.42, -0.162); camG.add(cCol)
+const cArm = new THREE.Mesh(GEO.rbox(0.028, 0.022, 0.135, 0.008), M.frame); cArm.position.set(X_CAM, 0.535, -0.095); camG.add(cArm)
+const cBody = new THREE.Mesh(GEO.rbox(0.034, 0.02, 0.028, 0.005), M.white); cBody.position.set(X_CAM, 0.51, -0.045); camG.add(cBody)
+const cLensG = GEO.disc(0.0078, 0.009, 0.001, 24)
+const cLens = new THREE.Mesh(cLensG, M.glass); cLens.position.set(X_CAM, 0.495, -0.045); camG.add(cLens)
+const cLed = new THREE.Mesh(new THREE.TorusGeometry(0.0092, 0.0013, 8, 32), M.hlLed)
+cLed.rotation.x = Math.PI / 2; cLed.position.set(X_CAM, 0.498, -0.045); camG.add(cLed)
+const cScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.021, 0.012), new THREE.MeshBasicMaterial({
+  map: textTex(256, 144, (g, w, h) => {
+    g.fillStyle = '#05070b'; g.fillRect(0, 0, w, h)
+    g.fillStyle = '#7ee0a8'; g.font = '600 44px "JetBrains Mono", monospace'
+    g.fillText('HL2 · 129', 18, 58)
+    g.fillStyle = '#8a93a3'; g.font = '400 30px "JetBrains Mono", monospace'
+    g.fillText('yolov8n 864×486 @15fps', 18, 104)
+    ;['#62a5fa', '#fa943d', '#f25252', '#6ad18c'].forEach((cc, i) => { g.fillStyle = cc; g.fillRect(18 + i * 26, 120, 18, 14) })
+  }), transparent: true, side: THREE.DoubleSide }))
+cScreen.rotation.x = -Math.PI / 2; cScreen.position.set(X_CAM, 0.5205, -0.045); camG.add(cScreen)
+// FOV 锥 (相机视野 → 带面)
+const fovMat = new THREE.MeshBasicMaterial({ color: 0x6fe0a8, transparent: true, opacity: 0.05, depthWrite: false, side: THREE.DoubleSide })
+const fovGeo = new THREE.BufferGeometry()
+{
+  const x = X_CAM, yT = 0.492, zT = -0.045
+  const v = [
+    [x - 0.008, yT, zT - 0.006], [x + 0.008, yT, zT - 0.006], [x + 0.008, yT, zT + 0.006], [x - 0.008, yT, zT + 0.006],
+    [x - 0.095, 0.345, -0.055], [x + 0.095, 0.345, -0.055], [x + 0.095, 0.345, 0.055], [x - 0.095, 0.345, 0.055],
+  ]
+  const idx = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 0, 3, 7, 0, 7, 4, 1, 2, 6, 1, 6, 5]
+  fovGeo.setIndex(idx)
+  fovGeo.setAttribute('position', new THREE.Float32BufferAttribute(v.flat(), 3))
+  fovGeo.computeVertexNormals()
+}
+const fovCone = new THREE.Mesh(fovGeo, fovMat); camG.add(fovCone)
+lab.add(camG, { name: 'HuskyLens 2 (俯视识别)', explode: [0, 0.24, -0.16], count: 8 })
+
+// ---------- IR T0 光幕 ----------
+const irG = new THREE.Group()
+const irBar = new THREE.Mesh(GEO.rbox(0.016, 0.014, 0.15, 0.004), M.alu)
+irBar.position.set(X_IR, 0.375, 0); irG.add(irBar)
+for (const dz of [-0.068, 0.068]) {
+  const post = new THREE.Mesh(GEO.rbox(0.012, 0.02, 0.012, 0.003), M.alu)
+  post.position.set(X_IR, 0.364, dz); irG.add(post)
+  const head = new THREE.Mesh(GEO.rbox(0.011, 0.009, 0.014, 0.002), M.dark)
+  head.position.set(X_IR, 0.357, dz * 0.7); irG.add(head)
+}
+const beamMat = new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.12, depthWrite: false })
+const beam = new THREE.Mesh(new THREE.BoxGeometry(0.0016, 0.0016, 0.096), beamMat)
+beam.position.set(X_IR, 0.357, 0); irG.add(beam)
+lab.add(irG, { name: 'IR T0 光幕 (触发点)', explode: [0, 0.18, 0], count: 6 })
+
+// ---------- 推杆 ×3 (宽角伺服 + Scotch-yoke 曲柄连杆, 停带推送) ----------
+const pushers = []
+function buildPusher(i) {
+  const xb = X_B[i]
+  const g = new THREE.Group()
+  const armM = new THREE.Mesh(GEO.rbox(0.02, 0.012, 0.08, 0.004), M.rail)
+  armM.position.set(xb + 0.032, 0.302, 0.122); g.add(armM)
+  const postM = new THREE.Mesh(GEO.rbox(0.024, 0.036, 0.024, 0.004), M.rail)
+  postM.position.set(xb + 0.032, 0.322, 0.1335); g.add(postM)
+  const servo = new THREE.Mesh(GEO.rbox(0.03, 0.028, 0.03, 0.004), M.dark)
+  servo.position.set(xb + 0.032, 0.352, 0.1335); g.add(servo)
+  const servoCap = new THREE.Mesh(GEO.rbox(0.026, 0.006, 0.026, 0.002), M.steel)
+  servoCap.position.set(xb + 0.032, 0.367, 0.1335); g.add(servoCap)
+  const crank = new THREE.Group()
+  crank.position.set(xb, 0.352, CRANK_Z)
+  const discG = GEO.disc(0.024, 0.006, 0.0008, 28); discG.rotateZ(Math.PI / 2)
+  crank.add(new THREE.Mesh(discG, M.aluM))
+  const pinG = GEO.disc(0.0026, 0.013, 0.0004, 12); pinG.rotateZ(Math.PI / 2)
+  const pin = new THREE.Mesh(pinG, M.steel); pin.position.set(0, R, 0); crank.add(pin)
+  const horn = new THREE.Mesh(GEO.rbox(0.003, 0.019, 0.0022, 0.0008), M.gold)
+  horn.position.set(0.0045, 0.0095, 0); crank.add(horn)
+  g.add(crank)
+  const shaftG = GEO.disc(0.003, 0.018, 0.0004, 12); shaftG.rotateZ(Math.PI / 2)
+  const shaft = new THREE.Mesh(shaftG, M.steel); shaft.position.set(xb + 0.0105, 0.352, CRANK_Z); g.add(shaft)
+  const plate = new THREE.Mesh(GEO.rbox(0.008, 0.05, 0.046, 0.002), M.alu)
+  plate.position.set(xb, 0.352, CRANK_Z + R); g.add(plate)
+  const slot = new THREE.Mesh(GEO.rbox(0.0014, 0.043, 0.037, 0.0004), M.dark)
+  slot.position.set(0.0048, 0, 0); plate.add(slot)
+  for (const dy of [-0.016, 0.016]) {
+    const rod = new THREE.Mesh(GEO.disc(0.0016, 0.058, 0.0002, 8), M.steel)
+    rod.rotation.x = Math.PI / 2
+    rod.position.set(xb, 0.352 + dy, 0.133); g.add(rod)
+  }
+  const rodM = new THREE.Mesh(GEO.rbox(0.007, 0.007, 0.095, 0.001), M.steel)
+  rodM.position.set(xb, 0.352, CRANK_Z + R - 0.050); g.add(rodM)
+  const tipM = new THREE.Mesh(GEO.rbox(0.034, 0.024, 0.005, 0.001), i === 2 ? M.white : M.aluM)
+  tipM.position.set(xb, 0.349, CRANK_Z + R - 0.0975); g.add(tipM)
+  g.userData = { crank, plate, rodM, tipM, e: 0, mode: 'idle', t0: 0, item: null }
+  pusherKin(g.userData)
+  lab.add(g, { name: `推杆 ${i + 1} (宽角伺服·直槽滑块)`, explode: [0, 0.12, 0.28 + i * 0.06], count: 10 })
+  pushers.push(g.userData)
+}
+buildPusher(0); buildPusher(1); buildPusher(2)
+
+// ---------- 45° 滑道 + 收集仓 ×3 ----------
+const CHUTE_LEN = 0.155
+function buildChute(i) {
+  const xb = X_B[i]
+  const g = new THREE.Group()
+  const bot = new THREE.Mesh(new THREE.PlaneGeometry(0.056, CHUTE_LEN), M.chute)
+  bot.rotation.x = Math.PI * 0.75
+  bot.position.set(xb, 0.345 - CHUTE_LEN * 0.35355, 0.052 + CHUTE_LEN * 0.35355)
+  g.add(bot)
+  for (const dx of [-0.028, 0.028]) {
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(CHUTE_LEN, 0.013), M.chuteSide)
+    wall.rotation.x = Math.PI * 0.75
+    wall.position.set(xb + dx, bot.position.y + 0.006, bot.position.z)
+    g.add(wall)
+  }
+  const bx = xb, bz = 0.185
+  const bottom = new THREE.Mesh(GEO.rbox(0.058, 0.004, 0.10, 0.001), M.frame)
+  bottom.position.set(bx, 0.205, bz); g.add(bottom)
+  const wF = new THREE.Mesh(GEO.rbox(0.058, 0.072, 0.004, 0.001), M.frame); wF.position.set(bx, 0.241, 0.136); g.add(wF)
+  const wB = new THREE.Mesh(GEO.rbox(0.058, 0.072, 0.004, 0.001), M.frame); wB.position.set(bx, 0.241, 0.234); g.add(wB)
+  for (const dx of [-0.027, 0.027]) {
+    const wS = new THREE.Mesh(GEO.rbox(0.004, 0.072, 0.094, 0.001), M.frame); wS.position.set(bx + dx, 0.241, bz); g.add(wS)
+  }
+  const badge = new THREE.Mesh(new THREE.PlaneGeometry(0.026, 0.018), new THREE.MeshBasicMaterial({
+    map: textTex(256, 180, (g2, w, h) => {
+      g2.fillStyle = '#101318'; g2.fillRect(0, 0, w, h)
+      g2.fillStyle = '#e8b04a'; g2.font = '600 120px "JetBrains Mono", monospace'
+      g2.fillText(String(i + 1), w / 2 - 40, 132)
+    }), transparent: true, side: THREE.DoubleSide }))
+  badge.position.set(bx, 0.245, 0.2365); g.add(badge)
+  lab.add(g, { name: `45° 滑道 + 仓 ${i + 1}`, explode: [0, 0.05, 0.34 + i * 0.07], count: 8, xray: 'shell' })
+}
+buildChute(0); buildChute(1); buildChute(2)
+
+// ---------- 故障警示灯 ----------
+const beaconG = new THREE.Group()
+const bBase = new THREE.Mesh(GEO.disc(0.015, 0.014, 0.003, 20), M.dark)
+bBase.position.set(-0.29, 0.344, -0.095); beaconG.add(bBase)
+const bDome = new THREE.Mesh(new THREE.SphereGeometry(0.011, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.beacon)
+bDome.position.set(-0.29, 0.351, -0.095); beaconG.add(bDome)
+lab.add(beaconG, { name: '故障警示灯', explode: [-0.05, 0.16, -0.12], count: 2 })
+
+// ---------- 上料物 (4 类传感器模块, 真实尺寸 ~45×20 mm) ----------
+function makeItem(kind) {
+  const g = new THREE.Group()
+  const col = MATCOL[kind] || [0.6, 0.6, 0.62]
+  let wz = 0.02
+  switch (kind) {
+    case 'ultrasonic_sensor': {
+      wz = 0.02
+      const b = new THREE.Mesh(GEO.rbox(0.045, 0.0018, wz, 0.001), MAT.paint({ color: [0.06, 0.20, 0.45], roughness: 0.4 }))
+      g.add(b)
+      for (const dz of [-0.0055, 0.0055]) {
+        const sock = new THREE.Mesh(GEO.disc(0.009, 0.004, 0.001, 20), M.dark)
+        sock.position.set(-0.013, 0.003, dz); g.add(sock)
+        const eye = new THREE.Mesh(GEO.disc(0.0076, 0.011, 0.001, 20), M.aluM)
+        eye.position.set(-0.013, 0.007, dz); g.add(eye)
+      }
+      const ic = new THREE.Mesh(GEO.rbox(0.009, 0.0032, 0.009, 0.0006), M.dark)
+      ic.position.set(0.013, 0.0024, 0); g.add(ic)
+      const led = new THREE.Mesh(GEO.disc(0.0012, 0.0016, 0.0002, 8), MAT.glow({ emissive: [1, 0.9, 0.3], emissiveIntensity: 1.5 }))
+      led.position.set(0.019, 0.002, 0.006); g.add(led)
+      break
+    }
+    case 'pir_sensor': {
+      wz = 0.028
+      const b = new THREE.Mesh(GEO.rbox(0.05, 0.0018, wz, 0.001), MAT.paint({ color: [0.30, 0.19, 0.10], roughness: 0.5 }))
+      g.add(b)
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(0.0115, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), MAT.paint({ color: [0.93, 0.91, 0.86], roughness: 0.35, clearcoat: 0.6 }))
+      dome.position.set(-0.013, 0.0018, 0); g.add(dome)
+      const ic = new THREE.Mesh(GEO.rbox(0.007, 0.003, 0.011, 0.0005), M.dark)
+      ic.position.set(0.016, 0.0023, 0.007); g.add(ic)
+      break
+    }
+    case 'temp_humidity_sensor': {
+      wz = 0.02
+      const b = new THREE.Mesh(GEO.rbox(0.026, 0.0018, wz, 0.001), MAT.paint({ color: [0.30, 0.55, 0.32], roughness: 0.5 }))
+      g.add(b)
+      const hous = new THREE.Mesh(GEO.rbox(0.016, 0.012, 0.016, 0.002), MAT.paint({ color: [0.95, 0.95, 0.92], roughness: 0.3 }))
+      hous.position.set(-0.004, 0.008, 0); g.add(hous)
+      for (let i = 0; i < 4; i++) {
+        const sl = new THREE.Mesh(GEO.rbox(0.0016, 0.009, 0.013, 0.0004), M.dark)
+        sl.position.set(-0.004, 0.008, -0.0054 + i * 0.0036); g.add(sl)
+      }
+      break
+    }
+    case 'angle_sensor': {
+      wz = 0.024
+      const b = new THREE.Mesh(GEO.rbox(0.05, 0.0018, wz, 0.001), MAT.paint({ color: [0.10, 0.36, 0.20], roughness: 0.45 }))
+      g.add(b)
+      const shft = new THREE.Mesh(GEO.disc(0.003, 0.007, 0.0004, 12), M.steel)
+      shft.position.set(-0.013, 0.005, 0); g.add(shft)
+      const armG = new THREE.Group(); armG.position.set(-0.013, 0.009, 0)
+      const arm = new THREE.Mesh(GEO.rbox(0.0016, 0.001, 0.017, 0.0004), MAT.paint({ color: [0.9, 0.9, 0.88], roughness: 0.3 }))
+      arm.position.z = 0.0085; armG.add(arm)
+      g.add(armG); g.userData.arm = armG
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(0.015, 0.0012, 6, 24, Math.PI * 1.3), MAT.paint({ color: [0.2, 0.5, 0.8], roughness: 0.4 }))
+      arc.rotation.x = Math.PI / 2; arc.position.set(-0.013, 0.0024, 0.004); g.add(arc)
+      break
+    }
+    default: {
+      const b = new THREE.Mesh(GEO.rbox(0.04, 0.012, wz, 0.002), MAT.paint({ color: col, roughness: 0.6 }))
+      b.position.y = 0.006; g.add(b)
+    }
+  }
+  const chip = new THREE.Mesh(GEO.rbox(0.006, 0.0024, 0.006, 0.0006), MAT.glow({ emissive: col, emissiveIntensity: 1.3 }))
+  chip.position.set(0.014, 0.0022, -0.006); g.add(chip)
+  g.userData.wz = wz
+  return g
+}
+
+// ---------- 状态机 ----------
+const sim = {
+  t: 0,
+  items: [],
+  spawnN: 0, nextSpawn: 0.6,
+  fwq: 0, phantom: false, fault: false,
+  irLit: false,
+  visionLabel: '', visionUntil: 0, fovPulse: 0,
+  doneTimes: [],
+  src: new URLSearchParams(location.search).get('src') === 'device' ? 'device' : 'sim',
+  jobs: [],
+  live: { online: false, beltOn: false, fault: null, ir: false, lastVev: 0, lastSort: [0, 0, 0], lastMat: null },
+}
+
+function jobPop() {
+  while (sim.jobs.length) {
+    const j = sim.jobs[0]
+    if (j.qty > 0) {
+      j.qty--
+      const out = { kind: j.kind, bin: j.bin }
+      if (j.qty <= 0) sim.jobs.shift()
+      return out
+    }
+    sim.jobs.shift()
+  }
+  return null
+}
+function spawnItem(kind, bin, x, z) {
+  if (sim.items.length > 26) return
+  const mesh = makeItem(kind)
+  mesh.scale.setScalar(0.01)
+  mesh.position.set(x, 0.344, z)
+  lab.root.add(mesh)
+  sim.items.push({ x, z, kind, bin, mesh, ph: 'belt', t0: sim.t, s: 0, seen: false, arm: mesh.userData.arm || null })
+}
+function autoSpawn() {
+  const j = jobPop()
+  let kind, bin
+  if (j) { kind = j.kind; bin = j.bin }
+  else {
+    const n = sim.spawnN
+    kind = KINDS[(n * 5 + 3) % 4]
+    bin = MATMAP[kind]
+  }
+  sim.spawnN++
+  const z = ITEM_Z0 + 0.004 * Math.sin(sim.spawnN * 2.399)
+  spawnItem(kind, bin, X_CAM - 0.065, z)
+}
+function removeItem(it) {
+  it.mesh.traverse(o => { if (o.geometry) o.geometry.dispose() })
+  lab.root.remove(it.mesh)
+  sim.items = sim.items.filter(x => x !== it)
+}
+
+// 推杆运动学: e 0=内位(缩回) 1=外位(推出), 返回推板面 z
+function pusherKin(p) {
+  const th = -Math.PI / 2 + p.e * Math.PI
+  p.crank.rotation.x = th
+  const zy = CRANK_Z + R * Math.sin(th)
+  p.plate.position.z = zy
+  p.rodM.position.z = zy - 0.050
+  p.tipM.position.z = zy - 0.0975
+  return zy - ROD_L
+}
+
+// ---------- 每帧 ----------
+const tsS = lab.slider({ id: 'ts', label: '时间加速', min: 1, max: 16, value: 4, unit: '×', ends: ['1×', '16×'], digits: 0 })
+
+lab.onTick((dt) => {
+  const perf = performance.now() / 1000
+  const ts = sim.src === 'sim' ? tsS.value : 1
+  const dts = dt * ts
+  sim.t += dts
+
+  const anyBusy = pushers.some(p => p.mode === 'ejecting' || p.mode === 'hold')
+  const beltRun = sim.src === 'sim' ? (!sim.fault && !anyBusy) : (sim.live.beltOn && !sim.live.fault)
+
+  if (beltRun) {
+    treadTex.offset.x -= (V * dts) / TREAD_TILE
+    const w = (V / 0.021) * dts
+    pulL.rotation.z -= w
+    pulR.rotation.z -= w
+  }
+
+  if (sim.src === 'sim' && sim.t >= sim.nextSpawn && sim.items.length < 26) {
+    autoSpawn()
+    sim.nextSpawn = sim.t + 2.1 + (sim.spawnN % 3) * 0.55
+  }
+
+  // 沿 +x 流向: 队首 = 最靠出口 (x 最大), 其余依次跟随, 间距 55 mm
+  const sorted = sim.items.slice().sort((a, b) => b.x - a.x)
+  for (let i = 0; i < sorted.length; i++) {
+    const it = sorted[i]
+    const ahead = i > 0 ? sorted[i - 1] : null
+    if (it.ph === 'belt') {
+      if (beltRun) {
+        let nx = it.x + V * dts
+        if (ahead && ahead.ph !== 'chute' && ahead.ph !== 'land') nx = Math.min(nx, ahead.x - 0.055)
+        if (it.bin >= 1 && it.bin <= 3) {
+          const lane = it.bin - 1, p = pushers[lane]
+          if (nx >= X_B[lane] - 0.012 && p.mode === 'idle') {
+            nx = X_B[lane] - 0.012
+            it.ph = 'hold'; p.item = it; p.mode = 'ejecting'; p.e = 0; p.t0 = sim.t
+          }
+        }
+        it.x = nx
+      }
+      if (it.x > 0.322) { removeItem(it); continue }
+      if (!it.seen && it.x >= X_CAM) {
+        it.seen = true
+        sim.fwq = Math.min(FIFO, sim.fwq + (sim.phantom ? 2 : 1))
+        sim.visionLabel = `${MATCN[it.kind]} → ${it.bin} 号仓`
+        sim.visionUntil = sim.t + 3
+        sim.fovPulse = 1
+      }
+    } else if (it.ph === 'hold') {
+      const p = pushers.find(q => q.item === it)
+      if (p) {
+        const face = pusherKin(p)
+        it.z = Math.max(it.z, face + it.mesh.userData.wz / 2)
+        it.mesh.position.set(it.x, 0.344, it.z)
+      }
+    } else if (it.ph === 'chute') {
+      it.s = 0.5 * 6.3 * (sim.t - it.t0) * (sim.t - it.t0)
+      const s = Math.min(it.s, 0.145)
+      const xb = X_B[it.bin - 1]
+      it.mesh.position.set(xb, 0.345 - 0.7071 * s, 0.052 + 0.7071 * s)
+      if (it.s >= 0.145) {
+        it.ph = 'land'; it.t0 = sim.t
+        sim.doneTimes.push(sim.t)
+        sim.fwq = Math.max(0, sim.fwq - 1)
+      }
+    } else if (it.ph === 'land') {
+      const xb = X_B[it.bin - 1]
+      const k = clamp((sim.t - it.t0) / 0.25, 0, 1)
+      it.mesh.position.set(xb, lerp(0.235, 0.206, k), lerp(0.152, 0.18, k))
+      if (sim.t - it.t0 > 0.85) { removeItem(it); continue }
+    }
+    if (it.ph === 'belt') {
+      it.mesh.position.set(it.x, 0.344, it.z)
+      if (it.mesh.scale.x < 1) it.mesh.scale.setScalar(Math.min(1, it.mesh.scale.x + dt * 8))
+    }
+    if (it.arm) it.arm.rotation.y = Math.sin(sim.t * 3 + it.x * 20) * 0.5
+  }
+
+  for (const p of pushers) {
+    if (p.mode === 'ejecting') {
+      p.e = Math.min(1, p.e + dts / EJECT_S)
+      if (p.e >= 1) {
+        if (p.item && p.item.ph === 'hold') { p.item.ph = 'chute'; p.item.t0 = sim.t }
+        p.mode = 'hold'; p.t0 = sim.t
+      }
+    } else if (p.mode === 'hold') {
+      if (sim.t - p.t0 >= HOLD_S) p.mode = 'retracting'
+    } else if (p.mode === 'retracting') {
+      p.e = Math.max(0, p.e - dts / RETRACT_S)
+      if (p.e <= 0) { p.mode = 'idle'; p.item = null }
+    }
+  }
+
+  if (sim.fwq >= FIFO && !sim.fault) { sim.fault = true }
+
+  sim.irLit = sim.items.some(it => it.x + 0.02 > X_IR && it.x - 0.02 < X_IR && (it.ph === 'belt' || it.ph === 'hold'))
+  if (sim.src === 'device') sim.irLit = sim.irLit || sim.live.ir
+
+  beamMat.opacity = lerp(beamMat.opacity, sim.irLit ? 0.85 : 0.10, 0.25)
+  beamMat.color.set(sim.irLit ? 0x30ff70 : 0xff3b30)
+  sim.fovPulse = Math.max(0, sim.fovPulse - dt * 1.4)
+  fovMat.opacity = 0.045 + sim.fovPulse * 0.13
+  M.hlLed.emissiveIntensity = sim.visionUntil > sim.t ? 2.6 + Math.sin(perf * 10) * 0.8 : 1.2
+  M.beacon.emissiveIntensity = sim.fault || (sim.src === 'device' && sim.live.fault) ? 2.2 + Math.sin(perf * 9) * 1.6 : 0.12
+
+  const recent = sim.doneTimes.filter(t => t > sim.t - 60)
+  const rate = recent.length * 60
+  const fault = sim.fault || (sim.src === 'device' && !!sim.live.fault)
+  const state = fault ? 'FAULT · 队列满' : anyBusy ? '推送中 · 带停' : beltRun ? '运行中' : '带停'
+  const srcNote = sim.src === 'device' ? (sim.live.online ? ' · 实时' : ' · 离线') : ''
+  lab.setHero(rate, { state, sub: `带速 52.5 mm/s · 单件周期 1.62 s · HL2 下发队列 ${sim.fwq}/24${srcNote}`, bad: fault })
+})
+
+// ---------- 实时模式: 轮询 /twin ----------
+async function pollTwin() {
+  const L = sim.live
+  if (sim.src !== 'device') { L.online = false; return }
+  let d = null
+  try { d = await (await fetch('/twin')).json() } catch (e) { d = null }
+  L.online = !!(d && d.online)
+  if (!L.online) { L.beltOn = false; return }
+  L.beltOn = d.conveyor === 'running'
+  L.ir = !!d.ir_present
+  L.fault = d.fault || null
+  const vList = d.vision || []
+  const vev = vList.length ? vList[vList.length - 1] : null
+  if (vev && vev.ts) {
+    const tms = Date.parse(vev.ts)
+    if (tms > L.lastVev) {
+      L.lastVev = tms
+      L.lastMat = vev.material || null
+      if (vev.yard >= 1 && vev.yard <= 3) {
+        spawnItem(vev.material || KINDS[0], vev.yard, X_CAM - 0.065, ITEM_Z0)
+        sim.visionLabel = `${MATCN[vev.material] || vev.material} → ${vev.yard} 号仓`
+        sim.visionUntil = sim.t + 3
+        sim.fovPulse = 1
+      }
+    }
+  }
+  for (const ev of d.events || []) {
+    if (!ev || ev.state == null) continue
+    const n = ev.sorter
+    if (n < 1 || n > 3) continue
+    const tms = Date.parse(ev.ts) || 0
+    if (tms <= L.lastSort[n - 1]) continue
+    L.lastSort[n - 1] = tms
+    const p = pushers[n - 1]
+    if (ev.state === 'armed') {
+      if (p.mode !== 'ejecting') {
+        let it = sim.items.find(q => q.ph === 'belt' && q.bin === n && q.x >= X_B[n - 1] - 0.06 && q.x <= X_B[n - 1] + 0.03)
+        if (!it) {
+          const kind = L.lastMat || KINDS[(n * 5 + 3) % 4]
+          spawnItem(kind, n, X_B[n - 1] - 0.012, ITEM_Z0)
+          it = sim.items[sim.items.length - 1]
+        }
+        if (it) { it.ph = 'hold'; p.item = it; p.mode = 'ejecting'; p.e = 0; p.t0 = sim.t }
+      }
+    } else if (ev.state === 'busy') {
+      if (p.item && p.item.ph === 'hold') { p.item.ph = 'chute'; p.item.t0 = sim.t }
+      p.mode = 'hold'; p.t0 = sim.t
+    } else if (ev.state === 'ready' || ev.state === 'idle') {
+      if (p.mode === 'ejecting' || p.mode === 'hold') { p.mode = 'retracting' }
+    }
+  }
+}
+setInterval(pollTwin, 200)
+
+// ---------- 标签 ----------
+lab.label(camG, 'HuskyLens 2 · 俯视识别', {
+  at: [X_CAM, 0.55, -0.06],
+  value: () => sim.visionUntil > sim.t ? sim.visionLabel : '识别中 · 4 类 (conf 0.45)',
+})
+lab.label(irG, 'IR T0', {
+  at: [X_IR, 0.40, 0],
+  value: () => sim.irLit ? '束中断 · 件过 T0' : '无件',
+})
+pushers.forEach((p, i) => lab.label(p.plate.parent, `推杆 ${i + 1}`, {
+  at: [X_B[i], 0.295, 0.125],
+  value: () => {
+    if (sim.src === 'device') return '实时'
+    return p.mode === 'idle' ? '待命' : p.mode === 'ejecting' ? '伸出 600 ms' : p.mode === 'hold' ? '保持' : '缩回 900 ms'
+  },
+}))
+lab.label(motorG, '42 步进 · SERVO42C', {
+  at: [-0.35, 0.36, 0.09],
+  value: () => `${(V * 1000).toFixed(1)} mm/s · 闭环 PID`,
+})
+lab.label(espG, 'edge101 · ESP32', {
+  at: [-0.02, 0.40, -0.12],
+  value: () => 'MQTT :1883 · 网关 :8123',
+})
+lab.label(beaconG, '故障锁存', {
+  at: [-0.29, 0.375, -0.095],
+  value: () => sim.fault || (sim.src === 'device' && sim.live.fault) ? 'FAULT · 停带' : '正常',
+})
+
+// ---------- Hero / How / Break / 影片 ----------
+lab.hero({ label: 'Throughput', unit: '件/h', max: 2500, digits: 0 })
+
+lab.how(
+  '数字全部来自实机: 带速 52.5 mm/s (SERVO42C 闭环), 仓距 125/187/239 mm (2026-11-11 九点标定), 推杆停带推送 (伸出 600 ms + 缩回 900 ms). 件到推杆: 停带 → 推板推出 35 mm → 件滑入 45° 滑道 (a = g(sin45°−µcos45°) ≈ 6.3 m/s², µ≈0.2) → 落仓. 相机每次识别下发 1 条指令进 HuskyLens 固件 FIFO (24 槽); 2026-11-16 实机因同一件重复下发 (存在期 5.7 s > 下发窗口 3 s) 把队列填到 24 → FAULT 锁存 + 停带. 实时模式跟随真实 MQTT 事件, 件位为外推近似.',
+  [
+    't_b = d_b / v,  d = 0.125 / 0.187 / 0.239 m,  v = 0.0525 m/s',
+    'τ_item = 0.6 + 0.12 + 0.9 s (推 + 保持 + 缩)',
+    's(t) = ½·g·(sin45° − µ·cos45°)·t²,  µ ≈ 0.2',
+    'HL2 FIFO: dispatch ≥ 24 → FAULT latch (停带)',
+  ]
+)
+
+lab.breakIt({
+  label: '幻影件重复下发',
+  run() { sim.phantom = true },
+  reset() { sim.phantom = false; sim.fwq = 0; sim.fault = false },
+})
+
+lab.autoFilm({
+  runBeat: '52.5 mm/s, 单件 1.62 s.',
+  runSub: 'IR T0 → 停带 → 推出 → 缩回',
+  breakBeat: '重新打开幻影件重复下发.',
+  breakSub: 'HL2 队列 24 槽 — 满 = 停线',
+  breakCut: false,
+})
+lab.film('beat', lab.films.main)
+lab.film('break', {
+  len: 28, assemble: [0.2, 1.4],
+  shots: [
+    { t: 0, az: 38, el: 15, dist: 1.5, target: [0.06, 0.31, 0.05], fov: 30 },
+    { t: 6, az: 55, el: 24, dist: 1.25, target: [0.075, 0.34, 0.09], fov: 28 },
+    { t: 13, az: 24, el: 10, dist: 1.45, target: [0.03, 0.30, 0.02], fov: 30 },
+    { t: 20, az: 48, el: 20, dist: 1.35, target: [0.10, 0.32, 0.06], fov: 28 },
+    { t: 28, az: 38, el: 15, dist: 1.5, target: [0.06, 0.31, 0.05], fov: 30 },
+  ],
+  events: [
+    { t: 1.8, beat: ['01', 'HL2 下发队列 24/24', 'FAULT 锁存 · 皮带停'] },
+    { t: 2.6, cursor: { to: 'button:break', dur: 0.8 } },
+    { t: 3.4, cursor: { click: true }, do: (l) => l.breakNow() },
+    { t: 3.9, cursor: { hide: true } },
+    { t: 10, set: { cut: 1, labels: 1 } },
+    { t: 17, set: { cut: 0, labels: 0 } },
+    { t: 26.5, do: (l) => l.resetBreak() },
+  ],
+})
+lab.film('hero', {
+  len: 28, assemble: [0.2, 1.2],
+  shots: [
+    { t: 0, az: 45, el: 18, dist: 1.15, target: [0.13, 0.33, 0.07], fov: 28 },
+    { t: 7, az: 70, el: 24, dist: 1.0, target: [0.15, 0.34, 0.08], fov: 26 },
+    { t: 14, az: 30, el: 12, dist: 1.25, target: [0.11, 0.32, 0.05], fov: 28 },
+    { t: 21, az: 55, el: 20, dist: 1.1, target: [0.14, 0.33, 0.07], fov: 26 },
+    { t: 28, az: 45, el: 18, dist: 1.15, target: [0.13, 0.33, 0.07], fov: 28 },
+  ],
+  events: [
+    { t: 1.5, beat: ['01', 'Throughput', '52.5 mm/s · 单件周期 1.62 s'] },
+    { t: 8, beat: ['02', '推杆单件 0.9 s', '伸出 600 ms · 缩回 900 ms'] },
+    { t: 15, set: { labels: 1 } },
+    { t: 22, set: { labels: 0 } },
+  ],
+})
+lab.film('label', {
+  len: 28, assemble: [0.2, 1.2],
+  shots: [
+    { t: 0, az: 20, el: 18, dist: 1.9, target: [0.0, 0.33, 0.04], fov: 30 },
+    { t: 7, az: 45, el: 22, dist: 1.7, target: [0.02, 0.34, 0.05], fov: 30 },
+    { t: 14, az: 75, el: 16, dist: 1.8, target: [0.03, 0.32, 0.06], fov: 30 },
+    { t: 21, az: 100, el: 24, dist: 1.9, target: [0.0, 0.33, 0.04], fov: 30 },
+    { t: 28, az: 20, el: 18, dist: 1.9, target: [0.0, 0.33, 0.04], fov: 30 },
+  ],
+  events: [
+    { t: 1.2, set: { labels: 1 } },
+    { t: 3, beat: ['01', 'HuskyLens 2', 'YOLOv8n · 864×486 · 15 fps · conf 0.45'] },
+    { t: 8.5, beat: ['02', 'IR T0', '透过式红外 · 唯一触发点'] },
+    { t: 14, beat: ['03', '推杆 ×3', '宽角伺服 · 直槽滑块 · 停带推送'] },
+    { t: 20, beat: ['04', '45° 滑道', 'a ≈ 6.3 m/s² · 3 仓'] },
+  ],
+})
+lab.film('overview', {
+  len: 28, assemble: [0.2, 1.4],
+  shots: [
+    { t: 0, az: 25, el: 22, dist: 2.7, target: [0.0, 0.30, 0.05], fov: 32 },
+    { t: 7, az: 45, el: 18, dist: 2.5, target: [0.02, 0.31, 0.05], fov: 30 },
+    { t: 14, az: 70, el: 26, dist: 2.6, target: [0.02, 0.31, 0.04], fov: 30 },
+    { t: 21, az: 95, el: 20, dist: 2.7, target: [0.0, 0.30, 0.05], fov: 32 },
+    { t: 28, az: 25, el: 22, dist: 2.7, target: [0.0, 0.30, 0.05], fov: 32 },
+  ],
+  events: [
+    { t: 2, beat: ['01', 'edge101 · DFRobot 工业分拣线', '带速 52.5 mm/s · 3 推杆 · 3 滑道仓'] },
+    { t: 9, set: { labels: 1 } },
+    { t: 16, set: { cut: 1 } },
+    { t: 22, set: { cut: 0, labels: 0 } },
+  ],
+})
+
+// ---------- 数据源切换 (本页独立) + 对外 API ----------
+const pillWrap = document.createElement('div')
+pillWrap.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:50;display:flex;gap:6px;align-items:center;background:rgba(13,15,20,.82);border:1px solid #262b36;border-radius:10px;padding:6px 9px;font:12px/1 "Noto Sans SC",sans-serif;color:#8a91a0;backdrop-filter:blur(6px)'
+pillWrap.innerHTML = '<span>数据源</span>' + ['sim', 'device'].map(s => `<button data-s="${s}" style="cursor:pointer;border:1px solid #2c3342;border-radius:6px;padding:4px 9px;font:12px 'Noto Sans SC',sans-serif;${s === 'sim' ? 'background:#1d4ed8;color:#fff' : 'background:#1e2430;color:#aab2c0'}">${s === 'sim' ? '模拟' : '真实'}</button>`).join('')
+document.body.appendChild(pillWrap)
+function setSrc(v) {
+  sim.src = v
+  sim.live.online = false
+  pillWrap.querySelectorAll('button').forEach(b => {
+    const on = b.dataset.s === v
+    b.style.background = on ? '#1d4ed8' : '#1e2430'
+    b.style.color = on ? '#fff' : '#aab2c0'
+  })
+}
+pillWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setSrc(b.dataset.s)))
+setSrc(sim.src)
+
+// 父页 (loop_ui :8002) 转发: 新批次指令 / 数据源切换 (BroadcastChannel 'laya3d')
+if ('BroadcastChannel' in window) {
+  const bc3d = new BroadcastChannel('laya3d')
+  bc3d.onmessage = (e) => {
+    const m = e.data || {}
+    if (m.type === 'job' && sim.src === 'sim' && m.items && m.items.length) window.__s3d.setJob(m.items)
+    else if (m.type === 'src') setSrc(m.src === 'device' ? 'device' : 'sim')
+  }
+}
+
+window.__s3d = {
+  setSrc: (v) => setSrc(v === 'device' ? 'device' : 'sim'),
+  setJob: (items) => {
+    sim.jobs = (items || []).map(it => ({
+      kind: it.material || it.name || KINDS[0],
+      bin: it.yard || it.bin || MATMAP[it.material || it.name || KINDS[0]] || 1,
+      qty: Math.max(1, it.qty || it.count || 1),
+    }))
+  },
+  state: () => ({ src: sim.src, t: sim.t, items: sim.items.length, fwq: sim.fwq, fault: sim.fault, online: sim.live.online,
+    dbg: { xs: sim.items.slice(0, 8).map(i => [+i.x.toFixed(3), i.ph, i.bin]), pm: pushers.map(p => p.mode) } }),
+}
+
+// 首帧预置 2 件 (模拟/影片), 开场不空带
+if (sim.src === 'sim') {
+  spawnItem(KINDS[0], 2, -0.24, ITEM_Z0)
+  spawnItem(KINDS[1], 3, -0.13, ITEM_Z0 + 0.004)
+  sim.spawnN = 2
+  sim.nextSpawn = 1.4
+}
+
+// 机器与状态机注册完毕 → 启动 kit 渲染循环 + 模式按钮 (Break/Explode/Cut/X-ray/Slow/Labels)
+lab.start()
+</script>
+</body>
+</html>
