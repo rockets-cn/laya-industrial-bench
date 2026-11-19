@@ -595,7 +595,13 @@ PAGE = """<!doctype html>
 <div class="sec" style="margin-top:12px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
 <div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
+<span style="display:flex;align-items:center;gap:8px">
 <span id="gla-mode" style="font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
+<span style="display:flex;border:1px solid #2c3342;border-radius:6px;overflow:hidden" title="分拣区视图: 3D = machine-skill kit 数字孪生 (真实尺寸); 俯视 SVG = 光门/推杆平面示意 (打印/导出)">
+<button id="viewBtn3d" onclick="switchView('3d')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#0c2a36;color:#67e8f9">🎬 3D</button>
+<button id="viewBtnSv" onclick="switchView('svg')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#1e2430;color:#8a91a0">📐 俯视 SVG</button>
+</span>
+</span>
 <span style="font-size:12px;color:#8a91a0;display:flex;align-items:center;gap:5px">数据源
 <select id="gla-src" style="background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:6px;padding:3px 6px;font-size:12px" title="动画跟随哪条运动时间线: 模拟=本地孪生模拟器执行; 真实=物理设备 (未接传感器/执行器时选模拟)">
 <option value="sim">模拟（本地孪生）</option>
@@ -612,6 +618,12 @@ PAGE = """<!doctype html>
   <button class="pushbtn" data-n="3" onclick="pushBin(3)" title="3 号推杆 手动推出">🔧 推杆 3</button>
   <button id="btnFaultClear" onclick="clearFault()" title="清故障锁存 (顺带固件 reset 清队列); 清后起带/推杆恢复" style="display:none;min-width:112px;background:#7f1d1d;border-color:#b91c1c;color:#fecaca;font-weight:600">⚠️ 清故障</button>
 </div>
+<!-- 3D 数字孪生 (machine-skill kit): 同源 iframe → 父页 BC 'laya3d' 批次/数据源转发自动生效; 默认视图 -->
+<div id="threeView" style="border:1px solid #262b36;border-radius:8px;overflow:hidden;background:#0d0e10">
+<iframe id="iframe3d" src="/sortline3d" title="3D 数字孪生" style="display:block;width:100%;height:560px;border:0"></iframe>
+</div>
+<!-- 俯视 SVG 示意 (打印/导出): 由视图切换按钮显隐, 摄像头画面仅在此视图定位 -->
+<div id="svgView" style="display:none">
 <!-- 真数据源: 摄像头实时画面 (MJPEG :8125 → /cam/stream), 缩小放 HuskyLens 2 上方; 定位由 JS 按 SVG CTM 计算 -->
 <img id="gla-camimg" alt="" draggable="false" onerror="camImgErr()" onload="camImgOk()"
      style="display:none;position:absolute;z-index:20;border:1px solid #2c3342;border-radius:8px;background:#0a0c10;box-shadow:0 6px 18px rgba(0,0,0,.5);pointer-events:none">
@@ -631,6 +643,7 @@ PAGE = """<!doctype html>
 <li><b>启用顺序</b>：接线 → 串口 <code>gates</code> 确认 ok=1/挡光变 0 → 按 ⑧ 带速标定修正 D → 网关 <code>divert_trigger</code> 改 "photo"；未接线期间保持 "immediate"（固件自动回退，实机已验证）。</li>
 </ul>
 </details>
+</div><!-- /svgView -->
 </div>
 <div class="sec" style="margin-top:12px">🔍 模型 vs 实际对照（laya 命令 ↔ edge101 执行 ↔ HuskyLens 实际看到 · 逐批次 · mismatch 高亮）</div>
 <div id="cmpwrap" style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 12px">
@@ -1300,6 +1313,26 @@ refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板
 // 3D 数字孪生页 (machine-skill kit · /sortline3d): 同源 BroadcastChannel 转发新批次/数据源
 let bc3d=('BroadcastChannel' in window)?new BroadcastChannel('laya3d'):null;
 function open3d(){const s=$('gla-src');window.open('/sortline3d?src='+((s&&s.value==='device')?'device':'sim'),'laya3d');}
+// ---- 分拣区视图切换: 3D 数字孪生 (iframe /sortline3d) / 俯视 SVG 示意 ----
+function switchView(v){ // v: '3d'|'svg'
+ try{localStorage.setItem('laya3dview',v)}catch(e){}
+ const t=$('threeView'),s=$('svgView');
+ if(t&&s){t.style.display=(v==='3d')?'':'none';s.style.display=(v==='svg')?'':'none';}
+ const img=document.getElementById('gla-camimg'),off=document.getElementById('gla-camoff');
+ if(v!=='svg'){ // 3D 视图: 摄像头画面按 SVG CTM 定位, 此处隐藏
+  if(img)img.style.display='none'; if(off)off.style.display='none';
+ }else{
+  camStream($('gla-src')?$('gla-src').value:'sim'); // 回俯视 SVG: 按数据源重放摄像头帧定位
+ }
+ const b3=$('viewBtn3d'),bs=$('viewBtnSv');
+ if(b3&&bs){const a3=(v==='3d');
+  b3.style.background=a3?'#0c2a36':'#1e2430'; b3.style.color=a3?'#67e8f9':'#8a91a0';
+  bs.style.background=a3?'#1e2430':'#0c2a36'; bs.style.color=a3?'#8a91a0':'#67e8f9';
+ }
+}
+(function(){ // 记忆视图偏好 (默认 3D)
+ try{const v=localStorage.getItem('laya3dview'); if(v&&v!=='3d')switchView(v);}catch(e){}
+})();
 updateMicUi();
 refreshTwin(); // 光门运行示意: 加载即探测数字孪生 (在线切实时模式, 离线循环演示)
 </script></div></body></html>"""
