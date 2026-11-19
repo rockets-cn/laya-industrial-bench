@@ -370,6 +370,11 @@ yard 只能是 1/2/3 (对应 1号/2号/3号 料场); 句子没说明是几号料
 material 对应: angle_sensor=角度传感器 (口语叫"旋钮"), ultrasonic_sensor=超声波传感器,
 pir_sensor=人体红外传感器 (正式名 人体热释电, 简称 红外/热释电), temp_humidity_sensor=温湿度传感器.
 "不要X" 表示 X 不下单, 不列入 items; 数量没说按 1; 没说明类型的传感器不列入.
+示例 (仅演示 ASR 常见噪声下的解析格式, 与待解析句无关, 切勿照抄示例值):
+"三个角度传感器接二号仓库" -> {{"items":[{{"yard":2,"material":"angle_sensor","qty":3}}]}}
+"两个旋钮进2号仓三个超声波进3号仓" -> {{"items":[{{"yard":2,"material":"angle_sensor","qty":2}},{{"yard":3,"material":"ultrasonic_sensor","qty":3}}]}}
+"两个角度传感器三个温湿度传感器都进1号仓库" -> {{"items":[{{"yard":1,"material":"angle_sensor","qty":2}},{{"yard":1,"material":"temp_humidity_sensor","qty":3}}]}}
+"一号仓库来两个角度传感器，不要超声波" -> {{"items":[{{"yard":1,"material":"angle_sensor","qty":2}}]}}
 句子: {state}"""
 
 

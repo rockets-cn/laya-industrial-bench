@@ -346,6 +346,35 @@ def _collect_facts():
         lines.append(f"当前仓库库存(累计入-出): {_parts}，共{_s['grand_total']}件")
     except Exception:
         pass
+    # 分拣线运行态 (网关 :8123 /health, 本机 loopback): 带态/故障/队列/逐件核对进度,
+    # 供 LLM 兜底答「带子停了吗/有故障吗/任务还剩几件」. 取不到/超时 -> 整行静默跳过,
+    # 不影响其余事实 (端口未监听时 loopback 拒连是毫秒级; 网关忙时 0.5s 超时兜底).
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8123/health",
+                                    timeout=0.5) as r:
+            _h = json.loads(r.read())
+        _conv = {"running": "运行", "stopped": "停止", "paused": "暂停",
+                 "fault": "故障"}.get(_h.get("conveyor"), "状态未知")
+        _line = f"分拣线: 带子{_conv}"
+        _fault = _h.get("fault")
+        if isinstance(_fault, dict):
+            _line += (f", 故障锁存 ({_fault.get('device', '?')} "
+                      f"{_fault.get('error', '?')})")
+        elif _fault:
+            _line += ", 故障锁存"
+        else:
+            _line += ", 无故障"
+        _line += f", 队列等待 {_h.get('queue', 0)} 批"
+        _vs = _h.get("verified") or []
+        if _vs:
+            _p = "; ".join(
+                f"{_MATCN.get(v.get('material'), v.get('material') or '?')}"
+                f" 已推 {v.get('pushed', 0)}/{v.get('pushed', 0) + v.get('remaining', 0)}"
+                for v in _vs)
+            _line += f"; 核对中: {_p}"
+        lines.append(_line)
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
