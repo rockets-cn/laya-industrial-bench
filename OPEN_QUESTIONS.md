@@ -295,6 +295,20 @@
 - 3D 页加了自动拟合包围盒相机 (整机居中); Break-It 幻影件演示随 bug 根治**删除** —
   演示条目和 bug 同生命周期, bug 修了演示就该撤, 否则误导。
 
+### 3D 取景居中: 手算相机基向量 + 透视居中 (踩坑, 2026-11-19)
+- **`wup.x` 符号**: 相机 up = right × forward, 其 x 分量是 `-sin(az)sin(el)` (非 `+`)。
+  手算基向量写反 → y 投影被破坏 → fit 欠缩、底角出框 (`ndcMin.y≈-1.06`)。改对符号后 8 角全入框。
+- **透视下 3D 盒心 ≠ 屏幕包围盒中心**: 只对 3D Box3 中心 lookAt, 投影后屏幕 bbox 仍偏
+  (近大远小)。终案 = **Newton 居中补偿**: 用真实 `PerspectiveCamera` (同 fov/aspect) 投影 8 角点
+  量出屏幕 bbox 中心偏移, 构造 2×2 Jacobian, 迭代平移 lookAt 目标 T 抵消 (≤6 次, clamp ±0.35,
+  收敛 |offset|<0.01) → `ndcCenter=(0,0)`。
+- **视锥/fit 深度必须用相对向量**: 判"角点是否在视锥内 / 求 fit 距离"时 `zP = d + (P−T)·fwd`,
+  要减 lookAt 目标 T (相对向量); 误用绝对 `P·fwd` 会把目标位置偏移计入深度 → fit 距离错。
+- **box-aware fit 取代 sphere-fit**: 8 角点精确投影求"最小完整框住"距离 (margin 1.1),
+  长条形机体不会被球拟合切边。终值: 设备占 ~74% 帧高, `ndcCenter=(0,0)`, 8 角全 in-frame。
+- **教训**: 手算相机/坐标变换后, 验证一律用真实 `camera.project()` 的 NDC 数值, 别信手算;
+  "3D 居中" ≠ "屏幕 bbox 居中", 透视下二者不等, 要分两件事做 (fit 距离 + Newton 居中)。
+
 ### 无头验证三坑 (headless Chromium + three.js, 2026-11-19)
 - three.js canvas `preserveDrawingBuffer:false` → 渲染循环外读 `readPixels` **全零**;
   验证渲染用 **screenshot 像素统计** (非黑占比) + 页面自带调试钩子 (如 `__s3d.state()`),
@@ -304,6 +318,17 @@
   → `chromium.launch({ executablePath: .../chromium-1248/chrome-linux64/chrome })`。
 - 起浏览器前 `pgrep -fa chromium` 查现有实例; 任务结束必关, 不留常驻 (本机 8 核, 浏览器是 CPU 大头)。
 - favicon 404 无害, 别追。
+
+### 无头验证脚本: 自己注入的 pump 代码会假报"页面异常"
+- 脚本用 `addScriptToEvaluateOnNewDocument` 注入 rAF 泵, 泵里写了 `++(window.__x = ...)`
+  (前缀自增作用在赋值表达式上) → 该表达式是**非法 LHS**, 注入代码在新文档里解析即抛
+  `SyntaxError: Invalid left-hand side expression in prefix operation`, 被脚本自己的
+  `exceptionThrown` 监听当成"页面错误"记下来 → **误判页面有语法错误** (页面其实干净)。
+- **排查**: 报"页面 SyntaxError"先 grep 验证脚本自己注入/eval 的代码 (泵、探针、调试钩子);
+  页面真实干净与否另用一个**不自注入**的独立 load test 复核; 模块 JS 是否真无语法错,
+  用 awk 抽出 `<script type="module">` 内容后 `node --check` 判最准。
+- **教训**: 前缀自增 `++`/`--` 只能作用于**变量/属性引用**, 不能作用于 `(a = b)` 这类表达式;
+  验证脚本自身的 bug 会以"页面错误"形态混进遥测, 先分清错误来源再下结论。
 
 ## 2026-10-30 修复记录 (用户提交的 5 个问题)
 
