@@ -941,6 +941,32 @@ if (sim.src === 'sim') {
 }
 
 // 机器与状态机注册完毕 → 启动 kit 渲染循环 + 模式按钮 (Break/Explode/Cut/X-ray/Slow/Labels)
+// ---------- 全局哑光化 ----------
+// 用户: 反光视觉效果很难受 → 所有金属/清漆/玻璃材质改哑光。
+//   metalness=0 去金属反射 · clearcoat=0 去清漆高光 · roughness≥0.62 保证漫反射
+//   自发光 (LED 环 / 故障灯 / 丝印) 保留 —— 那是发光不是反光
+//   玻璃镜头 (transmission) 改深色哑光盘
+(function mattePass(root) {
+  const seen = new Set()
+  root.traverse(o => {
+    if (!o.isMesh) return
+    const mats = Array.isArray(o.material) ? o.material : [o.material]
+    for (const m of mats) {
+      if (!m || seen.has(m)) continue
+      seen.add(m)
+      if (m.emissive && (m.emissive.r + m.emissive.g + m.emissive.b) > 0.03) continue // 自发光 (LED/警示灯/丝印) — emissive 颜色非黑即保留
+      m.metalness = 0
+      if (m.clearcoat !== undefined) m.clearcoat = 0
+      if (m.clearcoatRoughness !== undefined) m.clearcoatRoughness = 0.8
+      if (m.transmission !== undefined && m.transmission > 0) {
+        m.transmission = 0; m.transparent = false; m.opacity = 1
+        m.color.setRGB(0.05, 0.05, 0.06); m.roughness = 0.5
+      } else {
+        m.roughness = Math.max(m.roughness ?? 0.6, 0.62)
+      }
+    }
+  })
+})(lab.root)
 lab.start()
 </script>
 </body>
