@@ -6,6 +6,7 @@
 // object_type (HuskyLens 系): 0=none 1=颜色块 2=线 3=标签 4=人脸 5=标识/物体
 //   HuskyLens 2 的自定义模型 (YOLO/基础分类) 输出按 object_type+ID 映射物料.
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -173,6 +174,100 @@ class RetrigGate {
     int used_ = 0;
     std::string mats_[kMax];
     uint32_t last_[kMax] = {0};
+};
+
+// 纯逻辑: 位置式在视野去重门 (TrackGate) — I2C 轮询路径 (hlTick) 用.
+// 背景 (2026-11-19): RetrigGate 纯时间门的两段教训 —
+//   ① 无门控: 单件每 300ms 轮询报一次, ~5.7s 停留 ≈ 19 条;
+//   ② 时间门 500ms: HL2 对薄/远工件丢跟踪间隙常 >=500ms → 同一件重报;
+//   ③ 时间门 1500ms: 实测仍有 ~1.8s 同物料复现 → 纯时间阈值会被更长的
+//      闪烁间隙穿透 (whack-a-mole, 不是正解).
+// 正解: bbox 位置 + 带速漂移预测判"同一件 vs 新件" (多槽位, 每物料可多件):
+//   - 每件占一个槽位, 记录其位置; 新观测匹配"各槽位上次位置 + 漂移方向 ×
+//     速率 × 间隙"的最近预测点; 距离 <= tol → 同一件 (位置滑动更新, 抑制);
+//     距离 > tol → 新件 (占新槽, 上报).
+//   - 带在跑: 件随带下游漂移, 像素速率 = HL_PX_PER_MM × 当前带速 (固件已知);
+//     闪烁复现位置 ≈ 预测点 → 抑制; 入射边新件远离预测 → 上报.
+//   - 带停: 速率=0, 预测=原地 → 原处复现=同一件, 远处=新件.
+//   - 连续在视野: 每 tick 匹配自身槽位 → 只报一次.
+//   - 密集同物料 (<1.5s 两件): 第二件从入射边出现, 与第一件预测点相距远超
+//     tol → 各占一槽 → 两件都上报 (修纯时间门的密集同物料欠发).
+// 校准量 (config.h, 由单件过视野实测得):
+//   - HL_PX_PER_MM: 像素/毫米 (带面方向, 相机标定)
+//   - HL_BELT_DIR_X/Y: 带移动方向在图像中的单位向量 (像素坐标, +x 右 / +y 下)
+//   - tol_px ≈ 0.75 × bbox 长边 (像素); 须 < 密集件距像素间距
+// 注意: 只在 conf 通过的对象上调用. 键是物料名 (定制模型 129 ID 全 0).
+class TrackGate {
+ public:
+    static constexpr int kMax = 16;          // 槽位总数 (最多同时 16 件在跟踪)
+    static constexpr uint32_t kStaleMs = 15000;  // 槽位过期: 超时未匹配不可再用
+
+    // 返回 true = 应上报一件; false = 同一件在跟踪, 抑制.
+    //   x,y        : bbox 中心 (像素)
+    //   now_ms     : 本 tick 时刻
+    //   rate_px_ms : 带面漂移像素速率 (= HL_PX_PER_MM × 当前带速 m/s); 0=带停
+    //   dir_x,dir_y: 漂移方向单位向量 (像素坐标); rate=0 时无效
+    //   tol_px     : 匹配容差 (像素)
+    //   absence_ms : 短间隙直通窗口 (< 此间隙必并回最近槽, 不查距离 —
+    //                吸收亚秒级多帧抖动)
+    bool tick(const char* mat, int x, int y, uint32_t now_ms,
+              double rate_px_ms, double dir_x, double dir_y,
+              double tol_px, uint32_t absence_ms) {
+        if (!mat || !*mat) return false;
+        last_ref_ = now_ms;
+        int best = -1;
+        double best_d = 1e18;
+        for (int i = 0; i < used_; i++) {
+            if (mats_[i] != mat) continue;
+            if (now_ms - last_[i] > kStaleMs) continue;   // 过期槽不匹配
+            double d = distToPredicted(i, x, y, rate_px_ms, dir_x, dir_y);
+            if (d < best_d) { best_d = d; best = i; }
+        }
+        bool same = false;
+        uint32_t gap = (best >= 0) ? (now_ms - last_[best]) : 0xFFFFFFFF;
+        if (best >= 0) {
+            // 短间隙用宽松窗 (2×tol, 吸收抖动/多帧), 长间隙用严格窗 (tol):
+            // 不能对短间隙无条件并回 — 密集第二件的"间隙"是相对第一件槽位
+            // 上次 tick 的, 可能 < absence, 但位置远离预测 → 必须靠距离判.
+            double tol_eff = (gap < absence_ms) ? (tol_px * 2.0) : tol_px;
+            same = (best_d <= tol_eff);
+        }
+        if (same) {
+            px_[best] = x; py_[best] = y; last_[best] = now_ms;  // 位置滑动
+            return false;
+        }
+        // 新件: 找空槽
+        int slot = -1;
+        for (int i = 0; i < kMax; i++)
+            if (i >= used_ || now_ms - last_[i] > kStaleMs) { slot = i; break; }
+        if (slot < 0) return true;                        // 满: 放行不丢事件
+        if (slot >= used_) used_ = slot + 1;
+        mats_[slot] = mat;
+        px_[slot] = x; py_[slot] = y; last_[slot] = now_ms;
+        return true;
+    }
+
+    void reset() {
+        used_ = 0;
+        for (int i = 0; i < kMax; i++) { mats_[i].clear(); last_[i] = 0; }
+    }
+
+ private:
+    // 当前位置到槽 i 的 "上次位置 + 漂移方向×速率×(now-last_i)" 预测点距离.
+    double distToPredicted(int i, int x, int y,
+                           double rate_px_ms, double dir_x, double dir_y) const {
+        double gap_ms = (double)(last_ref_ - last_[i]);
+        double pred_x = px_[i] + dir_x * rate_px_ms * gap_ms;
+        double pred_y = py_[i] + dir_y * rate_px_ms * gap_ms;
+        double dx = (double)x - pred_x, dy = (double)y - pred_y;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    int used_ = 0;
+    uint32_t last_ref_ = 0;   // tick 入口设置的 now_ms (供 distToPredicted 用)
+    std::string mats_[kMax];
+    uint32_t last_[kMax] = {0};
+    int px_[kMax] = {0}, py_[kMax] = {0};
 };
 
 }  // namespace sort

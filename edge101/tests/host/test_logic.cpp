@@ -245,6 +245,139 @@ static void testRetrigGate() {
     }
 }
 
+static void testTrackGate() {
+    printf("\n== TrackGate 位置式在视野去重 (bbox + 带速漂移预测) ==\n");
+    // 带跑: 52.5mm/s × 4px/mm = 0.21 px/ms, 方向 +x; tol=100px, 短间隙窗 500ms
+    const double RATE = 0.21, DX = 1.0, DY = 0.0, TOL = 100.0;
+    const uint32_t AB = 500;
+    auto x = [](uint32_t t, uint32_t t0) { return int(100 + 0.21 * (t - t0)); };
+
+    // 1) 单件连续在视野: 20 轮询 (~6s 停留) -> 只报 1 次
+    {
+        TrackGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 6000; t += 300)
+            if (g.tick("angle_sensor", x(t, 0), 160, t, RATE, DX, DY, TOL, AB)) n++;
+        check("单件 6s 停留只报 1 次 (连续 tick 全匹配预测)", n == 1);
+    }
+    // 2) 丢跟踪 1.8s (带未停, 件随带漂移) 复现 -> 同一件, 不重报
+    {
+        TrackGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 1000; t += 300)
+            if (g.tick("pir", x(t, 0), 160, t, RATE, DX, DY, TOL, AB)) n++;
+        // 1.8s 间隙无 tick (HL2 丢跟踪); t=2800 复现, 位置 = 入射 100 + 全程漂移
+        for (uint32_t t = 2800; t < 4000; t += 300)
+            if (g.tick("pir", x(t, 0), 160, t, RATE, DX, DY, TOL, AB)) n++;
+        check("丢跟踪 1.8s 复现: 位置吻合漂移预测, 同一件 (1 条)", n == 1);
+    }
+    // 3) 第 1 件出视野 4s 后, 第 2 件从入射边进 -> 再报
+    {
+        TrackGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 6000; t += 300)
+            if (g.tick("angle_sensor", x(t, 0), 160, t, RATE, DX, DY, TOL, AB)) n++;
+        for (uint32_t t = 10000; t < 12000; t += 300)
+            if (g.tick("angle_sensor", x(t, 10000), 160, t, RATE, DX, DY, TOL, AB)) n++;
+        check("4s 后第 2 件入射边进入: 分开报 (共 2)", n == 2);
+    }
+    // 4) 密集同物料: A 在带中, B 0.1s 后从入射边进 -> 两件都报 (修密集欠发)
+    {
+        TrackGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 1000; t += 300)   // A: t=0..900
+            if (g.tick("pcb", x(t, 0), 160, t, RATE, DX, DY, TOL, AB)) n++;
+        check("A 件报 1", n == 1);
+        // B t=1000 入射 (x=100); A 槽预测点 = 289+0.21*100=310, 距 210 > 2×TOL=200
+        if (g.tick("pcb", 100, 160, 1000, RATE, DX, DY, TOL, AB)) n++;
+        check("密集 B 件 (0.1s 后) 分开报 (共 2)", n == 2);
+        // 两件共存继续走, 各自匹配自己的槽 -> 无幽灵重报
+        for (uint32_t t = 1200; t < 4000; t += 300) {
+            if (g.tick("pcb", x(t, 0), 160, t, RATE, DX, DY, TOL, AB)) n++;    // A
+            if (g.tick("pcb", x(t, 1000), 160, t, RATE, DX, DY, TOL, AB)) n++; // B
+        }
+        check("两件共存 3s 后仍只 2 条 (无幽灵重报)", n == 2);
+    }
+    // 5) 带停 (rate=0): 静止件闪烁不重报; 入射边新件照报
+    {
+        TrackGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 3000; t += 300)
+            if (g.tick("temp_humidity", 400, 160, t, 0.0, DX, DY, TOL, AB)) n++;
+        check("带停: 静止件只报 1 次", n == 1);
+        for (uint32_t t = 5000; t < 6000; t += 300)   // 丢跟踪 2s, 原处复现
+            if (g.tick("temp_humidity", 400, 160, t, 0.0, DX, DY, TOL, AB)) n++;
+        check("带停: 丢跟踪 2s 原处复现=同一件", n == 1);
+        if (g.tick("temp_humidity", 100, 160, 8000, 0.0, DX, DY, TOL, AB)) n++; // 入射边新件 (距 300 > TOL)
+        check("带停: 入射边新件报 (共 2)", n == 2);
+    }
+    // 6) 多物料各自独立
+    {
+        TrackGate g;
+        int na = 0, nb = 0;
+        for (uint32_t t = 0; t < 3000; t += 300) {
+            if (g.tick("a", x(t, 0), 100, t, RATE, DX, DY, TOL, AB)) na++;
+            if (g.tick("b", x(t, 0) + 30, 200, t, RATE, DX, DY, TOL, AB)) nb++;
+        }
+        check("多物料独立: a/b 各报 1 次", na == 1 && nb == 1);
+    }
+    // 7) 槽位过期 (15s 未匹配) 后同位置新件仍要报
+    {
+        TrackGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 1500; t += 300)
+            if (g.tick("pir", x(t, 0), 160, t, RATE, DX, DY, TOL, AB)) n++;
+        check("首件报 1", n == 1);
+        if (g.tick("pir", 100, 160, 20000, RATE, DX, DY, TOL, AB)) n++;  // 19s 后 (超 15s stale)
+        check("19s 后新件 (旧槽过期) 报 (共 2)", n == 2);
+    }
+    // 8) 槽位全满: 放行不丢事件
+    {
+        TrackGate g;
+        int n = 0;
+        for (int i = 0; i < TrackGate::kMax; i++)
+            if (g.tick(std::to_string(i).c_str(), 100 + i * 5, 160, 0, 0.0, DX, DY, TOL, AB)) n++;
+        check("前 16 件各报 1", n == 16);
+        if (g.tick("new", 999, 160, 100, 0.0, DX, DY, TOL, AB)) n++;
+        check("槽满: 第 17 件仍报 (放行)", n == 17);
+    }
+    // 9) 空串 / nullptr 不报
+    {
+        TrackGate g;
+        check("空串不报", !g.tick("", 100, 160, 0, RATE, DX, DY, TOL, AB));
+        check("nullptr 不报", !g.tick(nullptr, 100, 160, 0, RATE, DX, DY, TOL, AB));
+    }
+    // 10) reset 清空
+    {
+        TrackGate g;
+        g.tick("a", 100, 160, 1000, RATE, DX, DY, TOL, AB);
+        g.reset();
+        check("reset 后 a 可再报", g.tick("a", 100, 160, 1100, RATE, DX, DY, TOL, AB));
+    }
+    // 11) 调用点单位回归 (2026-11-19 实机 bug: main.cpp 曾把带速 ×1000 当
+    //     px/ms 传 → 210px/ms, 带跑时每帧预测漂移 63000px >> tol → 每帧报"新件",
+    //     实测 126 帧对象全放行. 正确换算: px/mm × m/s (m/s ≡ mm/ms 数值相等))
+    {
+        const double PX_PER_MM = 4.0, SPEED_MPS = 0.0525;   // config.h 标定定案
+        const double rate = PX_PER_MM * SPEED_MPS;          // 0.21 px/ms
+        check("换算: 52.5mm/s → 0.21px/ms (<1, 非 210)", rate > 0.1 && rate < 1.0);
+        // 单件带跑过视野: 每 300ms 轮询左移 63px (= 0.21px/ms × 300ms)
+        TrackGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 3900; t += 300)
+            if (g.tick("angle_sensor", int(500 - 0.21 * t), 300, t,
+                       rate, -1.0, 0.0, 60.0, 600)) n++;
+        check("正确单位: 单件 3.6s 视野停留只报 1 次", n == 1);
+        // 同场景用旧错误公式 (×1000) → 每帧都"新件" (证明本用例可判别该 bug)
+        TrackGate g2;
+        int m = 0;
+        for (uint32_t t = 0; t < 3900; t += 300)
+            if (g2.tick("angle_sensor", int(500 - 0.21 * t), 300, t,
+                        rate * 1000.0, -1.0, 0.0, 60.0, 600)) m++;
+        check("旧公式 (×1000) 同场景多报 → 测试可判别", m > 2);
+    }
+}
+
 static void testProto() {
     printf("\n== Proto JSON/topic ==\n");
     std::string ack = ackJson("j123", "divert", "ok", "");
@@ -768,6 +901,7 @@ int main() {
     testSorter();
     testHuskyLens();
     testRetrigGate();
+    testTrackGate();
     testProto();
     testMcpEn();
     testGate();

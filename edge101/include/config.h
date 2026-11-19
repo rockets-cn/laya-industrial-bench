@@ -40,6 +40,23 @@ static const uint8_t  HL2_I2C_SDA_PIN = 18;   // 板载 I2C (Arduino Wire 默认
 static const uint8_t  HL2_I2C_SCL_PIN = 23;
 static const uint32_t HL2_RETRIGGER_MS = 500;   // 同物料进画面去重窗口 (旧 UART 路径)
 static const uint32_t HL2_ABSENCE_MS   = 1500;  // I2C 路径重报窗口: 同物料缺席<1.5s 复现=同一件 (吸收 HL2 闪烁/丢跟踪), >=1.5s=新件 (详见 HuskyLens.h RetrigGate)
+// ---------- TrackGate 位置式在视野去重 (I2C 路径, bbox + 带速漂移预测) ----------
+// 纯时间门的死结: 闪烁间隙 >= 阈值即穿透 (500ms→1.5s 实测仍复现). 位置式:
+// 复现位置 ≈ 上次位置 + 漂移方向×速率×间隙 → 同一件(抑制); 入射边新件 → 上报.
+// 未标定 (HL2_TRACK_CALIBRATED=0) 时 hlTick 回退 RetrigGate 时间门.
+// 标定定案 (2026-11-19, HL2_RAW_DUMP 单件轨迹法, 无摄像头):
+//   10 条好轨迹 (n>=8, |x残差|<=16px): vx = -200.7 ~ -223.3 px/s, 中位 -210.5;
+//   带速 52.50 mm/s (编码器中位 3628 steps/s ÷ 69.1, 两批次一致)
+//   => px_per_mm = 210.5/52.5 = 4.0 (640px 视野 = 160mm 带面);
+//   y 逐件恒定 (放置位置不同), 跨件 |vy|<0.05 px/s => 方向纯 -x;
+//   4 条独立轨迹 x_ir@IR 置位 = 492~514px (中位 ~500) 互相一致, 交叉验证通过;
+//   件宽 ~150px/4.0 ≈ 37mm, 最小中心距 ~150px >> 2×tol=120px (密集同物料安全).
+#define HL2_TRACK_CALIBRATED 1
+static const double   HL2_PX_PER_MM = 4.0;       // 标定 2026-11-19 (轨迹法)
+static const double   HL2_DIR_X     = -1.0;      // 带面朝 -x (左) 移动, 标定定案
+static const double   HL2_DIR_Y     = 0.0;       // y 恒定, 标定定案
+static const double   HL2_TOL_PX    = 60.0;      // 3.75× 实测残差(16px); < 密集件距
+static const uint32_t HL2_TRACK_ABSENCE_MS = 600;// 短间隙宽松窗 (2×tol): 300ms 轮询 + 1 帧容错
 #if HL2_ON
 // (旧 UART 接线占位, 本轮未用: 5/12 已改作 DIR/舵机 1)
 static const uint8_t  HL2_RX_PIN   = 12;
@@ -52,6 +69,11 @@ static const uint32_t HL2_BAUD     = 38400;
 // sort/inbound/vision. 不做选仓 (选仓权在 PC laya 模型). boot 时切自学习
 // 分类算法一次 + 强制等 5s (wiki 警告, 否则系统崩溃).
 #define HL_I2C_ON 1
+// 标定旁路 (2026-11-19): 每次轮询把 HL2 全部目标原样发 sort/line1/hl2/raw
+// (QoS0, 非 retained), 不过门控 — 单件 ~5.7s 视野停留 -> ~19 个点位, 供
+// px_per_mm/方向轨迹拟合 (RetrigGate 门控后每件只留 1 条, 拿不到时间序列).
+// 标定完成后必须回 0 (生产不上报原始流).
+#define HL2_RAW_DUMP 1
 static const uint32_t HL_POLL_MS          = 300;   // I2C 轮询周期 (ms; 越大对主循环停摆越小)
 static const uint32_t HL_TIMEOUT_MS       = 200;   // 单次 getResult 超时 (防卡主循环)
 static const double   HL_CONFMIN          = 0.6;   // 置信度门槛 (在线 confmin 可调)

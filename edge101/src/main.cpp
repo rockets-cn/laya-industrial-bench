@@ -428,6 +428,7 @@ static uint32_t g_hl_ok = 0, g_hl_fail = 0;
 // (原 500ms 阈值下 HL2 丢跟踪间隙 >=500ms 即重报 -> "还是出现重复多余的传感器").
 // 网关侧 vision_dispatch_absence_s=0.8s 存在性去重与此配套 (下发侧双保险).
 static sort::RetrigGate hlGate;
+static sort::TrackGate hlTrackGate;
 static void hlTick() {
     uint32_t now = millis();
     if (now - lastHlPollMs < HL_POLL_MS) return;
@@ -442,6 +443,33 @@ static void hlTick() {
     eAlgorithm_t hlSlot = hl.toRealID((uint8_t)HL_ALGO);
 #else
     eAlgorithm_t hlSlot = 0;
+#endif
+#if HL2_RAW_DUMP
+    // 标定旁路 (config.h HL2_RAW_DUMP): 每次轮询把全部目标原样发
+    // sort/line1/hl2/raw — 不过门控, QoS0 非 retained. 单件 ~5.7s 视野停留
+    // -> ~19 个 (t,x,y,w,h) 点位, 供 px_per_mm/方向轨迹拟合. 标定完回 0.
+    {
+        char rj[1024];
+        int off = snprintf(rj, sizeof(rj),
+                           "{\"t\":%lu,\"belt\":\"%s\",\"objs\":[",
+                           (unsigned long)now, conv.state());
+        for (int i = 0; i < n && off < (int)sizeof(rj) - 160; i++) {
+            Result* r = hl.result[hlSlot][i];
+            if (!r) continue;
+            char one[170];
+            int o2 = snprintf(one, sizeof(one),
+                              "%s{\"id\":%d,\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"nm\":\"%.12s\"}",
+                              (i == 0 ? "" : ","),
+                              (int)r->ID, (int)r->xCenter, (int)r->yCenter,
+                              (int)r->width, (int)r->height,
+                              r->name.length() > 0 ? r->name.c_str() : "");
+            if (off + o2 >= (int)sizeof(rj)) break;
+            memcpy(rj + off, one, (size_t)o2);
+            off += o2;
+        }
+        off += snprintf(rj + off, sizeof(rj) - (size_t)off, "]}");
+        mqtt.publish("sort/line1/hl2/raw", rj, false);
+    }
 #endif
     for (int i = 0; i < n; i++) {
         Result* r = hl.result[hlSlot][i];
@@ -472,7 +500,21 @@ static void hlTick() {
             continue;
         }
         // 在视野去重: 同一物料持续在视野 -> 只报首次 (一件 = 一条识别)
-        if (!hlGate.tick(mat, now, HL2_ABSENCE_MS))
+#if HL2_TRACK_CALIBRATED
+        // 位置式: "上次位置 + 带速×间隙" 预测匹配; 闪烁复现=同一件, 入射边新件=报
+        // 带速 m/s → 带面漂移像素速率 px/ms: px/mm × (m/s ≡ mm/ms, 数值相等)
+        // 52.5mm/s × 4px/mm = 0.21 px/ms. (2026-11-19 实机 bug: 曾误 ×1000 →
+        // 210 px/ms, 带跑时每帧预测漂移 63000px 远超 tol → 每帧报"新件")
+        double rate = (conv.st == sort::DevState::kRunning)
+                         ? HL2_PX_PER_MM * conv.speed_mps
+                         : 0.0;                                    // 带停: 原地
+        bool pass = hlTrackGate.tick(mat, r->xCenter, r->yCenter, now,
+                                     rate, HL2_DIR_X, HL2_DIR_Y,
+                                     HL2_TOL_PX, HL2_TRACK_ABSENCE_MS);
+#else
+        bool pass = hlGate.tick(mat, now, HL2_ABSENCE_MS);
+#endif
+        if (!pass)
             continue;
         char fid[32];
         snprintf(fid, sizeof(fid), "hl-%lu-%d", now, id);
