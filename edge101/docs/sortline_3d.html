@@ -41,7 +41,7 @@ const { Lab, MAT, GEO, clamp, lerp, fmt } = window.LabKit
 const V = 0.0525
 const X_CAM = -0.160, X_IR = -0.050
 const X_B = [0.075, 0.137, 0.189]
-const EJECT_S = 0.6, RETRACT_S = 0.9, HOLD_S = 0.12
+const EJECT_S = 1.0, RETRACT_S = 0.8, HOLD_S = 0.2   // 推杆整程 ≈2s (参考 SVG: 推出略长于收回, 比例≈1.25); 设备模式 ts=1 → 真实时间即此值
 const FIFO = 24
 const CRANK_Z = -0.1335, R = 0.035, ROD_L = 0.1325    // Scotch-yoke 在皮带对向侧 (−z): 行程 2R = 70 mm; ready(内位)推头面缩到带边外 5 mm(收回), 推出(外位)推头面越 +z 带边 3 mm 把工件推过带边进仓
 const ITEM_Z0 = -0.004                                 // 上料位置 (带面中线, 略偏推杆侧)
@@ -611,6 +611,7 @@ lab.onTick((dt) => {
       p.e = Math.max(0, p.e - dts / RETRACT_S)
       if (p.e <= 0) { p.mode = 'idle'; p.item = null }
     }
+    pusherKin(p) // 每帧把视觉位姿同步到当前 e；否则回缩/空闲后推杆停在推出位不收回
   }
 
   if (sim.fwq >= FIFO && !sim.fault) { sim.fault = true }
