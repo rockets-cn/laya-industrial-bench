@@ -43,8 +43,8 @@ const X_CAM = -0.160, X_IR = -0.050
 const X_B = [0.075, 0.137, 0.189]
 const EJECT_S = 0.6, RETRACT_S = 0.9, HOLD_S = 0.12
 const FIFO = 24
-const CRANK_Z = 0.1335, R = 0.0175, ROD_L = 0.100     // Scotch-yoke: 行程 2R = 35 mm
-const ITEM_Z0 = 0.030                                  // 上料位置 (偏出料侧)
+const CRANK_Z = -0.1335, R = 0.030, ROD_L = 0.1395    // Scotch-yoke 在皮带对向侧 (−z): 行程 2R = 60 mm, 推板沿 +z 把工件推过带边进仓
+const ITEM_Z0 = -0.004                                 // 上料位置 (带面中线, 略偏推杆侧)
 const KINDS = ['ultrasonic_sensor', 'pir_sensor', 'angle_sensor', 'temp_humidity_sensor']
 const MATCN = { angle_sensor: '角度传感器', ultrasonic_sensor: '超声波传感器', pir_sensor: '人体红外传感器', temp_humidity_sensor: '温湿度传感器' }
 const MATMAP = { angle_sensor: 1, ultrasonic_sensor: 2, pir_sensor: 3, temp_humidity_sensor: 1 }  // 测试占位映射 (无指令兜底)
@@ -133,9 +133,9 @@ lab.add(railR, { name: '侧轨 (推杆侧)', explode: [0, 0.05, 0.24], count: 1 
 
 // 皮带
 const beltG = new THREE.Group()
-const band = new THREE.Mesh(GEO.rbox(0.634, 0.036, 0.118, 0.016), M.rubber)
+const band = new THREE.Mesh(GEO.rbox(0.634, 0.036, 0.066, 0.016), M.rubber) // 实际带面宽 62 mm
 band.position.set(0, 0.329, 0)
-const beltTop = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.114), beltTopM)
+const beltTop = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.062), beltTopM)
 beltTop.rotation.x = -Math.PI / 2
 beltTop.position.set(0, 0.3442, 0)
 beltG.add(band, beltTop)
@@ -204,7 +204,7 @@ lab.add(espG, { name: 'ESP32 控制盒 (edge101)', explode: [0.10, 0.28, -0.18],
 const wireG = new THREE.Group()
 const wire1 = new THREE.Mesh(GEO.pipe([[-0.35, 0.355, 0.105], [-0.31, 0.39, -0.02], [-0.16, 0.405, -0.09], [-0.055, 0.385, -0.112]], 0.0022), M.dark)
 const wire2 = new THREE.Mesh(GEO.pipe([[0.018, 0.375, -0.12], [X_CAM + 0.05, 0.46, -0.155], [X_CAM + 0.006, 0.512, -0.105]], 0.0018), M.dark)
-const wire3 = new THREE.Mesh(GEO.pipe([[0.0, 0.372, -0.115], [0.06, 0.355, 0.02], [0.145, 0.344, 0.092]], 0.0018), M.dark)
+const wire3 = new THREE.Mesh(GEO.pipe([[0.0, 0.372, -0.115], [0.06, 0.355, -0.133], [0.16, 0.352, -0.135]], 0.0018), M.dark)
 wireG.add(wire1, wire2, wire3)
 lab.add(wireG, { name: '线缆 (动力/信号)', explode: [0.06, 0.24, -0.04], count: 3 })
 
@@ -235,7 +235,7 @@ const fovGeo = new THREE.BufferGeometry()
   const x = X_CAM, yT = 0.492, zT = -0.045
   const v = [
     [x - 0.008, yT, zT - 0.006], [x + 0.008, yT, zT - 0.006], [x + 0.008, yT, zT + 0.006], [x - 0.008, yT, zT + 0.006],
-    [x - 0.095, 0.345, -0.055], [x + 0.095, 0.345, -0.055], [x + 0.095, 0.345, 0.055], [x - 0.095, 0.345, 0.055],
+    [x - 0.095, 0.345, -0.048], [x + 0.095, 0.345, -0.048], [x + 0.095, 0.345, 0.048], [x - 0.095, 0.345, 0.048],
   ]
   const idx = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 0, 3, 7, 0, 7, 4, 1, 2, 6, 1, 6, 5]
   fovGeo.setIndex(idx)
@@ -260,22 +260,22 @@ const beam = new THREE.Mesh(new THREE.BoxGeometry(0.0016, 0.0016, 0.096), beamMa
 beam.position.set(X_IR, 0.357, 0); irG.add(beam)
 lab.add(irG, { name: 'IR T0 光幕 (触发点)', explode: [0, 0.18, 0], count: 6 })
 
-// ---------- 推杆 ×3 (宽角伺服 + Scotch-yoke 曲柄连杆, 停带推送) ----------
+// ---------- 推杆 ×3 (宽角伺服 + Scotch-yoke 曲柄连杆, 位于皮带对向侧, 停带时把工件推进仓库) ----------
 const pushers = []
 function buildPusher(i) {
   const xb = X_B[i]
   const g = new THREE.Group()
   const armM = new THREE.Mesh(GEO.rbox(0.02, 0.012, 0.08, 0.004), M.rail)
-  armM.position.set(xb + 0.032, 0.302, 0.122); g.add(armM)
+  armM.position.set(xb + 0.032, 0.302, -0.122); g.add(armM)
   const postM = new THREE.Mesh(GEO.rbox(0.024, 0.036, 0.024, 0.004), M.rail)
-  postM.position.set(xb + 0.032, 0.322, 0.1335); g.add(postM)
+  postM.position.set(xb + 0.032, 0.322, -0.1335); g.add(postM)
   const servo = new THREE.Mesh(GEO.rbox(0.03, 0.028, 0.03, 0.004), M.dark)
-  servo.position.set(xb + 0.032, 0.352, 0.1335); g.add(servo)
+  servo.position.set(xb + 0.032, 0.352, -0.1335); g.add(servo)
   const servoCap = new THREE.Mesh(GEO.rbox(0.026, 0.006, 0.026, 0.002), M.steel)
-  servoCap.position.set(xb + 0.032, 0.367, 0.1335); g.add(servoCap)
+  servoCap.position.set(xb + 0.032, 0.367, -0.1335); g.add(servoCap)
   const crank = new THREE.Group()
   crank.position.set(xb, 0.352, CRANK_Z)
-  const discG = GEO.disc(0.024, 0.006, 0.0008, 28); discG.rotateZ(Math.PI / 2)
+  const discG = GEO.disc(0.036, 0.006, 0.0008, 28); discG.rotateZ(Math.PI / 2)
   crank.add(new THREE.Mesh(discG, M.aluM))
   const pinG = GEO.disc(0.0026, 0.013, 0.0004, 12); pinG.rotateZ(Math.PI / 2)
   const pin = new THREE.Mesh(pinG, M.steel); pin.position.set(0, R, 0); crank.add(pin)
@@ -285,21 +285,21 @@ function buildPusher(i) {
   const shaftG = GEO.disc(0.003, 0.018, 0.0004, 12); shaftG.rotateZ(Math.PI / 2)
   const shaft = new THREE.Mesh(shaftG, M.steel); shaft.position.set(xb + 0.0105, 0.352, CRANK_Z); g.add(shaft)
   const plate = new THREE.Mesh(GEO.rbox(0.008, 0.05, 0.046, 0.002), M.alu)
-  plate.position.set(xb, 0.352, CRANK_Z + R); g.add(plate)
+  plate.position.set(xb, 0.352, CRANK_Z - R); g.add(plate)
   const slot = new THREE.Mesh(GEO.rbox(0.0014, 0.043, 0.037, 0.0004), M.dark)
   slot.position.set(0.0048, 0, 0); plate.add(slot)
   for (const dy of [-0.016, 0.016]) {
     const rod = new THREE.Mesh(GEO.disc(0.0016, 0.058, 0.0002, 8), M.steel)
     rod.rotation.x = Math.PI / 2
-    rod.position.set(xb, 0.352 + dy, 0.133); g.add(rod)
+    rod.position.set(xb, 0.352 + dy, -0.133); g.add(rod)
   }
-  const rodM = new THREE.Mesh(GEO.rbox(0.007, 0.007, 0.095, 0.001), M.steel)
-  rodM.position.set(xb, 0.352, CRANK_Z + R - 0.050); g.add(rodM)
+  const rodM = new THREE.Mesh(GEO.rbox(0.007, 0.007, 0.136, 0.001), M.steel)
+  rodM.position.set(xb, 0.352, CRANK_Z - R + 0.068); g.add(rodM)
   const tipM = new THREE.Mesh(GEO.rbox(0.034, 0.024, 0.005, 0.001), i === 2 ? M.white : M.aluM)
-  tipM.position.set(xb, 0.349, CRANK_Z + R - 0.0975); g.add(tipM)
+  tipM.position.set(xb, 0.349, CRANK_Z - R + ROD_L - 0.0025); g.add(tipM)
   g.userData = { crank, plate, rodM, tipM, e: 0, mode: 'idle', t0: 0, item: null }
   pusherKin(g.userData)
-  lab.add(g, { name: `推杆 ${i + 1} (宽角伺服·直槽滑块)`, explode: [0, 0.12, 0.28 + i * 0.06], count: 10 })
+  lab.add(g, { name: `推杆 ${i + 1} (宽角伺服·直槽滑块)`, explode: [0, 0.12, -(0.28 + i * 0.06)], count: 10 })
   pushers.push(g.userData)
 }
 buildPusher(0); buildPusher(1); buildPusher(2)
@@ -311,7 +311,7 @@ function buildChute(i) {
   const g = new THREE.Group()
   const bot = new THREE.Mesh(new THREE.PlaneGeometry(0.056, CHUTE_LEN), M.chute)
   bot.rotation.x = Math.PI * 0.75
-  bot.position.set(xb, 0.345 - CHUTE_LEN * 0.35355, 0.052 + CHUTE_LEN * 0.35355)
+  bot.position.set(xb, 0.345 - CHUTE_LEN * 0.35355, 0.040 + CHUTE_LEN * 0.35355)   // 滑道口 z=40 mm (紧贴新带边 31 mm 之后)
   g.add(bot)
   for (const dx of [-0.028, 0.028]) {
     const wall = new THREE.Mesh(new THREE.PlaneGeometry(CHUTE_LEN, 0.013), M.chuteSide)
@@ -460,7 +460,7 @@ function autoSpawn() {
     bin = MATMAP[kind]
   }
   sim.spawnN++
-  const z = ITEM_Z0 + 0.004 * Math.sin(sim.spawnN * 2.399)
+  const z = ITEM_Z0 + 0.0025 * Math.sin(sim.spawnN * 2.399)
   spawnItem(kind, bin, X_CAM - 0.065, z)
 }
 function removeItem(it) {
@@ -469,15 +469,16 @@ function removeItem(it) {
   sim.items = sim.items.filter(x => x !== it)
 }
 
-// 推杆运动学: e 0=内位(缩回) 1=外位(推出), 返回推板面 z
+// 推杆运动学: e 0=内位(缩回) 1=外位(推出). 曲柄在皮带对向侧 (−z),
+// 推板把工件沿 +z 方向推过带边进仓; 返回推板面 z
 function pusherKin(p) {
   const th = -Math.PI / 2 + p.e * Math.PI
   p.crank.rotation.x = th
   const zy = CRANK_Z + R * Math.sin(th)
   p.plate.position.z = zy
-  p.rodM.position.z = zy - 0.050
-  p.tipM.position.z = zy - 0.0975
-  return zy - ROD_L
+  p.rodM.position.z = zy + 0.068
+  p.tipM.position.z = zy + ROD_L - 0.0025
+  return zy + ROD_L
 }
 
 // ---------- 每帧 ----------
@@ -534,14 +535,14 @@ lab.onTick((dt) => {
       const p = pushers.find(q => q.item === it)
       if (p) {
         const face = pusherKin(p)
-        it.z = Math.max(it.z, face + it.mesh.userData.wz / 2)
+        it.z = Math.max(it.z, Math.min(face + it.mesh.userData.wz / 2, 0.044))
         it.mesh.position.set(it.x, 0.344, it.z)
       }
     } else if (it.ph === 'chute') {
       it.s = 0.5 * 6.3 * (sim.t - it.t0) * (sim.t - it.t0)
       const s = Math.min(it.s, 0.145)
       const xb = X_B[it.bin - 1]
-      it.mesh.position.set(xb, 0.345 - 0.7071 * s, 0.052 + 0.7071 * s)
+      it.mesh.position.set(xb, 0.345 - 0.7071 * s, 0.040 + 0.7071 * s)
       if (it.s >= 0.145) {
         it.ph = 'land'; it.t0 = sim.t
         sim.doneTimes.push(sim.t)
@@ -550,7 +551,7 @@ lab.onTick((dt) => {
     } else if (it.ph === 'land') {
       const xb = X_B[it.bin - 1]
       const k = clamp((sim.t - it.t0) / 0.25, 0, 1)
-      it.mesh.position.set(xb, lerp(0.235, 0.206, k), lerp(0.152, 0.18, k))
+      it.mesh.position.set(xb, lerp(0.2425, 0.207, k), lerp(0.1425, 0.172, k))
       if (sim.t - it.t0 > 0.85) { removeItem(it); continue }
     }
     if (it.ph === 'belt') {
@@ -613,13 +614,24 @@ async function pollTwin() {
     if (tms > L.lastVev) {
       L.lastVev = tms
       L.lastMat = vev.material || null
-      if (vev.yard >= 1 && vev.yard <= 3) {
+      if (L.synced && vev.yard >= 1 && vev.yard <= 3) {
         spawnItem(vev.material || KINDS[0], vev.yard, X_CAM - 0.065, ITEM_Z0)
         sim.visionLabel = `${MATCN[vev.material] || vev.material} → ${vev.yard} 号仓`
         sim.visionUntil = sim.t + 3
         sim.fovPulse = 1
       }
     }
+  }
+  if (!L.synced) {
+    // 首次进入实时: 静默对齐事件环最新时刻, 不回放历史推送动画
+    L.synced = true
+    for (const ev of d.events || []) {
+      const n = ev.sorter
+      if (n < 1 || n > 3) continue
+      const tms = Date.parse(ev.ts) || 0
+      if (tms > (L.lastSort[n - 1] || 0)) L.lastSort[n - 1] = tms
+    }
+    return
   }
   for (const ev of d.events || []) {
     if (!ev || ev.state == null) continue
@@ -629,21 +641,28 @@ async function pollTwin() {
     if (tms <= L.lastSort[n - 1]) continue
     L.lastSort[n - 1] = tms
     const p = pushers[n - 1]
-    if (ev.state === 'armed') {
-      if (p.mode !== 'ejecting') {
-        let it = sim.items.find(q => q.ph === 'belt' && q.bin === n && q.x >= X_B[n - 1] - 0.06 && q.x <= X_B[n - 1] + 0.03)
-        if (!it) {
-          const kind = L.lastMat || KINDS[(n * 5 + 3) % 4]
-          spawnItem(kind, n, X_B[n - 1] - 0.012, ITEM_Z0)
-          it = sim.items[sim.items.length - 1]
-        }
-        if (it) { it.ph = 'hold'; p.item = it; p.mode = 'ejecting'; p.e = 0; p.t0 = sim.t }
+    if (ev.state === 'busy') {
+      // 真实推送 (手动推杆/指令下发): 推杆伸出, 把工件推进仓库
+      if (p.mode === 'ejecting' || p.mode === 'hold') continue
+      let it = sim.items.find(q => q.ph === 'belt' && q.bin === n && q.x >= X_B[n - 1] - 0.07 && q.x <= X_B[n - 1] + 0.03)
+      if (!it) {
+        const kind = L.lastMat || KINDS[(n * 5 + 3) % 4]
+        spawnItem(kind, n, X_B[n - 1] - 0.02, ITEM_Z0)
+        it = sim.items[sim.items.length - 1]
       }
-    } else if (ev.state === 'busy') {
-      if (p.item && p.item.ph === 'hold') { p.item.ph = 'chute'; p.item.t0 = sim.t }
-      p.mode = 'hold'; p.t0 = sim.t
+      if (it) {
+        it.x = Math.max(it.x, X_B[n - 1] - 0.012)
+        it.ph = 'hold'; p.item = it; p.mode = 'ejecting'; p.t0 = sim.t
+      }
     } else if (ev.state === 'ready' || ev.state === 'idle') {
-      if (p.mode === 'ejecting' || p.mode === 'hold') { p.mode = 'retracting' }
+      // 真实推送完成 (固件已缩回): 补完推送动画, 随后缩回
+      if (p.mode === 'ejecting') {
+        p.e = 1
+        if (p.item && p.item.ph === 'hold') { p.item.ph = 'chute'; p.item.t0 = sim.t }
+        p.mode = 'retracting'; p.t0 = sim.t
+      } else if (p.mode === 'hold') {
+        p.mode = 'retracting'; p.t0 = sim.t
+      }
     }
   }
 }
@@ -659,7 +678,7 @@ lab.label(irG, 'IR T0', {
   value: () => sim.irLit ? '束中断 · 件过 T0' : '无件',
 })
 pushers.forEach((p, i) => lab.label(p.plate.parent, `推杆 ${i + 1}`, {
-  at: [X_B[i], 0.295, 0.125],
+  at: [X_B[i], 0.295, -0.145],
   value: () => {
     if (sim.src === 'device') return '实时'
     return p.mode === 'idle' ? '待命' : p.mode === 'ejecting' ? '伸出 600 ms' : p.mode === 'hold' ? '保持' : '缩回 900 ms'
@@ -782,6 +801,7 @@ document.body.appendChild(pillWrap)
 function setSrc(v) {
   sim.src = v
   sim.live.online = false
+  sim.live.synced = false // 重新进入实时时静默对齐, 不回放历史事件
   pillWrap.querySelectorAll('button').forEach(b => {
     const on = b.dataset.s === v
     b.style.background = on ? '#1d4ed8' : '#1e2430'
@@ -811,7 +831,10 @@ window.__s3d = {
     }))
   },
   state: () => ({ src: sim.src, t: sim.t, items: sim.items.length, fwq: sim.fwq, fault: sim.fault, online: sim.live.online,
-    dbg: { xs: sim.items.slice(0, 8).map(i => [+i.x.toFixed(3), i.ph, i.bin]), pm: pushers.map(p => p.mode) } }),
+    dbg: { xs: sim.items.slice(0, 8).map(i => [+i.x.toFixed(3), +i.z.toFixed(3), i.ph, i.bin]),
+      mz: sim.items.slice(0, 8).map(i => +i.mesh.position.z.toFixed(3)),
+      pm: pushers.map(p => p.mode), pe: pushers.map(p => +p.e.toFixed(3)),
+      face: pushers.map(p => +pusherKin(p).toFixed(3)) } }),
 }
 
 // 首帧预置 2 件 (模拟/影片), 开场不空带
