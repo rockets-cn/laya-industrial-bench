@@ -47,7 +47,7 @@ const CRANK_Z = -0.1335, R = 0.035, ROD_L = 0.1325    // Scotch-yoke 在皮带�
 const ITEM_Z0 = -0.004                                 // 上料位置 (带面中线, 略偏推杆侧)
 const KINDS = ['ultrasonic_sensor', 'pir_sensor', 'angle_sensor', 'temp_humidity_sensor']
 const MATCN = { angle_sensor: '角度传感器', ultrasonic_sensor: '超声波传感器', pir_sensor: '人体红外传感器', temp_humidity_sensor: '温湿度传感器' }
-const MATMAP = { angle_sensor: 1, ultrasonic_sensor: 2, pir_sensor: 3, temp_humidity_sensor: 1 }  // 测试占位映射 (无指令兜底)
+const MATMAP = { angle_sensor: 1, pir_sensor: 2, temp_humidity_sensor: 3, ultrasonic_sensor: 4 }  // 模拟: 1 旋钮 / 2 人体热释电 / 3 温湿度 / 4 超声波(尾部收集盒)
 const MATCOL = { angle_sensor: [0.38, 0.65, 0.98], ultrasonic_sensor: [0.98, 0.569, 0.243], pir_sensor: [0.945, 0.318, 0.318], temp_humidity_sensor: [0.45, 0.25, 0.85] }
 
 const lab = new Lab({
@@ -339,6 +339,29 @@ function buildChute(i) {
 }
 buildChute(0); buildChute(1); buildChute(2)
 
+// ---------- 尾部收集盒 (皮带 +x 末端, 接超声波传感器) ----------
+const BOX_X = 0.355, BOX_FLOOR_Y = 0.225, BOX_Z = 0   // 盒体中心 x / 箱底顶面 y / 中心线 z
+{
+  const bw = 0.092, bh = 0.09, bd = 0.142, t = 0.004
+  const boxG = new THREE.Group()
+  const bottom = new THREE.Mesh(GEO.rbox(bw, t, bd, 0.001), M.frame); bottom.position.set(BOX_X, BOX_FLOOR_Y - t / 2, BOX_Z); boxG.add(bottom)
+  for (const dz of [-bd / 2 + t / 2, bd / 2 - t / 2]) {
+    const w = new THREE.Mesh(GEO.rbox(bw, bh, t, 0.001), M.frame); w.position.set(BOX_X, BOX_FLOOR_Y + bh / 2, BOX_Z + dz); boxG.add(w)
+  }
+  for (const dx of [-bw / 2 + t / 2, bw / 2 - t / 2]) {
+    const w = new THREE.Mesh(GEO.rbox(t, bh, bd - 2 * t, 0.001), M.frame); w.position.set(BOX_X + dx, BOX_FLOOR_Y + bh / 2, BOX_Z); boxG.add(w)
+  }
+  const badge = new THREE.Mesh(new THREE.PlaneGeometry(0.034, 0.022), new THREE.MeshBasicMaterial({
+    map: textTex(320, 200, (g2, w, h) => {
+      g2.fillStyle = '#141414'; g2.fillRect(0, 0, w, h)
+      g2.fillStyle = '#f0902e'; g2.font = '700 64px "JetBrains Mono", monospace'
+      g2.textAlign = 'center'; g2.textBaseline = 'middle'
+      g2.fillText('超声波', w / 2, h / 2)
+    }), transparent: true, side: THREE.DoubleSide }))
+  badge.position.set(BOX_X + bw / 2 + 0.0012, BOX_FLOOR_Y + bh / 2, BOX_Z); badge.rotation.y = Math.PI * 0.5; boxG.add(badge)
+  lab.add(boxG, { name: '尾部收集盒 (超声波)', explode: [0.16, 0.05, 0], count: 4 })
+}
+
 // ---------- 故障警示灯 ----------
 const beaconG = new THREE.Group()
 const bBase = new THREE.Mesh(GEO.disc(0.015, 0.014, 0.003, 20), M.dark)
@@ -588,7 +611,7 @@ lab.onTick((dt) => {
     if (it.ph === 'belt') {
       if (beltRun) {
         let nx = it.x + V * dts
-        if (ahead && ahead.ph !== 'chute' && ahead.ph !== 'land') nx = Math.min(nx, ahead.x - 0.055)
+        if (ahead && !['chute', 'land', 'tail', 'boxland'].includes(ahead.ph)) nx = Math.min(nx, ahead.x - 0.055)
         if (it.bin >= 1 && it.bin <= 3) {
           const lane = it.bin - 1, p = pushers[lane]
           // sim 模式: 件到推杆位自动推 (演示动画). device 模式: 推杆只认真实
@@ -598,6 +621,9 @@ lab.onTick((dt) => {
             nx = X_B[lane] - 0.012
             it.ph = 'hold'; p.item = it; p.mode = 'ejecting'; p.e = 0; p.t0 = sim.t
           }
+        } else if (it.bin === 4) {
+          // 超声波 → 尾部收集盒: 件到带尾 (x>0.30) 越过带端直接滑落进盒 (无推杆, sim/device 都生效)
+          if (nx > 0.300) { nx = 0.302; it.ph = 'tail'; it.t0 = sim.t }
         }
         it.x = nx
       }
@@ -605,7 +631,7 @@ lab.onTick((dt) => {
       if (!it.seen && it.x >= X_CAM) {
         it.seen = true
         if (sim.src === 'sim') sim.fwq = Math.min(FIFO, sim.fwq + (sim.phantom ? 2 : 1))
-        sim.visionLabel = `${MATCN[it.kind]} → ${it.bin} 号仓`
+        sim.visionLabel = `${MATCN[it.kind]} → ${it.bin === 4 ? '尾部收集盒' : `${it.bin} 号仓`}`
         sim.visionUntil = sim.t + 3
         sim.fovPulse = 1
       }
@@ -630,6 +656,15 @@ lab.onTick((dt) => {
       const xb = X_B[it.bin - 1]
       const k = clamp((sim.t - it.t0) / 0.25, 0, 1)
       it.mesh.position.set(xb, lerp(0.2425, 0.207, k), lerp(0.1425, 0.172, k))
+      if (sim.t - it.t0 > 0.85) { removeItem(it); continue }
+    } else if (it.ph === 'tail') {
+      // 超声波件越带端落入尾部收集盒 (加速下落)
+      const k = clamp((sim.t - it.t0) / 0.30, 0, 1)
+      const e = k * k
+      it.mesh.position.set(lerp(0.302, BOX_X, k), lerp(0.3453, BOX_FLOOR_Y + 0.001, e), it.z)
+      if (k >= 1) { it.ph = 'boxland'; it.t0 = sim.t; sim.doneTimes.push(sim.t); sim.fwq = Math.max(0, sim.fwq - 1) }
+    } else if (it.ph === 'boxland') {
+      it.mesh.position.set(BOX_X, BOX_FLOOR_Y + 0.001, it.z)
       if (sim.t - it.t0 > 0.85) { removeItem(it); continue }
     }
     if (it.ph === 'belt') {
@@ -934,8 +969,8 @@ window.__s3d = {
 
 // 首帧预置 2 件 (模拟/影片), 开场不空带
 if (sim.src === 'sim') {
-  spawnItem(KINDS[0], 2, -0.24, ITEM_Z0)
-  spawnItem(KINDS[1], 3, -0.13, ITEM_Z0 + 0.004)
+  spawnItem(KINDS[0], MATMAP[KINDS[0]], -0.24, ITEM_Z0)          // 超声波 → 尾部收集盒
+  spawnItem(KINDS[1], MATMAP[KINDS[1]], -0.13, ITEM_Z0 + 0.004)  // 人体热释电 → 2 号仓
   sim.spawnN = 2
   sim.nextSpawn = 1.4
 }
