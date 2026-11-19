@@ -351,7 +351,9 @@ lab.add(beaconG, { name: '故障警示灯', explode: [-0.05, 0.16, -0.12], count
 const M_PCB = MAT.paint({ color: [0.026, 0.028, 0.034], roughness: 0.3, clearcoat: 0.5 })
 const M_CREAM = MAT.paint({ color: [0.80, 0.73, 0.58], roughness: 0.5, clearcoat: 0.15 })
 const M_SILK = MAT.glow({ emissive: [0.92, 0.92, 0.85], emissiveIntensity: 0.16 })
-const M_GRID = MAT.paint({ color: [0.36, 0.36, 0.38], roughness: 0.55 })            // DHT20 顶面网格 (哑灰)
+const M_DHT_HOLE = MAT.paint({ color: [0.006, 0.006, 0.009], roughness: 0.85 })    // DHT20 顶面方孔 (暗)
+const M_PIR_RING = MAT.paint({ color: [0.68, 0.69, 0.73], roughness: 0.55 })       // PIR 透镜菲涅尔环 (浅灰)
+const M_KNOB = MAT.paint({ color: [0.05, 0.05, 0.055], roughness: 0.4, clearcoat: 0.5 })  // 旋钮黑壳 (竖肋)
 const M_ULTRA = MAT.paint({ color: [0.032, 0.032, 0.038], roughness: 0.2, clearcoat: 0.8 }) // 超声波换能器黑壳
 const M_GRILLE = MAT.paint({ color: [0.12, 0.12, 0.13], roughness: 0.5 })           // 换能器顶面格栅
 const M_DHT = MAT.paint({ color: [0.028, 0.028, 0.033], roughness: 0.28, clearcoat: 0.6 }) // DHT20 传感盒
@@ -393,11 +395,17 @@ function makeItem(kind) {
       for (const [tx, tz] of [[-0.010, -0.009], [0.014, 0.008]]) {
         const body = new THREE.Mesh(GEO.disc(0.0075, 0.0108, 0.0018, 30), M_ULTRA)
         body.position.set(tx, y0 + 0.0054, tz); g.add(body)
-        for (const rr of [0.0063, 0.0048, 0.0033]) {              // 顶面同心格栅
-          const ring = new THREE.Mesh(GEO.disc(rr, 0.00025, 0.0001, 26), M_GRILLE)
-          ring.position.set(tx, y0 + 0.0108, tz); g.add(ring)
+        for (const rr of [0.0052, 0.0040, 0.0028]) {              // 顶面同心环 (靶心)
+          const ring = new THREE.Mesh(GEO.disc(rr, 0.00018, 0.00005, 30, rr - 0.0007), M_GRILLE)
+          ring.position.set(tx, y0 + 0.01085, tz); g.add(ring)
         }
-        const ctr = new THREE.Mesh(GEO.disc(0.0021, 0.0005, 0.0002, 18), M.aluM)  // 银色振膜
+        for (let s = 0; s < 8; s++) {                             // 放射辐条 (蛛网)
+          const a = s * Math.PI / 4
+          const sp = new THREE.Mesh(new THREE.BoxGeometry(0.0036, 0.00014, 0.0005), M_GRILLE)
+          sp.position.set(tx + Math.cos(a) * 0.0034, y0 + 0.01085, tz + Math.sin(a) * 0.0034)
+          sp.rotation.y = -a; g.add(sp)
+        }
+        const ctr = new THREE.Mesh(GEO.disc(0.0016, 0.00045, 0.0001, 18), M.aluM)  // 银色振膜
         ctr.position.set(tx, y0 + 0.0110, tz); g.add(ctr)
       }
       silk(0, 0, 0.010, 0.0035)                                   // DFRobot 标识
@@ -411,6 +419,11 @@ function makeItem(kind) {
       addBoard()
       const dome = new THREE.Mesh(new THREE.SphereGeometry(0.0100, 28, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.white)
       dome.position.set(-0.0128, y0, 0); g.add(dome)
+      for (const hf of [0.0018, 0.0034, 0.0048, 0.0060, 0.0070]) {  // 菲涅尔环纹 (同心环)
+        const rr = Math.sqrt(0.01 * 0.01 - hf * hf)
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.0002, 6, 48), M_PIR_RING)
+        ring.rotation.x = Math.PI / 2; ring.position.set(-0.0128, y0 + hf, 0); g.add(ring)
+      }
       smd(0.002, 0.004, 0.006, 0.0035)
       for (const [sx, sz] of [[0.006, -0.005], [0.010, -0.005], [0.006, 0.006], [0.010, 0.006]]) smd(sx, sz, 0.0016, 0.0009)
       silk(0.012, -0.006, 0.012, 0.003)
@@ -425,12 +438,13 @@ function makeItem(kind) {
       const box = new THREE.Mesh(GEO.rbox(0.0155, 0.0060, 0.0098, 0.0014), M_DHT)
       box.position.set(-0.0078, y0 + 0.0030, 0); g.add(box)
       const topY = y0 + 0.0060
-      for (let i = -2; i <= 2; i++) {                             // 顶面网格
-        const v = new THREE.Mesh(new THREE.PlaneGeometry(0.00025, 0.0086), M_GRID)
-        v.rotation.x = -Math.PI / 2; v.position.set(-0.0078 + i * 0.0029, topY + 0.00006, 0); g.add(v)
-        const h = new THREE.Mesh(new THREE.PlaneGeometry(0.0135, 0.00025), M_GRID)
-        h.rotation.x = -Math.PI / 2; h.position.set(-0.0078, topY + 0.00006, i * 0.0019); g.add(h)
-      }
+      for (let i = -2; i <= 2; i++)                               // 顶面 5×5 方形开窗 (暗格孔)
+        for (let j = -2; j <= 2; j++) {
+          const h = new THREE.Mesh(new THREE.PlaneGeometry(0.0017, 0.0013), M_DHT_HOLE)
+          h.rotation.x = -Math.PI / 2
+          h.position.set(-0.0078 + i * 0.0031, topY + 0.00006, j * 0.00195)
+          g.add(h)
+        }
       header(0.012, 4, 0.011, M_CREAM)
       silk(0.002, -0.0095, 0.014, 0.0028)
       hole(0.003, -0.0095); hole(0.008, -0.0095)
@@ -445,8 +459,14 @@ function makeItem(kind) {
       const base = new THREE.Mesh(GEO.rbox(0.0105, 0.0018, 0.0115, 0.0008), M.aluM)
       base.position.set(-0.0035, y0 + 0.0044 + 0.0009, 0); g.add(base)
       const knobG = new THREE.Group(); knobG.position.set(-0.0035, y0 + 0.0044 + 0.0018, 0)
-      const knob = new THREE.Mesh(GEO.disc(0.0058, 0.0062, 0.0014, 30), MAT.paint({ color: [0.05, 0.05, 0.055], roughness: 0.4, clearcoat: 0.5 }))
+      const knob = new THREE.Mesh(GEO.disc(0.0058, 0.0062, 0.0008, 30), M_KNOB)
       knob.position.y = 0.0031; knobG.add(knob)
+      for (let k = 0; k < 16; k++) {                               // 旋钮竖肋 (防滑纹)
+        const a = k * Math.PI * 2 / 16
+        const rib = new THREE.Mesh(new THREE.BoxGeometry(0.0007, 0.0044, 0.0005), M_KNOB)
+        rib.position.set(Math.cos(a) * 0.00585, 0.0031, Math.sin(a) * 0.00585)
+        rib.rotation.y = -a; knobG.add(rib)
+      }
       const ind = new THREE.Mesh(GEO.rbox(0.0016, 0.0034, 0.0009, 0.0002), M.white)  // 白色指示线 (侧面)
       ind.position.set(0.0056, 0.0044, 0); knobG.add(ind)
       g.add(knobG); g.userData.arm = knobG
