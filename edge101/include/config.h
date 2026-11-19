@@ -73,7 +73,9 @@ static const uint32_t HL2_BAUD     = 38400;
 // (QoS0, 非 retained), 不过门控 — 单件 ~5.7s 视野停留 -> ~19 个点位, 供
 // px_per_mm/方向轨迹拟合 (RetrigGate 门控后每件只留 1 条, 拿不到时间序列).
 // 标定完成后必须回 0 (生产不上报原始流).
-#define HL2_RAW_DUMP 1
+// 2026-11-19 实机验证通过 (raw 轨迹回放 TrackGate 仿真 47 上报 vs 网关环满 32,
+// 每件≈1 条, 无重复风暴) → 关闭.
+#define HL2_RAW_DUMP 0
 static const uint32_t HL_POLL_MS          = 300;   // I2C 轮询周期 (ms; 越大对主循环停摆越小)
 static const uint32_t HL_TIMEOUT_MS       = 200;   // 单次 getResult 超时 (防卡主循环)
 static const double   HL_CONFMIN          = 0.6;   // 置信度门槛 (在线 confmin 可调)
