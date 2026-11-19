@@ -3,6 +3,20 @@
 > 2026-11-19 更新。原 2026-10-29 夜自动推进时**没有结论、需要拍板**的部分保留在下方;
 > 已实现内容见 `docs/sort-mqtt.md`、`edge101/`。
 
+## 2026-11-19 已完成 (完成延时停带 + 生产切 verified)
+
+> 用户 2026-11-19: 「听到命令后马上启动传送带，完成任务后 10 秒停传送带」;
+> 配套生产切换 verified (方案 B 实机回归通过)。提交 `79de455`。
+
+| 项 | 说明 |
+|---|---|
+| 语义 | **命令一到即起带**: 新作业开始 (`_run_job`) / 手动 `/belt start|resume` 撤销任何待停计时; **任务完成 N 秒后停带**: `idle_stop_after_job_s=10.0` (config, 0=禁用) |
+| 设计时点 | blind 批次 done / verified 需求逐件核对齐 (remaining→0) / verified 作业撤销 / 排队作业撤销 → `_schedule_idle_stop()` |
+| 到期判定 | **复用 `verified_loop` 0.5s tick** (单一调度点, 无 Timer 线程竞态): 状态只存时间戳 `_idle_stop_at`, 到期时实时复核三把锁 (active/queue/verified) 全闲 **且** `dev_state.conveyor==running` 才发 stop (`required=False`); 故障/超时路径不接入 (故障停带立即且需人工清, 语义不同) |
+| 可观测 | `/health` + `idle_stop_in_s` (剩余秒, null=无待停); 到期打印「任务完成 10s 无新作业, 自动停带」 |
+| 验证 | sim E2E **121/121** (95 旧零回归 + 26 新增: 窗口内不停 / 到期停 / 新作业撤 / 手动起带撤 / verified 完成 / 禁用); 生产重启加载后实机回归: 指令 5 件 (超声波×3→1仓, 角度×2→2仓) **38s 逐件核对齐 done**, 19:07:15 计时 → **19:07:25 精确 10s 自动停带**, `fault=null` |
+| 实机附带验证 | 带上有 1 件未指令 pir → 相机**不推直通带尾** (verified 不盲拨行为确认, 1 号推杆误推不再复现); `exec_ok=false` 是 blind 遗留字段 (verified 父作业不填 `divert_results`), 无害, 验收看 `outcome/pushed/remaining` |
+
 ## 2026-11-19 已完成 (方案 B: 物料校验式下发)
 
 > 用户报障 "1号仓库: 超声波 ×1, 实际推了两个旋钮" → 定案: **语音指令=需求不盲拨,
@@ -15,7 +29,7 @@
 | 新接口 | `POST /dispatch/cancel {job_id}` (200 撤销+需求作废 / 409 执行中 / 404 不存在); `GET /health` + `verified[]` (job_id/material/pushed/remaining/deadline_in_s); `/jobs` + `pushed`/`remaining` + `cancelled` judgment |
 | 页面 (loop_ui) | 下发应答 "物料校验模式: 已登记需求, 等逐件核对" 提示; 孪生状态行 "🔍 待核对 pushed X/Y (超时余 Ns)"; 对照表 ✎已撤销/🔍核对 记账 |
 | 验证 | sim E2E **95/95** (77 回归 + 18 verified 新增: 不盲拨 / 不匹配直通不耗需求 / 匹配逐件×2+进度 / 无需求无兜底 / 超时故障+锁存期 409 / 人工清障 / 撤销+需求作废+404); bench_yard 40/40 不变; JS `node --check` 过 |
-| 生产切换 | `config/sort_gateway.json` 暂保持 `blind`; **实机回归通过后**改 `"dispatch_mode": "verified"` + `systemctl --user restart laya-sort-gateway` |
+| 生产切换 | ~~实机回归前保持 blind~~ **已完成 (2026-11-19 晚)**: 实机回归通过 (5 件逐件核对齐 + 未指令 pir 直通不推) → `dispatch_mode: "verified"` + 网关重启生效 |
 | 解决 G 遗留 | **双下发结构性消除**: verified 下语音 job 不盲拨, 所有下发都经 HL 逐件核对路径 (旧 `vision_dispatch=true` 的叠加风险消失); "无指令不推" 语义在 verified 下也成立 (无需求 → 直通) |
 | 已知边界 | ① 密集同物料 (两件 <0.8s) 欠发是**存在性去重窗口**的独立遗留 (OPEN G 节幻影件修复的副作用), 本方案不解决, 彻底方案=位置式下发 (固件 vision 包填 pos_mm); ② verified 超时期间新指令 409 需先清故障 (与其他故障一致) |
 
@@ -346,6 +360,52 @@
   用 awk 抽出 `<script type="module">` 内容后 `node --check` 判最准。
 - **教训**: 前缀自增 `++`/`--` 只能作用于**变量/属性引用**, 不能作用于 `(a = b)` 这类表达式;
   验证脚本自身的 bug 会以"页面错误"形态混进遥测, 先分清错误来源再下结论。
+
+## 经验教训 / 踩坑记录 (2026-11-19 晚轮: 完成延时停带 + 生产切 verified)
+
+### 新增"停带"功能, 先枚举所有既有停带源
+- 生产/测试里能停带的有 5 处: `stop_conveyor_after_batch` (默认 **True**, blind 批次 done
+  立即停) / verified 超时 pause / `_fail` pause / 我的 idle-stop / `/belt` 手动。
+  测试 cfg 没关旧立即停带 → 新功能的 1s 窗口在批次 done 瞬间就被旧逻辑抢停,
+  "窗口内仍 running" 全红 (13b/13c 首跑)。
+- **教训**: 加任何新时序/控制功能前, 先 grep 同语义的所有既有执行点 (本例:
+  `_conveyor_cmd(` 全部调用方), 判定互斥关系 — 要么测试里显式关旧逻辑, 要么配置层互斥;
+  生产配置恰好已 `stop_conveyor_after_batch: false` 才没踩 (但测试默认值和生产配置不一致
+  本身就是隐患: 测试跑的是 DEFAULTS, 不是生产 config)。
+
+### patch 挪代码块后必须重读确认层级 (dedent 把块挪出循环)
+- 第一次 dedent 把到期判定块从 for 循环内挪到 **while 循环外** (只会在网关退出时执行一次),
+  两次跑测试全红且**无任何异常日志** — 纯逻辑静默失效; 第二次 dedent 又停在 while 外
+  (8 空格=函数体级)。直到重读 `verified_loop` 全文才看清层级。
+- **教训**: ① 任何"移动/缩进代码块"的编辑后, 重读该块前后 20 行确认它相对 while/for/if
+  的位置; ② `write_file`/`patch` 返回的 "last read with pagination (partial view)" 警告
+  就是提示: 局部视图下做结构级编辑容易错位; ③ Pyright 的 `reportPossiblyUnboundVariable`
+  报错了两次 `now` — 一次是**真隐患** (块在 for 内时, for 不执行则 now 未绑定), 一次是
+  误报 (now 在 while 级定义); LSP 警告当线索不当结论, 人工看层级。
+
+### 跨线程时序测试: 同步点选"网关内部状态", 不选"API 响应"
+- 13e 发视觉事件紧跟 `/dispatch` 的 202, 但需求登记发生在 **worker** 的 `_run_job` 里
+  (不是 do_POST) → 视觉先到时 `demands` 还空 → 该件按"无需求"直通 → 父 job 6s 超时 fault。
+  竞态"平时赢偶尔输" (12c 同样写法却过了) → 极难复现定位。
+- **修法**: 测试发事件前 `wait_for(lambda: len(gw.demands.get(m) or ()) > 0, 5, ...)`
+  等内部台账落定 → 确定性。
+- **教训**: 多阶段异步管线 (受理→登记→执行) 的 E2E 测试, 每步之间同步在**内部可观测状态**
+  (demands/verified_jobs/台账) 上, 别假设 HTTP 202 之后所有副作用已就位; 这种"平时赢"的
+  竞态在 CI/换机器/负载高时必炸。
+
+### 定位"条件没走通": 先插一行 print, 别先推理
+- 点火块加了但从未执行: 推理列了 4 个嫌疑 (busy/dev_state/now/线程死), 全不如
+  **在条件为真的分支入口打一行 print** (busy 三把锁 + dev_state + 计时值) — 一次跑完
+  发现探针行**一条都没出现** → 直接判定"外层条件从没为真" → 指向代码块位置, 5 分钟闭环。
+- **教训**: 状态机/并发 bug 优先加"到达性探针" (证明代码段是否被执行), 再谈哪个条件挡;
+  探针用后即删, 别留生产。
+
+### 验收别被旧字段带偏: exec_ok=false ≠ 失败
+- verified 父作业不填 `divert_results` (逐件结果在子作业), 而 `exec_ok =
+  outcome==done and divert_results 全 ok` → 父作业**结构性** exec_ok=false。
+  实机回归时差点当回归失败。真验收看 `outcome / pushed / remaining`。
+- **教训**: 跨模式复用同一 job 结构时, 旧语义字段 (blind 时代的 exec_ok/divert_results)
+  在新模式下要么填合理值要么文档标注"该模式不适用", 否则每次人工核对都要重新查一遍源码。
 
 ## 2026-10-30 修复记录 (用户提交的 5 个问题)
 
