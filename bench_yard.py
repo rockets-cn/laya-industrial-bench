@@ -67,13 +67,18 @@ def _yard_num_of(token):
 
 # 物料词表 (4 传感器): 全名优先, 口语简称也认 (ASR 噪声); 裸"传感器"= 类型未定
 # "温度湿度" = SenseVoice 实测同音变体 ("温湿度传感器" → "温度湿度传感器", 2026-11-13 探针)
+# "旋钮" = 用户口语: 角度传感器实物为旋钮式, 用户直接叫"旋钮" (2026-11-19 实麦确认)
+# "人体热释电" = PIR 正式名称 (用户 2026-11-19 确认), 与 人体红外/红外 同义
 SENSOR_RE = re.compile(
-    r"角度传感器|超声波传感器|人体红外传感器|温湿度传感器|温度湿度传感器"
-    r"|角度|超声波|人体红外|红外传感器|红外|温湿度|温度湿度|传感器")
+    r"角度传感器|超声波传感器|人体红外传感器|人体热释电传感器|热释电传感器"
+    r"|温湿度传感器|温度湿度传感器"
+    r"|角度|超声波|人体红外|人体热释电|热释电|红外传感器|红外|温湿度|温度湿度|旋钮|传感器")
 SENSOR_KEY = {
-    "角度传感器": "angle_sensor", "角度": "angle_sensor",
+    "角度传感器": "angle_sensor", "角度": "angle_sensor", "旋钮": "angle_sensor",
     "超声波传感器": "ultrasonic_sensor", "超声波": "ultrasonic_sensor",
     "人体红外传感器": "pir_sensor", "人体红外": "pir_sensor",
+    "人体热释电传感器": "pir_sensor", "人体热释电": "pir_sensor",
+    "热释电传感器": "pir_sensor", "热释电": "pir_sensor",
     "红外传感器": "pir_sensor", "红外": "pir_sensor",
     "温湿度传感器": "temp_humidity_sensor", "温湿度": "temp_humidity_sensor",
     "温度湿度传感器": "temp_humidity_sensor", "温度湿度": "temp_humidity_sensor",
@@ -81,8 +86,9 @@ SENSOR_KEY = {
 # 否定提及 (不要/别要/不需要/不用 + 物料词)
 SENSOR_NEG_RE = re.compile(
     r"(?:不要|别要?|不需要|不用)\s*"
-    r"(角度传感器|超声波传感器|人体红外传感器|温湿度传感器|温度湿度传感器"
-    r"|角度|超声波|人体红外|红外传感器|红外|温湿度|温度湿度)")
+    r"(角度传感器|超声波传感器|人体红外传感器|人体热释电传感器|热释电传感器"
+    r"|温湿度传感器|温度湿度传感器"
+    r"|角度|超声波|人体红外|人体热释电|热释电|红外传感器|红外|温湿度|温度湿度|旋钮)")
 
 # 简繁 -> 领域词 (ASR 噪声); 传感器名短, 同音变体已覆盖在 SENSOR_RE 简称词表里
 T2S = str.maketrans({"紅": "红", "綠": "绿", "黃": "黄", "藍": "蓝",
@@ -361,8 +367,8 @@ def validate(mentions, answers):
 BYPASS_PROMPT = """你是分拣解析器。把这句话解析成 JSON, 只输出 JSON:
 {{"items":[{{"yard":1,"material":"angle_sensor|ultrasonic_sensor|pir_sensor|temp_humidity_sensor","qty":1}}]}}
 yard 只能是 1/2/3 (对应 1号/2号/3号 料场); 句子没说明是几号料场时 yard 填 0.
-material 对应: angle_sensor=角度传感器, ultrasonic_sensor=超声波传感器,
-pir_sensor=人体红外传感器, temp_humidity_sensor=温湿度传感器.
+material 对应: angle_sensor=角度传感器 (口语叫"旋钮"), ultrasonic_sensor=超声波传感器,
+pir_sensor=人体红外传感器 (正式名 人体热释电, 简称 红外/热释电), temp_humidity_sensor=温湿度传感器.
 "不要X" 表示 X 不下单, 不列入 items; 数量没说按 1; 没说明类型的传感器不列入.
 句子: {state}"""
 
@@ -556,6 +562,14 @@ CASES = [
     # SenseVoice 同音变体 (2026-11-13 探针实测: "温湿度" → "温度湿度")
     ("1号料场要两个温度湿度传感器，2号料场要三个角度传感器",
      [(1, "temp_humidity_sensor", 1), (2, "angle_sensor", 1)]),
+    # 口语别名 (2026-11-19 实麦: 用户把角度传感器叫"旋钮"; 17:29 真实转写 "三个旋钮进一号仓库")
+    ("三个旋钮进一号仓库",
+     [(1, "angle_sensor", 1)]),
+    # 正式名称 (2026-11-19 用户确认: 人体热释电 = PIR 正式名)
+    ("两个人体热释电传感器进二号仓库",
+     [(2, "pir_sensor", 1)]),
+    ("三个热释电进三号仓库",
+     [(3, "pir_sensor", 1)]),
     # 对称后置数量 (ASR 实测语序: "A数量B数量" 无标点): 各自数量归各自
     ("超声波传感器来四个温度湿度传感器两个进一号仓库",
      [(1, "ultrasonic_sensor", 1), (1, "temp_humidity_sensor", 1)]),   # 逐件展开

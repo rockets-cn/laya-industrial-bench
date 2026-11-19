@@ -220,12 +220,19 @@ def _asr_from_body(body):
         p = os.path.join(AUDIO_DIR, "_upload.wav")
         with open(p, "wb") as f:
             f.write(raw)
+        # 客户端传原始采样率 (16k/44.1k/48k 都可能) → 统一 ffmpeg 高质量 (sinc) 重采样到 16k 再转写。
+        # (11-19 前客户端在前端做盒式抽取+3抽头低通降 16k, >4kHz 擦擦音被削 → 网页准确率明显低于系统听写)
+        p16 = os.path.join(AUDIO_DIR, "_upload16.wav")
+        conv16 = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", p,
+                                 "-ar", "16000", "-ac", "1", p16],
+                                capture_output=True, text=True, timeout=120)
+        asr_p = p16 if (conv16.returncode == 0 and os.path.exists(p16)) else p
         try:
-            asr_dt, text = bi.asr(p)
+            asr_dt, text = bi.asr(asr_p)
         except Exception as e:
             raise HTTPException(500, f"ASR failed: {e}")
         import shutil
-        shutil.copy(p, os.path.join(AUDIO_DIR, "last_asr_input.wav"))
+        shutil.copy(p, os.path.join(AUDIO_DIR, "last_asr_input.wav"))  # 留客户端原始数据做取证
         last_wav = "last_asr_input.wav"
     elif mic:
         # Browser MediaRecorder stream (webm/opus or similar) -> 16k mono wav
@@ -1147,13 +1154,12 @@ function pttUp(){ // 松开 -> 识别
 }
 // 空格键 = 按住说话: keydown 开始录音, keyup 发送识别
 document.addEventListener('keydown',e=>{
- if(e.code!=='Space'||e.repeat)return;
+ if(e.code!=='Space')return;
  const a=document.activeElement;
  if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable))return; // 打字中不拦截
  if(a&&a.tagName==='SELECT')return; // 下拉框空格展开, 保持默认
- if(a&&a.tagName==='BUTTON')e.preventDefault(); // 焦点在按钮上时, 空格不得激活按钮
- if(!armed||flushing||recActive)return;
- e.preventDefault();
+ e.preventDefault(); // 空格预留给 PTT: 拦掉默认滚动 (含按住时的自动重复, 否则页面滚到底)
+ if(e.repeat||!armed||flushing||recActive)return; // 首次按下才启动, 重复键只拦默认
  pttDown();
 });
 document.addEventListener('keyup',e=>{
@@ -1185,40 +1191,29 @@ function onChunk(ib){
  const R=ib.numberOfChannels>1?ib.getChannelData(1):null;
  const n=L.length, mono=new Float32Array(n);
  for(let i=0;i<n;i++) mono[i]=R?(L[i]+R[i])/2:L[i];
- const dec=to16k(mono,ctxRate);
- let s=0; for(let i=0;i<dec.length;i++) s+=dec[i]*dec[i];
- const rms=dec.length?Math.sqrt(s/dec.length):0;
+ // 按原始采样率上传 (不在前端降采样): 旧的盒式抽取+3抽头低通会削掉 >4kHz 的
+ // 擦擦音 (sh/ch/s) 并引入混叠 → 网页准确率明显低于系统听写。重采样交给服务端 ffmpeg (sinc 高质量)
+ let s=0; for(let i=0;i<n;i++) s+=mono[i]*mono[i];
+ const rms=n?Math.sqrt(s/n):0;
  $('lv').style.width=Math.min(100,rms*3500)+'%';
  const now=performance.now();
  if(floorN<200||rms<floorRms){ if(rms<floorRms*2.5){ floorRms=(floorRms*floorN+rms)/(floorN+1); floorN++; } }
  if(recActive){ // 按住说话/录音识别: 直接累积 (上限 30s)
-  if(!flushing){ recBufs.push(dec); if(recBufs.length>2344)recBufs.shift(); }
+  if(!flushing){ recBufs.push(mono); if(recBufs.length>Math.max(1,Math.floor(30*ctxRate/2048)))recBufs.shift(); }
   return;
  }
  if(!wakeOn||flushing)return; // 唤醒词关着且没在录音: 不处理
  if(rms>thr())speechUntil=now+SILENCE;
  if(speechStart===0&&rms>thr())speechStart=now;
- bufs.push(dec);
- if(wmode==='idle'&&bufs.length>24)bufs.shift(); // 唤醒模式只保留最近 ~3s
- else if(bufs.length>3000)bufs.shift();
+ bufs.push(mono);
+ if(wmode==='idle'&&bufs.length>Math.max(1,Math.floor(3*ctxRate/2048)))bufs.shift(); // 唤醒模式只保留最近 ~3s
+ else if(bufs.length>Math.max(1,Math.floor(30*ctxRate/2048)))bufs.shift();
  if(!speechStart)return;
  if(wmode==='idle'){
   if((now>speechUntil+(W_SILENCE-SILENCE)&&now-speechStart>W_MINLEN)||now-speechStart>W_MAXLEN) flushUtterance(true);
  } else if(wmode==='cmd'){
   if((now>speechUntil&&now-speechStart>MINLEN)||now-speechStart>MAXLEN) flushUtterance(false);
  }
-}
-function to16k(mono,sr){
- if(sr===16000)return mono;
- const r=sr/16000,out=new Float32Array(Math.floor(mono.length/r));
- for(let i=0;i<out.length;i++){let s=0,c=0,j=i*r;
-  for(;j<(i+1)*r&&j<mono.length;j+=1){s+=mono[j];c++} out[i]=c?s/c:0}
- const lp=new Float32Array(out.length); // 轻低通, 压一下盒式抽取的混叠
- for(let i=0;i<lp.length;i++){
-  const a=i>0?out[i-1]:out[0], b=out[i], c=i<out.length-1?out[i+1]:out[out.length-1];
-  lp[i]=(a+2*b+c)*0.25;
- }
- return lp;
 }
 function flushUtterance(isWake, tailN){ // 唤醒词/指令窗口 (来自 bufs)
  const chunks=tailN?bufs.slice(-tailN):bufs;
@@ -1239,7 +1234,8 @@ function flushWav(chunks, isWake){
  const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};
  ws(0,'RIFF');v.setUint32(4,36+n*2,true);ws(8,'WAVE');ws(12,'fmt ');
  v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
- v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);
+ const sr2=ctxRate||48000;
+ v.setUint32(24,sr2,true);v.setUint32(28,sr2*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);
  ws(36,'data');v.setUint32(40,n*2,true);
  for(let i=0;i<n;i++){const x=Math.max(-1,Math.min(1,data[i]));v.setInt16(44+i*2,x<0?x*32768:x*32767,true)}
  const fr=new FileReader();
