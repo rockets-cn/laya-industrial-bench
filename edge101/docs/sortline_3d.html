@@ -358,6 +358,7 @@ const M_PIR_RING = MAT.paint({ color: [0.40, 0.41, 0.45], roughness: 0.5 })     
 const M_KNOB = MAT.paint({ color: [0.05, 0.05, 0.055], roughness: 0.45, clearcoat: 0.35 })  // 旋钮黑壳
 const M_KNOB_RIB = MAT.paint({ color: [0.14, 0.14, 0.15], roughness: 0.55 })       // 旋钮竖肋 (比壳体略亮, 防滑纹凸显)
 const M_ULTRA = MAT.paint({ color: [0.032, 0.032, 0.038], roughness: 0.42, clearcoat: 0.25 }) // 超声波换能器黑壳 (降高光)
+const M_ULTRA_CENTER = MAT.paint({ color: [0.82, 0.84, 0.87], roughness: 0.3, clearcoat: 0.35 }) // 银色振膜中心 (亮, 无环境反射也清晰可辨)
 const M_GRILLE = MAT.paint({ color: [0.42, 0.43, 0.46], roughness: 0.5 })          // 换能器顶面格栅 (浅灰, 在黑壳上凸显)
 const M_DHT = MAT.paint({ color: [0.028, 0.028, 0.033], roughness: 0.68, clearcoat: 0.10 }) // DHT20 传感盒 (哑光, 抑制白色高光)
 const M_POT = MAT.paint({ color: [0.13, 0.21, 0.58], roughness: 0.35, clearcoat: 0.4 })    // 电位器蓝壳
@@ -406,7 +407,7 @@ function makeItem(kind) {
           arm.position.set(tx + Math.cos(a) * 0.0027, y0 + 0.0110, tz + Math.sin(a) * 0.0027)
           arm.rotation.y = -a; g.add(arm)
         }
-        const ctr = new THREE.Mesh(GEO.disc(0.0017, 0.0005, 0.0001, 18), M.aluM)   // 银色振膜中心 (金属)
+        const ctr = new THREE.Mesh(GEO.disc(0.0017, 0.0005, 0.0001, 18), M_ULTRA_CENTER)   // 银色振膜中心 (亮)
         ctr.position.set(tx, y0 + 0.0113, tz); g.add(ctr)
       }
       silk(0, 0, 0.010, 0.0035)                                   // DFRobot 标识
@@ -913,10 +914,22 @@ window.__s3d = {
     }))
   },
   state: () => ({ src: sim.src, t: sim.t, items: sim.items.length, fwq: sim.fwq, fault: sim.fault, online: sim.live.online,
-    dbg: { xs: sim.items.slice(0, 8).map(i => [+i.x.toFixed(3), +i.z.toFixed(3), i.ph, i.bin]),
+    dbg: { xs: sim.items.slice(0, 8).map(i => [+i.x.toFixed(3), +i.z.toFixed(3), i.ph, i.bin, i.kind]),
       mz: sim.items.slice(0, 8).map(i => +i.mesh.position.z.toFixed(3)),
       pm: pushers.map(p => p.mode), pe: pushers.map(p => +p.e.toFixed(3)),
       face: pushers.map(p => +pusherKin(p).toFixed(3)) } }),
+  // 取景 (调试/截图): 传局部坐标, 自动按 root 缩放换算世界坐标; 相机抬到斜上方看顶面
+  frame: (lx, ly, lz, distLocal = 0.1) => {
+    const k = lab.root.scale.x
+    const t = new THREE.Vector3(lx * k, ly * k, lz * k)
+    lab.controlsOrbit.target.copy(t)
+    lab.controlsOrbit.minDistance = 0.15
+    const dist = Math.max(0.16, distLocal * k)
+    const dir = new THREE.Vector3(0.42, 0.95, 0.62).normalize()
+    lab.camera.position.copy(t).addScaledVector(dir, dist)
+    lab.camera.lookAt(t)
+    lab.controlsOrbit.update()
+  },
 }
 
 // 首帧预置 2 件 (模拟/影片), 开场不空带
