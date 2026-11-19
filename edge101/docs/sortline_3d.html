@@ -33,8 +33,8 @@ const { Lab, MAT, GEO, clamp, lerp, fmt } = window.LabKit
 //   视觉: HuskyLens2 俯视, YOLOv8n 定制模型 dfrobot_industrial_sorting
 //         (864×486 BG3P, conf 0.45, nms 0.2, 15 fps), 4 类:
 //         超声波 / 人体红外(PIR) / 温湿度 / 角度
-//   故障: HL2 固件 FIFO 24 槽, 幻影件重复下发 → 队列满 → FAULT 锁存+停带
-//         (2026-11-16 实机事故; 8c07198 存在性去重后已根治, 此页可作 Break-It)
+//   故障: HL2 固件 FIFO 24 槽满 → FAULT 锁存+停带 (device 模式跟随真实固件事件)
+//         (2026-11-16 实机事故 幻影件重复下发 已根治: 8c07198 存在性去重; 演示已移除)
 //   假设尺寸 (无图纸): 皮带 0.62×0.12 m, 带面顶 h=0.34 m, 铝型材框架;
 //         推杆 = 宽角伺服 + Scotch-yoke (直槽滑块) 曲柄连杆, 推板行程 35 mm
 // ============================================================================
@@ -521,7 +521,7 @@ const sim = {
   t: 0,
   items: [],
   spawnN: 0, nextSpawn: 0.6,
-  fwq: 0, phantom: false, fault: false,
+  fwq: 0, fault: false,
   irLit: false,
   visionLabel: '', visionUntil: 0, fovPulse: 0,
   doneTimes: [],
@@ -633,7 +633,7 @@ lab.onTick((dt) => {
       if (it.x > 0.322) { removeItem(it); continue }
       if (!it.seen && it.x >= X_CAM) {
         it.seen = true
-        if (sim.src === 'sim') sim.fwq = Math.min(FIFO, sim.fwq + (sim.phantom ? 2 : 1))
+        if (sim.src === 'sim') sim.fwq = Math.min(FIFO, sim.fwq + 1)
         sim.visionLabel = `${MATCN[it.kind]} → ${it.bin === 4 ? '尾部收集盒' : `${it.bin} 号仓`}`
         sim.visionUntil = sim.t + 3
         sim.fovPulse = 1
@@ -831,39 +831,11 @@ lab.how(
   ]
 )
 
-lab.breakIt({
-  label: '幻影件重复下发',
-  run() { sim.phantom = true },
-  reset() { sim.phantom = false; sim.fwq = 0; sim.fault = false },
-})
-
 lab.autoFilm({
   runBeat: '52.5 mm/s, 单件 1.62 s.',
   runSub: 'IR T0 → 停带 → 推出 → 缩回',
-  breakBeat: '重新打开幻影件重复下发.',
-  breakSub: 'HL2 队列 24 槽 — 满 = 停线',
-  breakCut: false,
 })
 lab.film('beat', lab.films.main)
-lab.film('break', {
-  len: 28, assemble: [0.2, 1.4],
-  shots: [
-    { t: 0, az: 38, el: 15, dist: 1.5, target: [0.06, 0.31, 0.05], fov: 30 },
-    { t: 6, az: 55, el: 24, dist: 1.25, target: [0.075, 0.34, 0.09], fov: 28 },
-    { t: 13, az: 24, el: 10, dist: 1.45, target: [0.03, 0.30, 0.02], fov: 30 },
-    { t: 20, az: 48, el: 20, dist: 1.35, target: [0.10, 0.32, 0.06], fov: 28 },
-    { t: 28, az: 38, el: 15, dist: 1.5, target: [0.06, 0.31, 0.05], fov: 30 },
-  ],
-  events: [
-    { t: 1.8, beat: ['01', 'HL2 下发队列 24/24', 'FAULT 锁存 · 皮带停'] },
-    { t: 2.6, cursor: { to: 'button:break', dur: 0.8 } },
-    { t: 3.4, cursor: { click: true }, do: (l) => l.breakNow() },
-    { t: 3.9, cursor: { hide: true } },
-    { t: 10, set: { cut: 1, labels: 1 } },
-    { t: 17, set: { cut: 0, labels: 0 } },
-    { t: 26.5, do: (l) => l.resetBreak() },
-  ],
-})
 lab.film('hero', {
   len: 28, assemble: [0.2, 1.2],
   shots: [
@@ -914,19 +886,87 @@ lab.film('overview', {
   ],
 })
 
+// ---------- 居中取景 (整机自适应): 按真实包围盒算相机, 让整台设备居中布置 ----------
+// 右侧文字面板已隐藏 → frameX=0 (不再为右栏留白而左偏)。目标=整机包围盒中心 (居中),
+// 距离=能完整框住 8 个角的最小值 (沿视线轴, 逐角对前/后/顶/底, 适配当前视口纵横比) × margin,
+// 保证整机居中且尽量占满画面 (target 除以 k=2.4/size 换成 view 单位)
+function centerFit(margin = 1.1) {
+  lab.machine.updateWorldMatrix(true, true)
+  const box = new THREE.Box3().setFromObject(lab.machine)
+  if (box.isEmpty()) return
+  const c = box.getCenter(new THREE.Vector3())
+  const sz = box.getSize(new THREE.Vector3())
+  const k = 2.4 / lab.size
+  const az = THREE.MathUtils.degToRad(lab.view.az ?? 42)
+  const el = THREE.MathUtils.degToRad(lab.view.el ?? 16)
+  const fovR = THREE.MathUtils.degToRad((lab.view.fov) || 30)
+  const aspect = innerWidth / Math.max(1, innerHeight)
+  const corners = []
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const szc of [-1, 1])
+    corners.push(new THREE.Vector3(c.x + sx * sz.x / 2, c.y + sy * sz.y / 2, c.z + szc * sz.z / 2))
+  // (a) 求能完整框住 8 角的最小视距 (手动 frustum 测试, 基向量与相机 lookAt 严格一致)
+  const fwd = new THREE.Vector3(-Math.sin(az) * Math.cos(el), -Math.sin(el), -Math.cos(az) * Math.cos(el))
+  const wright = new THREE.Vector3(Math.cos(az), 0, -Math.sin(az))
+  const wup = new THREE.Vector3(-Math.sin(az) * Math.sin(el), Math.cos(el), -Math.cos(az) * Math.sin(el))
+  function fits(d) {
+    const fY = Math.tan(fovR / 2) * d, fX = fY * aspect
+    for (const P of corners) {
+      const rx = P.x - c.x, ry = P.y - c.y, rz = P.z - c.z
+      const zP = d + (rx * fwd.x + ry * fwd.y + rz * fwd.z)
+      if (zP <= 0.05) return false
+      const s = d / zP
+      const xc = rx * wright.x + ry * wright.y + rz * wright.z
+      const yc = rx * wup.x + ry * wup.y + rz * wup.z
+      if (Math.abs(xc) * s > fX || Math.abs(yc) * s > fY) return false
+    }
+    return true
+  }
+  let lo = 0.2, hi = 5
+  while (!fits(hi)) hi *= 1.5
+  for (let i = 0; i < 48; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid }
+  const d0 = hi * margin
+  // (b) 居中补偿: 透视下 3D 盒心的投影 ≠ 屏幕包围盒中心 (高瘦机体俯视时尤其明显)。
+  //     用真实相机算屏幕包围盒中心偏移, 牛顿法把 look-at 目标平移抵消 → 整机视觉居中。
+  function screenCenter(T, d) {
+    const pos = new THREE.Vector3(T.x + d * Math.cos(el) * Math.sin(az), T.y + d * Math.sin(el), T.z + d * Math.cos(el) * Math.cos(az))
+    const cam2 = new THREE.PerspectiveCamera(THREE.MathUtils.radToDeg(fovR), aspect, 0.02, 400)
+    cam2.position.copy(pos); cam2.lookAt(T); cam2.updateMatrixWorld()
+    cam2.matrixWorldInverse.copy(cam2.matrixWorld).invert()
+    let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9
+    for (const P of corners) { const v = P.clone().project(cam2); mnx = Math.min(mnx, v.x); mxx = Math.max(mxx, v.x); mny = Math.min(mny, v.y); mxy = Math.max(mxy, v.y) }
+    return [(mnx + mxx) / 2, (mny + mxy) / 2]
+  }
+  let T = c.clone()
+  for (let i = 0; i < 6; i++) {
+    const o = screenCenter(T, d0)
+    const e = 0.02
+    const ox = screenCenter(T.clone().add(new THREE.Vector3(e, 0, 0)), d0)
+    const oy = screenCenter(T.clone().add(new THREE.Vector3(0, e, 0)), d0)
+    const J00 = (ox[0] - o[0]) / e, J10 = (ox[1] - o[1]) / e
+    const J01 = (oy[0] - o[0]) / e, J11 = (oy[1] - o[1]) / e
+    const det = J00 * J11 - J01 * J10
+    if (Math.abs(det) < 1e-6) break
+    T.x += THREE.MathUtils.clamp((-o[0] * J11 + o[1] * J01) / det, -0.35, 0.35)
+    T.y += THREE.MathUtils.clamp((-J00 * o[1] + J10 * o[0]) / det, -0.35, 0.35)
+    if (Math.abs(o[0]) < 0.01 && Math.abs(o[1]) < 0.01) break
+  }
+  lab.setView({ target: [T.x / k, T.y / k, T.z / k], dist: d0 / 2.4, frameX: 0 })
+}
+centerFit()
+
 // ---------- 数据源切换 (本页独立) + 对外 API ----------
 const pillWrap = document.createElement('div')
 pillWrap.style.cssText = 'position:fixed;right:16px;top:16px;z-index:50;display:flex;gap:6px;align-items:center;background:rgba(13,15,20,.82);border:1px solid #262b36;border-radius:10px;padding:6px 9px;font:12px/1 "Noto Sans SC",sans-serif;color:#8a91a0;backdrop-filter:blur(6px)'
 pillWrap.innerHTML = '<span>数据源</span>' + ['sim', 'device'].map(s => `<button data-s="${s}" style="cursor:pointer;border:1px solid #2c3342;border-radius:6px;padding:4px 9px;font:12px 'Noto Sans SC',sans-serif;${s === 'sim' ? 'background:#1d4ed8;color:#fff' : 'background:#1e2430;color:#aab2c0'}">${s === 'sim' ? '模拟' : '真实'}</button>`).join('')
 document.body.appendChild(pillWrap)
-// 同源父页 (loop_ui :8002) 双向同步数据源: 本页点 pill → 反向通知父页 #gla-src; 父页 change → 正向下发
+// 数据源方向: 本页 pill 是 3D 场景唯一控制入口 — 父页 #gla-src 不再下发本页 (不反向控制网页); bc3d 仅收 job
 const bc3d = ('BroadcastChannel' in window) ? new BroadcastChannel('laya3d') : null
-function setSrc(v, fromParent) {
+function setSrc(v) {
   sim.src = v
   // 切到真实场景: 清空传送带 — 模拟残留件不该出现在真实视图里, 同时复位模拟态
   if (v === 'device') {
     for (const it of sim.items.slice()) removeItem(it)
-    sim.fwq = 0; sim.fault = false; sim.phantom = false
+    sim.fwq = 0; sim.fault = false
     sim.spawnN = 0; sim.doneTimes.length = 0
   }
   sim.live.online = false
@@ -936,23 +976,21 @@ function setSrc(v, fromParent) {
     b.style.background = on ? '#1d4ed8' : '#1e2430'
     b.style.color = on ? '#fff' : '#aab2c0'
   })
-  // 反向控制父页: 仅用户在本页点 pill (fromParent=false) 时回发 {type:'src'}; 来自父页/首载 (true) 不回发 → 防环
-  if (!fromParent && bc3d) bc3d.postMessage({ type: 'src', src: v })
+  // 数据源仅本页控制: 不回发父页; 父页变更也不再下发本页 (切断 控件→网页)
 }
-pillWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setSrc(b.dataset.s, false)))
-setSrc(sim.src, true) // 首载 (URL ?src= 或默认): 不回发父页
-// 同源 iframe: 首载同步父页数据源 (父页 change 才发 BC; iframe 默认 ?src=sim 会漏掉父页已持久化的 device) → 不回发
+pillWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setSrc(b.dataset.s)))
+setSrc(sim.src) // 首载 (URL ?src= 或默认)
+// 同源 iframe: 首载同步父页当前数据源 (仅一次性读取初始态; iframe 默认 ?src=sim 会漏掉父页已持久化的 device)
 try {
   const pwin = window.parent && window.parent !== window ? window.parent : null
   const psel = pwin && pwin.document ? pwin.document.getElementById('gla-src') : null
-  if (psel && (psel.value === 'device' || psel.value === 'sim')) setSrc(psel.value, true)
+  if (psel && (psel.value === 'device' || psel.value === 'sim')) setSrc(psel.value)
 } catch (e) { /* 跨源 / 独立 tab (无 ?src=): 保持 URL 参数 */ }
-// 父页 (loop_ui :8002) 转发: 新批次指令 / 数据源切换 (BroadcastChannel 'laya3d') → 正向, 不回发
+// 父页 (loop_ui :8002) 转发: 新批次指令 (BroadcastChannel 'laya3d') → 收 job; 数据源不再由父页下发
 if (bc3d) {
   bc3d.onmessage = (e) => {
     const m = e.data || {}
     if (m.type === 'job' && sim.src === 'sim' && m.items && m.items.length) window.__s3d.setJob(m.items)
-    else if (m.type === 'src') setSrc(m.src === 'device' ? 'device' : 'sim', true)
   }
 }
 
@@ -980,7 +1018,7 @@ window.__s3d = {
     const dir = new THREE.Vector3(0.42, 0.95, 0.62).normalize()
     lab.camera.position.copy(t).addScaledVector(dir, dist)
     lab.camera.lookAt(t)
-    lab.controlsOrbit.update()
+    lab.controlsOrbit.update();
   },
 }
 
