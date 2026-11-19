@@ -3,6 +3,22 @@
 > 2026-11-19 更新。原 2026-10-29 夜自动推进时**没有结论、需要拍板**的部分保留在下方;
 > 已实现内容见 `docs/sort-mqtt.md`、`edge101/`。
 
+## 2026-11-19 已完成 (方案 B: 物料校验式下发)
+
+> 用户报障 "1号仓库: 超声波 ×1, 实际推了两个旋钮" → 定案: **语音指令=需求不盲拨,
+> HuskyLens2 逐件核对物料后才推**。用户批准实施 ("好的，干吧")。
+
+| 项 | 说明 |
+|---|---|
+| `dispatch_mode: "blind" \| "verified"` (默认 `blind` = 现状零风险) | `verified`: 语音 job 不发盲拨 divert(qty=N) — 只做起带+登记需求 (`remaining=N`, `deadline=verified_timeout_s` 默认 90s) 转「待核对」; HL2 来件匹配需求 → **逐件** `divert qty=1 trigger=photo` (逐件 job 带 `parent_job_id` 归属父语音 job); 不匹配 → **直通带尾** (verified 语义下移除 material_map 兜底, 不自动推); `remaining=0` → job done; 超时 → **故障锁存+停带** + `sort/event/verified{phase:timeout}` |
+| 进度记账 | `_verified_progress(job_id, done\|fault)`: 逐件 done → pushed+1 / remaining-1, 耗尽 → 父 job done; 逐件 fault → 父 job fault (机器故障由逐件 job 锁存, 父 job 只记账不重复锁存) |
+| 新接口 | `POST /dispatch/cancel {job_id}` (200 撤销+需求作废 / 409 执行中 / 404 不存在); `GET /health` + `verified[]` (job_id/material/pushed/remaining/deadline_in_s); `/jobs` + `pushed`/`remaining` + `cancelled` judgment |
+| 页面 (loop_ui) | 下发应答 "物料校验模式: 已登记需求, 等逐件核对" 提示; 孪生状态行 "🔍 待核对 pushed X/Y (超时余 Ns)"; 对照表 ✎已撤销/🔍核对 记账 |
+| 验证 | sim E2E **95/95** (77 回归 + 18 verified 新增: 不盲拨 / 不匹配直通不耗需求 / 匹配逐件×2+进度 / 无需求无兜底 / 超时故障+锁存期 409 / 人工清障 / 撤销+需求作废+404); bench_yard 40/40 不变; JS `node --check` 过 |
+| 生产切换 | `config/sort_gateway.json` 暂保持 `blind`; **实机回归通过后**改 `"dispatch_mode": "verified"` + `systemctl --user restart laya-sort-gateway` |
+| 解决 G 遗留 | **双下发结构性消除**: verified 下语音 job 不盲拨, 所有下发都经 HL 逐件核对路径 (旧 `vision_dispatch=true` 的叠加风险消失); "无指令不推" 语义在 verified 下也成立 (无需求 → 直通) |
+| 已知边界 | ① 密集同物料 (两件 <0.8s) 欠发是**存在性去重窗口**的独立遗留 (OPEN G 节幻影件修复的副作用), 本方案不解决, 彻底方案=位置式下发 (固件 vision 包填 pos_mm); ② verified 超时期间新指令 409 需先清故障 (与其他故障一致) |
+
 ## 2026-11-13 已完成 (4 传感器迁移 + 语音指令路由 v2)
 
 > 用户定案: ① 选仓用**语音指令指定**; ② 物料集加 4 传感器; ③ **真实线只用传感器, 不用水果/方块**。
@@ -105,8 +121,9 @@
   3. 页面「⚠️ 清故障」按钮: loop_ui `/api/fault/clear` → 网关 `/fault/clear` (清锁存 + 固件 reset 清队列);
      仅真实源且故障锁存时显示, 清后起带/推杆恢复 (修问题①恢复路径)。
 - **单测**: 77/77 (测试保持 `vision_dispatch: true` 覆盖该特性, 不受生产配置影响)。
-- **遗留 (挂起 `vision_dispatch` 前需先处理)**: 双下发 — 有语音需求时 vision 路径不应再下发
-  (或语音 job 不盲拨、留给 vision 逐件)。当前生产 `false`, 双下发休眠。
+- **遗留 (2026-11-19 已闭环)**: 双下发 — 由**方案 B `dispatch_mode=verified` 结构性消除**:
+  语音 job 不盲拨, 只登记需求; 所有下发都走 HL2 逐件核对路径 (匹配才推, 不匹配直通带尾)。
+  实机回归后生产切 `verified` (见文首 2026-11-19 节)。
 
 ### H. 固件 HL2 轮询无去重 — 一件被"识别" ~19 次 → 仍有重复 → ✅ 两段修完 (2026-11-19)
 - **用户报障**: "实际用 HuskyLens2 看到一个会产生好多个, 应该避免重复识别";

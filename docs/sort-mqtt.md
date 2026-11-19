@@ -189,6 +189,15 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
   需求台账 (`/dispatch` 受理的 yard×物料×qty, FIFO 与固件 divert 命令队列同序),
   视觉事件按台账消耗路由; 无指令时回退映射表 (`fixed` 表或 `round_robin`,
   遗留 `vision_dispatch=True` 自动分拣模式)。
+- **物料校验式下发 `dispatch_mode="verified"` (2026-11-19 方案 B)**:
+  语音指令 = **需求**而非盲拨 — job 受理后只做起带 + 登记需求
+  (`remaining=N`, `deadline=verified_timeout_s`, 默认 90s), 不发
+  divert(qty=N); HL2 来件**匹配需求** → 逐件 `divert qty=1 trigger=photo`
+  (逐件 job 带 `parent_job_id` 归属父语音 job, 进度记账 pushed/remaining);
+  **不匹配 → 直通带尾** (verified 下不启用 material_map 兜底);
+  `remaining=0` → job done; **超时未见匹配物料 → 故障锁存 + 停带**
+  (`sort/event/verified{phase:timeout}`)。`dispatch_mode="blind"` (默认)
+  = 现状盲拨, 零行为变化。生产配置切换前需实机回归 (OPEN_QUESTIONS)。
 - 定制模型(旧固件)无真实 conf: 旧固件 Data 段 10 字节不上报 conf, SDK 按 V0.4
   布局把 offset10-13 当 4B float 解出次正规负数 (JSON 后 ≈ -0.0) — 网关用
   `copysign` 判符号, conf 为负视为「无有效置信度」直接放行 (Python 里
@@ -220,6 +229,7 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 |---|---|---|
 | `sort/event/batch` | 0 (fault/done 时 retain) | `{phase: accepted\|done\|fault, job_id, source, actions, vision, fault}` (`vision` = 视觉入站的物料/置信度/x/y/w/h/pos_mm, 非视觉批次为 null) |
 | `sort/event/dispatch` | 0 | 每条 divert 成功一次: `{job_id, sorter, material, qty, ts}` |
+| `sort/event/verified` | 0 | 物料校验模式生命周期: `{ts, job_id, phase: pending\|done\|timeout\|cancelled, pushed, remaining}` (仅 `dispatch_mode=verified`) |
 | `sort/event/motion` | 0 | 设备运动事件的 relay (时间线源 = 设备 `sort/line1/motion`, 见「遥测」节): `{ts, sorter, state, via, job_id}` |
 | `sort/event/fault` | 1, **retain** | 故障锁存详情 (人工清除前一直可见) |
 | `sort/event/cleared` | 1, **retain** | 故障清除确认 |
@@ -345,11 +355,12 @@ OPEN_QUESTIONS 第 3 条), 与本次 3 路前侧触发光门职责不同, 互不
 
 | 方法/路径 | 说明 |
 |---|---|
-| `GET /health` | broker 连接 / 队列 / 活动 job / 故障状态 |
+| `GET /health` | broker 连接 / 队列 / 活动 job / 故障状态; verified 模式另含 `verified[]` (待核对作业: job_id/material/pushed/remaining/deadline_in_s) |
 | `GET /stats` | 同 `sort/stats/summary` |
 | `GET /motion` | 运动事件时间线 (设备状态迁移, 最近 `motion_keep` 条): `{count, motion: [{ts, sorter, state, via, job_id}]}` — 「让示意图动起来」的动画数据源 |
 | `GET /vision` | 最近视觉识别事件 (HuskyLens 2 **实际看到的**, 白名单+置信度校验通过即记账, 最近 8 条): `{count, vision: [{ts, material, confidence, yard, frame_id?, pos_mm?}]}` (时间序) — 数字孪生「按实际看到的显示」: 相机识别标签 + 物品物料按实际识别, 不受精简/故障/队列满影响 (未知物料/低置信不记账, 避免显示误检) |
-| `POST /dispatch` | `{actions, source?, path?}` → 202 `{job_id, queued}` / 409 故障锁存 / 422 非法 |
+| `POST /dispatch` | `{actions, source?, path?}` → 202 `{job_id, queued[, verified]}` (`verified` 仅在 `dispatch_mode=verified` 时出现, 提示"已登记需求待逐件核对") / 409 故障锁存 / 422 非法 |
+| `POST /dispatch/cancel` | `{job_id}` → 200 撤销 (需求作废, verified 未推部分不补发) / 409 正在执行不可撤 / 404 不存在 (2026-11-19 方案 B) |
 | `POST /fault/clear` | 人工清除故障 |
 
 ## 配置
@@ -358,7 +369,9 @@ OPEN_QUESTIONS 第 3 条), 与本次 3 路前侧触发光门职责不同, 互不
   推杆推出触发方式 (`divert_trigger`: immediate\|photo) / 光门行程预算
   (`photo_margin_s`) / 运动事件时间线深度 (`motion_keep`, 默认 100) /
   统计周期 / 批间停带 (`stop_conveyor_after_batch`) /
-  队列深度 / 台账路径。
+  队列深度 / 台账路径 / **下发模式** (`dispatch_mode`: blind\|verified,
+  默认 blind; verified=物料校验式下发, 见「视觉入站」节) /
+  verified 超时 (`verified_timeout_s`, 默认 90)。
 - `config/material_map.json`: 物料→分拣器映射 (`fixed` 表或 `round_robin`) + 置信度下限。
   **仅用于无指令时兜底与遗留 `vision_dispatch=True` 自动分拣**; 实时选仓权在语音指令
   (网关指令需求台账)。**当前映射是占位**, 待现场确认 (OPEN_QUESTIONS 第 1 条)。

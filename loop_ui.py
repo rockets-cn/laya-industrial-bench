@@ -489,6 +489,7 @@ async def twin():
         out["conveyor"] = h.get("conveyor")  # 传送带实时态 (真实源按此显示带子运行)
         out["ir_present"] = bool(h.get("ir_present", False))  # 红外 T0 实时检测 (同步反馈到孪生)
         out["ir_edge_count"] = int(h.get("ir_edge_count", 0))  # 红外 T0 上升沿累计 (事件驱动, 供孪生锁存不漏)
+        out["verified"] = h.get("verified") or []  # verified 待核对作业 (方案 B): pushed/remaining/超时余量
         with urllib.request.urlopen(GATEWAY_URL + "/motion", timeout=0.4) as r:
             m = json.loads(r.read().decode())
         out["events"] = list(m.get("motion", []))[-8:]
@@ -856,7 +857,8 @@ async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
   __gla.setJob(items);}
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
   lastRun=null;setLastRun(null);
-  $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued}) — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
+  const vnote=r.verified?' · <b>物料校验模式</b>: 已登记需求, 等 HuskyLens 逐件核对后才推 (不匹配直通/超时报警)':'';
+  $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued})${vnote} — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
   refreshTwin(); // 下发立即刷一次, 光门运行示意尽快跟上真实时序
  }catch(e){lastRun=keep;setLastRun(keep);
   lastGlaJobList=[];lastGlaJobSig='[]';
@@ -969,7 +971,10 @@ async function refreshTwin(){
  if(jsig!==lastGlaJobSig){lastGlaJobSig=jsig;lastGlaJobList=merged;if(gla)gla.setJob(merged);}
  const line=last?`${String(last.ts).slice(11,19)} 分拣器 ${last.sorter} · ${last.state||'-'} (${last.via||'-'})${(last.of>0&&last.item>0)?` · 第${last.item}/${last.of}件`:''}`
   :'数字孪生在线 · 等待事件…';
- const sig=JSON.stringify([src,beltOn,d.conveyor||'',d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'',!!d.ir_present,d.ir_edge_count||0,(src==='device'&&vev)?vev.ts:'']);
+ // verified 待核对进度 (2026-11-19 方案 B): 语音指令=需求, 相机逐件核对后推
+ const vjobs=d.verified||[];
+ const vtxt=vjobs.length?(' · 🔍 待核对 '+vjobs.map(v=>`${v.pushed||0}/${(v.pushed||0)+(v.remaining||0)}${typeof v.deadline_in_s==='number'?' (超时余 '+Math.max(0,v.deadline_in_s)+'s)':''}`).join(', ')):'';
+ const sig=JSON.stringify([src,beltOn,d.conveyor||'',d.active_job||'',st.map(s=>s.state+'@'+s.ts_ms),d.fault||'',d.belt_mps||'',!!d.ir_present,d.ir_edge_count||0,(src==='device'&&vev)?vev.ts:'',vtxt]);
  if(sig!==twinSig){
   twinSig=sig;
   if(gla){gla.setSrc&&gla.setSrc(src);
@@ -977,7 +982,7 @@ async function refreshTwin(){
     active_job:d.active_job||null,
     vision_label:visionLabel,vision_until:visionUntil,
     vision_last:vev?{ts_ms:Date.parse(vev.ts)||0,frame_id:vev.frame_id||'',yard:vev.yard||0}:null,
-    status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line});}
+    status:(d.fault?'⚠ 故障锁存 · '+(d.fault.device||'')+' '+(d.fault.error||'')+' · ':'')+line+vtxt});}
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
  updateCtlButtons(src, st, d.fault); // 手动控制按钮: 真实源可用 + 推杆随 motion 显示「推杆中」 + 传送带随带态改文案 + 故障锁存时显示「清故障」
@@ -998,7 +1003,7 @@ const MATCOL={red_apple:'#ef4444',green_apple:'#4ade80',banana:'#fbbf24',pear:'#
  red_block:'#ef4444',green_block:'#4ade80',yellow_block:'#facc15',blue_block:'#60a5fa',
  angle_sensor:'#60a5fa',ultrasonic_sensor:'#fb923c',pir_sensor:'#ef4444',temp_humidity_sensor:'#4ade80'};
 // ---- 模型 vs 实际对照 (网关 /jobs 逐批次): laya 命令 vs edge101 执行 vs HL 实际看到 ----
-const CMP_JC={ok:{t:'✓ 一致',c:'#4ade80'},mismatch:{t:'⚠ 物料mismatch',c:'#fb923c'},fault:{t:'✗ 执行失败',c:'#f87171'}};
+const CMP_JC={ok:{t:'✓ 一致',c:'#4ade80'},mismatch:{t:'⚠ 物料mismatch',c:'#fb923c'},fault:{t:'✗ 执行失败',c:'#f87171'},cancelled:{t:'✎ 已撤销',c:'#8a91a0'}};
 function mc(m){return (typeof MATCN!=='undefined'&&MATCN[m])||m;}
 function renderJobs(jobs){
  const el=document.getElementById('cmp'),head=document.getElementById('cmphead');
@@ -1014,10 +1019,12 @@ function renderJobs(jobs){
  jobs.forEach(j=>{
   const cmd=(j.actions||[]).map(a=>`${a.yard}号 ${mc(a.material)} ×${a.qty}`).join(' · ')||'—';
   let exec;
-  if(j.outcome!=='done'){const f=j.fault||{};
+  if(j.outcome==='cancelled'){const tot=(j.pushed||0)+(j.remaining||0);
+   exec=`<span style="color:#8a91a0">✎ 已撤销 (已推 ${j.pushed||0}/${tot})</span>`;}
+  else if(j.outcome!=='done'){const f=j.fault||{};
    exec=`<span style="color:#f87171">✗ ${f.device||'故障'} ${f.error||''}</span>`;}
   else{const drs=(j.divert_results||[]).map(d=>`${d.yard}号${d.ok?' <span style="color:#4ade80">✓</span>':' <span style="color:#f87171">✗</span>'}${(d.qty>1)?'×'+d.qty:''}`).join(' · ');
-   exec=`<span style="color:#4ade80">done</span> · ${drs||'—'}${(j.e2e_ms!=null)?' · '+j.e2e_ms+'ms':''}`;}
+   exec=`<span style="color:#4ade80">done</span> · ${drs||'—'}${(j.pushed!=null)?` · 🔍核对 ${j.pushed} 件`:''}${(j.e2e_ms!=null)?' · '+j.e2e_ms+'ms':''}`;}
   const hl=(j.hl_materials&&j.hl_materials.length)?j.hl_materials.map((m,i)=>{
     const conf=(j.hl_conf&&j.hl_conf[i]!=null)?' '+Math.round(j.hl_conf[i]*100)+'%':'';
     const bad=j.hl_mismatch&&j.hl_mismatch.indexOf(m)>=0;

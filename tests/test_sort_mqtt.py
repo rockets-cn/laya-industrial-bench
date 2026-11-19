@@ -651,6 +651,160 @@ def main():
     finally:
         mc.loop_stop(); mc.disconnect()
 
+    # ---------- 12. verified 下发 (2026-11-19 方案 B: 需求+逐件核对, 不盲拨) ----------
+    print("\n== 12. verified 下发 (物料校验式) ==")
+    saved12 = {k: gw.cfg.get(k) for k in
+               ("dispatch_mode", "verified_timeout_s", "vision_dispatch")}
+
+    def vrf_progress():
+        """verified 作业进度快照 (pushed, remaining) 或 None."""
+        _, h = http_json(f"http://127.0.0.1:{GPORT}/health")
+        ver = h.get("verified") or []
+        if not ver:
+            return None
+        return ver[0]["pushed"], ver[0]["remaining"]
+
+    with gw.demands_lock:
+        gw.demands.clear()
+    try:
+        gw.cfg["dispatch_mode"] = "verified"
+        gw.cfg["verified_timeout_s"] = 4.0   # 测试用短超时
+        gw.cfg["vision_dispatch"] = True     # 双开关皆开时 verified 语义优先
+
+        # 12a. 语音指令 = 需求: 不盲拨 (202 后 1.5s 无任何 divert), 带子起
+        base12d = s2c.diverted_total
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test-verified",
+                              "actions": [{"yard": 2,
+                                           "material": "ultrasonic_sensor",
+                                           "qty": 2}]})
+        check("verified dispatch 202 + verified=true",
+              st == 202 and body.get("verified"),
+              f"st={st} body={body}")
+        vjob = body.get("job_id")
+        time.sleep(1.5)
+        check("不盲拨 (1.5s 无 divert)", s2c.diverted_total == base12d,
+              f"diverted={s2c.diverted_total} base={base12d}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/health")
+        ver = body.get("verified") or []
+        check("/health 报待核对 0/2",
+              len(ver) == 1 and ver[0]["job_id"] == vjob
+              and ver[0]["remaining"] == 2 and ver[0]["pushed"] == 0
+              and ver[0]["material"] == "ultrasonic_sensor",
+              f"verified={ver}")
+
+        # 12b. 不匹配物料 (旋钮) 直通: 无需求 -> 不推, 只记录
+        base12a = s1.diverted_total
+        pub("sort/inbound/vision", {"material": "angle_sensor",
+                                    "confidence": 0.9,
+                                    "frame_id": "t-vrf-miss", "source": "test"})
+        time.sleep(1.0)
+        check("不匹配物料直通 (无推杆动)", s1.diverted_total == base12a,
+              f"diverted={s1.diverted_total} base={base12a}")
+        vj = gw.verified_jobs.get(vjob)
+        check("直通件不消耗需求 (remaining 仍 2)",
+              vj is not None and vj["remaining"] == 2,
+              f"vj={vj}")
+
+        # 12c. 匹配物料逐件: 相机确认 2 个超声波 -> 逐件推 2 次 -> job done
+        base12e = s2c.diverted_total
+        pub("sort/inbound/vision", {"material": "ultrasonic_sensor",
+                                    "confidence": 0.9,
+                                    "frame_id": "t-vrf-1", "source": "test"})
+        ok = wait_for(lambda: s2c.diverted_total == base12e + 1, 8,
+                      "件1 逐件 divert")
+        check("件1 相机确认 -> 逐件 divert (2号仓)", ok,
+              f"diverted={s2c.diverted_total} base={base12e}")
+        check("进度 1/2 (wait)",
+              wait_for(lambda: vrf_progress() == (1, 1), 5, "进度 1/2"),
+              f"verified={vrf_progress()}")
+        pub("sort/inbound/vision", {"material": "ultrasonic_sensor",
+                                    "confidence": 0.9,
+                                    "frame_id": "t-vrf-2", "source": "test"})
+        ok = wait_for(lambda: s2c.diverted_total == base12e + 2, 8,
+                      "件2 逐件 divert")
+        check("件2 相机确认 -> 逐件 divert", ok,
+              f"diverted={s2c.diverted_total} base={base12e}")
+        ok = wait_for(lambda: vjob not in gw.verified_jobs and
+                      any(r.get("job_id") == vjob
+                          and r.get("outcome") == "done"
+                          for r in gw.job_history), 5, "verified job done")
+        check("需求耗尽 -> job done", ok,
+              f"vj={gw.verified_jobs.get(vjob)}")
+        rec = next((r for r in gw.job_history if r.get("job_id") == vjob), {})
+        check("台账 pushed=2 remaining=0",
+              rec.get("pushed") == 2 and rec.get("remaining") == 0,
+              f"rec={rec.get('pushed')}/{rec.get('remaining')}")
+
+        # 12d. 无需求物料: verified 下无映射表兜底 (超声波需求已耗尽,
+        #      温湿度无需求 -> 直通)
+        base12f = s1.diverted_total
+        pub("sort/inbound/vision", {"material": "temp_humidity_sensor",
+                                    "confidence": 0.9,
+                                    "frame_id": "t-vrf-nod", "source": "test"})
+        time.sleep(1.0)
+        check("无需求无映射兜底 (直通)", s1.diverted_total == base12f,
+              f"diverted={s1.diverted_total} base={base12f}")
+
+        # 12e. 超时: 4s 窗口内无匹配物料 -> 故障锁存 (显式失败不盲推)
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test-vrf-timeout",
+                              "actions": [{"yard": 3,
+                                           "material": "pir_sensor",
+                                           "qty": 1}]})
+        tj = body.get("job_id")
+        ok = wait_for(lambda: gw.fault is not None
+                      and gw.fault.get("job_id") == tj, 10, "verified 超时")
+        err = (gw.fault or {}).get("error") or ""
+        check("超时 (未见匹配物料) -> 故障锁存",
+              ok and "超时" in err,
+              f"fault={gw.fault}")
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                          {"source": "test",
+                           "actions": [{"yard": 1,
+                                        "material": "angle_sensor",
+                                        "qty": 1}]})
+        check("锁存期 dispatch 409", st == 409, f"st={st}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/fault/clear", {})
+        check("超时故障可人工清除", st == 200 and body.get("cleared"),
+              f"body={body}")
+
+        # 12f. 撤销: verified 待核对 job -> 需求作废, 后续匹配物料也直通
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test-vrf-cancel",
+                              "actions": [{"yard": 3,
+                                           "material": "pir_sensor",
+                                           "qty": 2}]})
+        cj = body.get("job_id")
+        time.sleep(0.3)
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch/cancel",
+                             {"job_id": cj})
+        check("verified job 撤销 200",
+              st == 200 and body.get("cancelled") == cj,
+              f"st={st} body={body}")
+        check("撤销后需求作废",
+              all(e["job_id"] != cj for dq in gw.demands.values()
+                  for e in dq),
+              f"demands={gw.demands}")
+        base12g = s3.diverted_total
+        pub("sort/inbound/vision", {"material": "pir_sensor",
+                                    "confidence": 0.9,
+                                    "frame_id": "t-vrf-post", "source": "test"})
+        time.sleep(1.0)
+        check("撤销后匹配物料也直通 (不推)", s3.diverted_total == base12g,
+              f"diverted={s3.diverted_total} base={base12g}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch/cancel",
+                             {"job_id": "no-such-job"})
+        check("撤销不存在 job -> 404", st == 404, f"st={st} body={body}")
+    finally:
+        for k, v in saved12.items():
+            if v is None:
+                gw.cfg.pop(k, None)
+            else:
+                gw.cfg[k] = v
+        with gw.demands_lock:
+            gw.demands.clear()
+
     pc.loop_stop(); pc.disconnect()
     gw.stop()
 

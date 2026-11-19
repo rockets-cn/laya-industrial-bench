@@ -91,6 +91,17 @@ DEFAULT_CFG = {
     "vision_dispatch": False,
     # photo 模式的额外超时预算: 相机->光门的物品行程 + 光门反应时间.
     "photo_margin_s": 3.0,
+    # 下发模式 (2026-11-19 方案 B: 物料校验式下发):
+    #   blind    = 语音指令直接下发盲拨 qty=N (旧行为, 设备按序推, 不验物料);
+    #   verified = 语音指令 = 需求, 不盲拨; HL2 逐件核对物料, 确认是指令物料才
+    #              发逐件 divert, 不匹配件直通带尾 (没指令不推, 与 2026-11-18
+    #              语义一致); verified 下无需求不回退映射表, 超时(未见到匹配
+    #              物料) -> 故障锁存. 逐件 divert 由 vision 事件驱动, 结构上
+    #              不可能双下发 (语音 job 不盲拨).
+    "dispatch_mode": "blind",
+    # verified 模式作业超时: 窗口内未见齐匹配物料 -> 故障锁存 (显式失败,
+    # 绝不盲推). 实机建议 >= 90s (密集上料/放料节奏).
+    "verified_timeout_s": 90.0,
     # 运动事件时间线 (sort/line1/motion): 保留最近 N 条, GET /motion 供
     # "让示意图动起来"的动画还原实际情况 (推杆何时推出/光门何时触发).
     "motion_keep": 100,
@@ -122,7 +133,7 @@ class GatewayStats:
         self.ledger_path = ledger_path
         self.started = time.time()
         self.batches = {"total": 0, "done": 0, "fault": 0, "reject": 0,
-                         "queue_dropped": 0}
+                         "cancelled": 0, "queue_dropped": 0}
         self.items = {"dispatched": 0, "by_sorter": {}, "by_material": {}}
         self.cmd = {"sent": 0, "ack_ok": 0, "ack_timeout": 0, "retries": 0}
         self.vision = {"events": 0, "dispatched": 0, "recorded": 0,
@@ -243,6 +254,12 @@ class SortGateway:
         self.active_lock = threading.Lock()
         self.demands = {}                       # material -> deque({yard, remaining, job_id, t})
         self.demands_lock = threading.Lock()
+        # verified 作业 (dispatch_mode=verified, 2026-11-19 方案 B):
+        # 语音指令 = 需求, 不盲拨; 相机逐件核对并推 (vision 逐件 divert 带
+        # parent_job_id 指回这里), 进度由 _verified_progress 记账, 超时由
+        # verified_loop 处理. {job_id: {job, remaining, pushed, deadline}}
+        self.verified_jobs = {}
+        self.verified_lock = threading.Lock()
         self.dev_state = {}                        # {"conveyor": ..., "sorter1": ...}
         self.conveyor_note = ""                    # 最近一次 conveyor 遥测 note (带健康监测原因)
         self.ir_present = False                    # 红外 T0 实时"物品在 IR"态 (固件每 500ms 上报 + 沿即时)
@@ -399,7 +416,8 @@ class SortGateway:
         # 无需求回退映射表标注. 2026-11-18: 标注不再触发消耗 — 需求只在真正
         # 下发时消耗一次 (见下方 dispatch 分支), 且 vision_dispatch=False 时
         # 完全不碰需求台账 (视觉只记录, 修"没指令也自动推"后不再误耗需求).
-        label_yard = self._demand_route(material, consume=False)
+        route = self._demand_route(material, consume=False)
+        label_yard = route[0] if route else None
         if label_yard is None:
             label_yard = self._map_to_sorter(material)
         if label_yard is None:
@@ -437,21 +455,34 @@ class SortGateway:
         # ~3s/条下发 vs ~9s/件 IR 消费, 9 分钟内两次队列满). 现改为:
         # 同一物料间隔 <= vision_dispatch_absence_s 视为"同一件持续在视野内"
         # 不下发; 间隔超过 (件出视野, 新件入) 才下发一次. 一件 = 一条 divert.
-        if self.cfg.get("vision_dispatch", False):
+        # 2026-11-19 方案 B: verified 模式 (dispatch_mode=verified) 同样逐件
+        # vision 下发 — 语音指令是需求, 相机核对物料后推; verified 下无需求
+        # 不回退映射表 (没指令不推, 件直通带尾, 2026-11-18 语义).
+        if self.cfg.get("vision_dispatch", False) \
+                or self.cfg.get("dispatch_mode") == "verified":
             now = time.time()
             absence_s = float(self.cfg.get("vision_dispatch_absence_s", 0.8))
             continuously_in_view = (now - self._vd_last.get(material, 0.0)) <= absence_s
             self._vd_last[material] = now
             if not continuously_in_view:
                 # 新件入视野: 仅在此处消耗 1 件需求并下发 (一件 = 一条 divert).
-                # 需求优先路由, 无需求回退映射表 (HL 自动分拣模式).
-                yard = self._demand_route(material, consume=True)
-                if yard is None:
-                    yard = self._map_to_sorter(material)
+                # 需求优先路由; 无需求: 旧 HL 自动分拣模式回退映射表,
+                # verified 模式 = 无下发, 该件直通带尾.
+                route = self._demand_route(material, consume=True)
+                if route is None:
+                    if self.cfg.get("dispatch_mode") == "verified":
+                        self.stats.vision_event("recorded")
+                        return
+                    yard, parent_id = self._map_to_sorter(material), None
+                else:
+                    yard, parent_id = route
                 job = self.enqueue_job(
                     [{"yard": yard, "material": material, "qty": 1}],
                     source="vision", path="VISION", extra=vision)
                 if job:
+                    if parent_id:
+                        # verified 进度归属: 该逐件 divert 完成后回写父语音 job
+                        job["parent_job_id"] = parent_id
                     self.stats.vision_event("dispatched")
                 else:
                     self.stats.vision_event("recorded")
@@ -493,12 +524,15 @@ class SortGateway:
                     del self.demands[mat]
 
     def _demand_route(self, material, consume=True):
-        """按指令需求路由: 返回该物料下一件应去的仓 (FIFO).
+        """按指令需求路由: 返回 (yard, job_id) — 该物料下一件应去的仓 (FIFO) +
+        提出该需求的指令 job_id (verified 进度记账用, 见 2026-11-19 方案 B).
         无需求/全部过期 → None (调用方回退映射表).
         consume=True: 消耗 1 件 (真正下发时用, 一件=一次消耗);
         consume=False: 只 peek 不消耗 (/vision 去向标注用, 不触发下发).
         2026-11-18: 旧版每个视觉事件都消耗 -> 一件在视野停留 5.7s(上百帧)
-        会把整条需求耗光, 后续件丢失路由; 现改为仅在实际下发时消耗."""
+        会把整条需求耗光, 后续件丢失路由; 现改为仅在实际下发时消耗.
+        2026-11-19 (方案 B): 返回值改为 (yard, job_id) 元组, 逐件 vision job
+        可归属父语音 job (verified 进度); 调用方需解包."""
         with self.demands_lock:
             dq = self.demands.get(material)
             if not dq:
@@ -510,7 +544,7 @@ class SortGateway:
             if dq and dq[0]["remaining"] > 0:
                 if consume:
                     dq[0]["remaining"] -= 1
-                return dq[0]["yard"]
+                return dq[0]["yard"], dq[0]["job_id"]
             return None
 
     # ---------- 作业队列 ----------
@@ -571,6 +605,8 @@ class SortGateway:
                 self.stats.job_finished(job)
                 self._batch_event(job, "fault")
                 self._record_job(job)
+                if job.get("parent_job_id"):
+                    self._verified_progress(job["parent_job_id"], "fault")
             finally:
                 with self.active_lock:
                     self.active_job = None
@@ -596,6 +632,30 @@ class SortGateway:
             if not ok:
                 return self._fail(job, "conveyor",
                                    f"传送带未 running (state={cstate}): {note}")
+        # 1.5 verified 模式 (2026-11-19 方案 B): 语音指令 = 需求, 不盲拨.
+        #     需求已在 job 开头登记; 这里只做起带 + 转"待核对". 物理逐件
+        #     divert 由 vision 事件逐件下发 (_on_vision, 逐件 job 带
+        #     parent_job_id), 进度由 _verified_progress 记账, 超时由
+        #     verified_loop 处理. 带子不自动停 (料要持续上带直到需求耗尽);
+        #     stop_conveyor_after_batch 对 verified 不适用.
+        if self.cfg.get("dispatch_mode") == "verified" \
+                and job.get("source") != "vision":
+            remaining = sum(int(a["qty"]) for a in job["actions"])
+            vtimeout = float(self.cfg.get("verified_timeout_s", 90.0))
+            job["outcome"] = "pending"
+            job["verified"] = True
+            job["divert_results"] = []
+            with self.verified_lock:
+                self.verified_jobs[job["job_id"]] = {
+                    "job": job,
+                    "remaining": remaining,
+                    "pushed": 0,
+                    "deadline": time.time() + vtimeout,
+                }
+            self._batch_event(job, "pending")
+            print(f"[gateway] verified job {job['job_id']} 待核对: "
+                  f"{job['actions']} (超时 {vtimeout:.0f}s)", flush=True)
+            return
         # 2. 分拣下发 (保序). 动作层逐条 (action = 1 件), 但指令层同 料场+物料
         #    合并回一条 divert 命令 (qty=N): 设备按一条命令逐件执行 (motion 事件
         #    带件号 item k/N), 同 job_id 连发多条命令会被设备 busy-ack 折叠,
@@ -631,6 +691,9 @@ class SortGateway:
         self.stats.job_finished(job)
         self._batch_event(job, "done")
         self._record_job(job)
+        if job.get("parent_job_id"):
+            # verified 进度: 逐件 vision divert 完成 -> 父语音 job pushed+1
+            self._verified_progress(job["parent_job_id"], "done")
 
     def _fail(self, job, device, error):
         job["outcome"] = "fault"
@@ -643,6 +706,10 @@ class SortGateway:
         self._record_job(job)
         # 故障安全: 尽力停带 (无应答也继续)
         self._conveyor_cmd(job, "pause", required=False)
+        if job.get("parent_job_id"):
+            # verified 进度: 逐件 divert 失败 -> 父语音 job 一并 fault
+            # (机器故障已由逐件 job 锁存, 父 job 只记账不重复锁存)
+            self._verified_progress(job["parent_job_id"], "fault")
 
     def _record_job(self, job):
         """模型 vs 实际对照: 批次完成后记录 (laya 命令 / edge101 执行成败 /
@@ -655,6 +722,8 @@ class SortGateway:
             "t_done": time.time(),
             "source": job.get("source"),
             "actions": job.get("actions"),
+            "pushed": job.get("pushed"),        # verified: 已核对推送件数
+            "remaining": job.get("remaining"),  # verified: 未核对件数
             "outcome": job.get("outcome"),
             "fault": job.get("fault"),
             "e2e_ms": round(job.get("e2e_s", 0.0) * 1000, 1),
@@ -825,6 +894,136 @@ class SortGateway:
         except Exception as e:
             print(f"[gateway] 发布失败 {topic}: {e}", flush=True)
 
+    # ---------- verified (2026-11-19 方案 B: 物料校验式下发) ----------
+    def _verified_progress(self, job_id, outcome):
+        """verified 作业进度记账: 逐件 vision divert done -> pushed+1 /
+        remaining-1, 耗尽即父作业完成; 逐件失败 -> 父作业 fault (机器故障
+        已由逐件 job 锁存, 这里只记账 + 作废剩余需求, 不重复锁存)."""
+        with self.verified_lock:
+            vj = self.verified_jobs.get(job_id)
+        if not vj:
+            return
+        job = vj["job"]
+        if outcome == "done":
+            with self.verified_lock:
+                vj["pushed"] += 1
+                vj["remaining"] -= 1
+                finished = vj["remaining"] <= 0
+            if not finished:
+                self._publish("sort/event/verified",
+                               {"ts": _now(), "job_id": job_id,
+                                "pushed": vj["pushed"],
+                                "remaining": vj["remaining"]})
+                return
+            job["outcome"] = "done"
+            job["e2e_s"] = time.time() - job["t0"]
+            job["pushed"] = vj["pushed"]
+            job["remaining"] = 0
+            with self.verified_lock:
+                self.verified_jobs.pop(job_id, None)
+            self._batch_event(job, "done")
+            self.stats.job_finished(job)
+            self._record_job(job)
+            self._publish("sort/event/verified",
+                           {"ts": _now(), "job_id": job_id, "phase": "done",
+                            "pushed": vj["pushed"]}, retain=True)
+        else:
+            job["outcome"] = "fault"
+            if not job.get("fault"):
+                job["fault"] = {"device": "sorter",
+                                 "error": f"verified 逐件下发失败 ({outcome})",
+                                 "ts": _now()}
+            job["e2e_s"] = time.time() - job["t0"]
+            job["pushed"] = vj["pushed"]
+            job["remaining"] = vj["remaining"]
+            with self.verified_lock:
+                self.verified_jobs.pop(job_id, None)
+            self._demand_drop_job(job_id)
+            self._batch_event(job, "fault")
+            self.stats.job_finished(job)
+            self._record_job(job)
+
+    def verified_loop(self):
+        """verified 作业超时监视: 窗口内未见齐匹配物料 -> 故障锁存 + 作废
+        需求 (显式失败, 绝不盲推). 完成路径由 _verified_progress 驱动."""
+        while not self._stop.is_set():
+            time.sleep(0.5)
+            now = time.time()
+            with self.verified_lock:
+                due = [v for v in self.verified_jobs.values()
+                       if now > v["deadline"] and v["remaining"] > 0]
+            for v in due:
+                job = v["job"]
+                mats = sorted({a.get("material") for a in job.get("actions")
+                               if a.get("material")})
+                job["outcome"] = "fault"
+                job["fault"] = {"device": "vision",
+                                 "error": (f"verified 超时: 仍有 "
+                                           f"{v['remaining']} 件 {mats} 未被"
+                                           f"相机确认 (没见到匹配物料, 未盲推)"),
+                                 "ts": _now()}
+                job["e2e_s"] = time.time() - job["t0"]
+                job["pushed"] = v["pushed"]
+                job["remaining"] = v["remaining"]
+                with self.verified_lock:
+                    self.verified_jobs.pop(job["job_id"], None)
+                self._demand_drop_job(job["job_id"])
+                self._latch_fault(job)
+                self.stats.job_finished(job)
+                self._batch_event(job, "fault")
+                self._record_job(job)
+                # 故障安全: 尽力停带 (与 _fail 一致, 无应答不阻塞)
+                self._conveyor_cmd(job, "pause", required=False)
+                self._publish("sort/event/verified",
+                               {"ts": _now(), "job_id": job["job_id"],
+                                "phase": "timeout",
+                                "remaining": v["remaining"]}, retain=True)
+
+    def cancel_job(self, job_id):
+        """撤销作业: verified 待核对 job (作废需求) / 排队中的盲拨 job.
+        返回 True=已撤销 / False=执行中无法撤销 / None=作业不存在或已结束."""
+        with self.verified_lock:
+            vj = self.verified_jobs.get(job_id)
+        if vj:
+            job = vj["job"]
+            job["outcome"] = "cancelled"
+            job["e2e_s"] = time.time() - job["t0"]
+            job["pushed"] = vj["pushed"]
+            job["remaining"] = vj["remaining"]
+            with self.verified_lock:
+                self.verified_jobs.pop(job_id, None)
+            self._demand_drop_job(job_id)
+            self._batch_event(job, "cancelled")
+            self.stats.job_finished(job)
+            self._record_job(job)
+            self._publish("sort/event/verified",
+                           {"ts": _now(), "job_id": job_id,
+                            "phase": "cancelled"}, retain=True)
+            print(f"[gateway] verified job {job_id} 已撤销 "
+                  f"(pushed={vj['pushed']} remaining={vj['remaining']})",
+                  flush=True)
+            return True
+        removed = None
+        with self.queue_lock:
+            for j in list(self.job_queue):
+                if j["job_id"] == job_id:
+                    self.job_queue.remove(j)
+                    removed = j
+                    break
+        if removed is not None:
+            removed["outcome"] = "cancelled"
+            removed["e2e_s"] = time.time() - removed["t0"]
+            self._demand_drop_job(job_id)
+            self._batch_event(removed, "cancelled")
+            self.stats.job_finished(removed)
+            self._record_job(removed)
+            return True
+        with self.active_lock:
+            active = self.active_job
+        if active is not None and active["job_id"] == job_id:
+            return False
+        return None
+
     # ---------- 统计周期 ----------
     def stats_loop(self):
         while not self._stop.is_set():
@@ -864,7 +1063,21 @@ class SortGateway:
                                       # 红外 T0 实时"物品在 IR"态 (0/1): 数字孪生同步反馈
                                       "ir_present": gw.ir_present,
                                       # 红外 T0 上升沿累计 (物体过 IR 次数): 事件驱动, 供孪生锁存不漏
-                                      "ir_edge_count": gw.ir_edge_count})
+                                      "ir_edge_count": gw.ir_edge_count,
+                                      # verified 待核对作业 (2026-11-19 方案 B):
+                                      # 逐件核对进度 pushed/remaining + 超时余量
+                                      "verified": [
+                                          {"job_id": k,
+                                           "material": (v["job"].get("actions")
+                                                        or [{}])[0].get(
+                                                 "material"),
+                                           "pushed": v["pushed"],
+                                           "remaining": v["remaining"],
+                                           "deadline_in_s":
+                                               round(v["deadline"]
+                                                     - time.time(), 1)}
+                                          for k, v in
+                                          sorted(gw.verified_jobs.items())]})
                 elif self.path == "/stats":
                     s = gw.stats.summary()
                     s["fault"] = gw.fault
@@ -904,7 +1117,9 @@ class SortGateway:
                               and (v.get("t") or 0.0) <= t1]
                         hl_mats = sorted({v.get("material") for v in hl})
                         mismatch = sorted(set(hl_mats) - set(cmd_mats))
-                        if r.get("outcome") != "done":
+                        if r.get("outcome") == "cancelled":
+                            judgment = "cancelled"
+                        elif r.get("outcome") != "done":
                             judgment = "fault"
                         elif mismatch:
                             judgment = "mismatch"
@@ -917,6 +1132,8 @@ class SortGateway:
                             "outcome": r.get("outcome"),
                             "fault": r.get("fault"),
                             "actions": actions,
+                            "pushed": r.get("pushed"),
+                            "remaining": r.get("remaining"),
                             "divert_results": dres,
                             "cmd_materials": cmd_mats,
                             "exec_ok": exec_ok,
@@ -949,11 +1166,27 @@ class SortGateway:
                     if not job:
                         self._send(422, {"error": "invalid or rejected actions"})
                         return
-                    self._send(202, {"job_id": job["job_id"],
-                                      "queued": len(gw.job_queue)})
+                    resp = {"job_id": job["job_id"],
+                            "queued": len(gw.job_queue)}
+                    if gw.cfg.get("dispatch_mode") == "verified":
+                        resp["verified"] = True  # 已登记需求, 等相机逐件核对
+                    self._send(202, resp)
                 elif self.path == "/fault/clear":
                     had = gw.clear_fault("http")
                     self._send(200, {"cleared": had is not None, "had": had})
+                elif self.path == "/dispatch/cancel":
+                    # 撤销作业 (2026-11-19 方案 B): verified 待核对 job 作废
+                    # 需求; 排队中的盲拨 job 移除. 执行中 (已发固件) 409.
+                    job_id = body.get("job_id")
+                    r = gw.cancel_job(job_id) if job_id else None
+                    if r is True:
+                        self._send(200, {"cancelled": job_id})
+                    elif r is False:
+                        self._send(409,
+                                   {"error": "作业执行中 (固件在推), 不能撤销"})
+                    else:
+                        self._send(404,
+                                   {"error": "作业不存在或已结束"})
                 elif self.path == "/belt":
                     # 原子传送带控制 (网页按钮): start/stop/resume/pause -> 固件 conveyor/cmd
                     action = body.get("action")
@@ -1020,6 +1253,7 @@ class SortGateway:
             raise RuntimeError("MQTT 连接超时")
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.stats_loop, daemon=True).start()
+        threading.Thread(target=self.verified_loop, daemon=True).start()
         threading.Thread(target=self.http_loop, daemon=True).start()
         print(f"[gateway] 就绪: broker {self.broker_host}:{self.broker_port}  "
               f"HTTP 127.0.0.1:{self.http_port}  "
