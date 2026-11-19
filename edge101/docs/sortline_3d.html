@@ -59,6 +59,9 @@ const lab = new Lab({
   cut: { a: [0, 0, 1], b: [0, 1, 0] },
   pills: ['three.js 0.170', 'PBR', 'machine-skill', 'digital twin'],
 })
+// 隐藏右侧文字面板 (右中: No./标题/Throughput/滑块; 右下: How it is computed 求解说明) — 本页只留 3D + 数据源/模式
+lab.$('.lab-side').style.display = 'none'
+lab.$('.lab-how').style.display = 'none'
 
 // ---------- 材质 ----------
 const M = {
@@ -913,11 +916,19 @@ lab.film('overview', {
 
 // ---------- 数据源切换 (本页独立) + 对外 API ----------
 const pillWrap = document.createElement('div')
-pillWrap.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:50;display:flex;gap:6px;align-items:center;background:rgba(13,15,20,.82);border:1px solid #262b36;border-radius:10px;padding:6px 9px;font:12px/1 "Noto Sans SC",sans-serif;color:#8a91a0;backdrop-filter:blur(6px)'
+pillWrap.style.cssText = 'position:fixed;right:16px;top:16px;z-index:50;display:flex;gap:6px;align-items:center;background:rgba(13,15,20,.82);border:1px solid #262b36;border-radius:10px;padding:6px 9px;font:12px/1 "Noto Sans SC",sans-serif;color:#8a91a0;backdrop-filter:blur(6px)'
 pillWrap.innerHTML = '<span>数据源</span>' + ['sim', 'device'].map(s => `<button data-s="${s}" style="cursor:pointer;border:1px solid #2c3342;border-radius:6px;padding:4px 9px;font:12px 'Noto Sans SC',sans-serif;${s === 'sim' ? 'background:#1d4ed8;color:#fff' : 'background:#1e2430;color:#aab2c0'}">${s === 'sim' ? '模拟' : '真实'}</button>`).join('')
 document.body.appendChild(pillWrap)
-function setSrc(v) {
+// 同源父页 (loop_ui :8002) 双向同步数据源: 本页点 pill → 反向通知父页 #gla-src; 父页 change → 正向下发
+const bc3d = ('BroadcastChannel' in window) ? new BroadcastChannel('laya3d') : null
+function setSrc(v, fromParent) {
   sim.src = v
+  // 切到真实场景: 清空传送带 — 模拟残留件不该出现在真实视图里, 同时复位模拟态
+  if (v === 'device') {
+    for (const it of sim.items.slice()) removeItem(it)
+    sim.fwq = 0; sim.fault = false; sim.phantom = false
+    sim.spawnN = 0; sim.doneTimes.length = 0
+  }
   sim.live.online = false
   sim.live.synced = false // 重新进入实时时静默对齐, 不回放历史事件
   pillWrap.querySelectorAll('button').forEach(b => {
@@ -925,17 +936,23 @@ function setSrc(v) {
     b.style.background = on ? '#1d4ed8' : '#1e2430'
     b.style.color = on ? '#fff' : '#aab2c0'
   })
+  // 反向控制父页: 仅用户在本页点 pill (fromParent=false) 时回发 {type:'src'}; 来自父页/首载 (true) 不回发 → 防环
+  if (!fromParent && bc3d) bc3d.postMessage({ type: 'src', src: v })
 }
-pillWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setSrc(b.dataset.s)))
-setSrc(sim.src)
-
-// 父页 (loop_ui :8002) 转发: 新批次指令 / 数据源切换 (BroadcastChannel 'laya3d')
-if ('BroadcastChannel' in window) {
-  const bc3d = new BroadcastChannel('laya3d')
+pillWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setSrc(b.dataset.s, false)))
+setSrc(sim.src, true) // 首载 (URL ?src= 或默认): 不回发父页
+// 同源 iframe: 首载同步父页数据源 (父页 change 才发 BC; iframe 默认 ?src=sim 会漏掉父页已持久化的 device) → 不回发
+try {
+  const pwin = window.parent && window.parent !== window ? window.parent : null
+  const psel = pwin && pwin.document ? pwin.document.getElementById('gla-src') : null
+  if (psel && (psel.value === 'device' || psel.value === 'sim')) setSrc(psel.value, true)
+} catch (e) { /* 跨源 / 独立 tab (无 ?src=): 保持 URL 参数 */ }
+// 父页 (loop_ui :8002) 转发: 新批次指令 / 数据源切换 (BroadcastChannel 'laya3d') → 正向, 不回发
+if (bc3d) {
   bc3d.onmessage = (e) => {
     const m = e.data || {}
     if (m.type === 'job' && sim.src === 'sim' && m.items && m.items.length) window.__s3d.setJob(m.items)
-    else if (m.type === 'src') setSrc(m.src === 'device' ? 'device' : 'sim')
+    else if (m.type === 'src') setSrc(m.src === 'device' ? 'device' : 'sim', true)
   }
 }
 
