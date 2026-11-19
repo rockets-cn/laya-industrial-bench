@@ -38,7 +38,8 @@
 #define HL2_ON 0
 static const uint8_t  HL2_I2C_SDA_PIN = 18;   // 板载 I2C (Arduino Wire 默认)
 static const uint8_t  HL2_I2C_SCL_PIN = 23;
-static const uint32_t HL2_RETRIGGER_MS = 500;  // 同物料进画面去重窗口
+static const uint32_t HL2_RETRIGGER_MS = 500;   // 同物料进画面去重窗口 (旧 UART 路径)
+static const uint32_t HL2_ABSENCE_MS   = 1500;  // I2C 路径重报窗口: 同物料缺席<1.5s 复现=同一件 (吸收 HL2 闪烁/丢跟踪), >=1.5s=新件 (详见 HuskyLens.h RetrigGate)
 #if HL2_ON
 // (旧 UART 接线占位, 本轮未用: 5/12 已改作 DIR/舵机 1)
 static const uint8_t  HL2_RX_PIN   = 12;

@@ -175,6 +175,76 @@ static void testHuskyLens() {
     check("垃圾字节后恢复解析", evCount == 4 && lastMat == "banana");
 }
 
+static void testRetrigGate() {
+    printf("\n== RetrigGate 在视野去重 (I2C 轮询路径, 缺席窗口 1500ms) ==\n");
+    const uint32_t AB = 1500;
+    // 1) 单件连续在视野: 300ms 轮询 × 20 次 (~6s 视野停留) -> 只报 1 次
+    {
+        RetrigGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 6000; t += 300)
+            if (g.tick("angle_sensor", t, AB)) n++;
+        check("单件 6s 停留只报 1 次", n == 1);
+    }
+    // 2) 出视野后新件入: 缺席 >= 1.5s -> 再报
+    {
+        RetrigGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 3000; t += 300)
+            if (g.tick("pir_sensor", t, AB)) n++;
+        check("第 1 件: 3s 停留报 1 次", n == 1);
+        // 空 1.8s (出视野, >= 1.5s), 新件入
+        for (uint32_t t = 4500; t < 7500; t += 300)
+            if (g.tick("pir_sensor", t, AB)) n++;
+        check("第 2 件: 缺席 1.8s 后新件再报 1 次", n == 2);
+    }
+    // 3) 短失跟踪 (缺席 < 1.5s) -> 并回同一件, 不重报
+    //    (HL2 对薄/远工件丢跟踪间隙常 ~0.5-1s; 2026-11-19 原 500ms 阈值拦不住)
+    {
+        RetrigGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 1500; t += 300)
+            if (g.tick("pcb", t, AB)) n++;
+        // 空 0.9s (<1.5s), 复现 (最后观测 1200, 下次 2100, 间隔 900ms)
+        for (uint32_t t = 2100; t < 3000; t += 300)
+            if (g.tick("pcb", t, AB)) n++;
+        check("丢跟踪 0.9s 复现并回同一件 (1 条)", n == 1);
+    }
+    // 3b) 边界: 缺席 1.4s (略小于窗口) 并回; 1.6s (略大于) 再报
+    {
+        RetrigGate g;
+        int n = 0;
+        for (uint32_t t = 0; t < 1200; t += 300) if (g.tick("u", t, AB)) n++; // 最后观测 900
+        for (uint32_t t = 2300; t < 2900; t += 300) if (g.tick("u", t, AB)) n++; // 2300-900=缺席 1.4s
+        check("缺席 1.4s 复现: 仍同一件", n == 1);
+        for (uint32_t t = 4200; t < 4800; t += 300) if (g.tick("u", t, AB)) n++; // 4200-2600=缺席 1.6s
+        check("缺席 1.6s 复现: 视为新件", n == 2);
+    }
+    // 4) 多物料各自独立计时
+    {
+        RetrigGate g;
+        int na = 0, nb = 0;
+        for (uint32_t t = 0; t < 900; t += 300) {
+            if (g.tick("a", t, AB)) na++;
+            if (g.tick("b", t, AB)) nb++;
+        }
+        check("多物料独立: a/b 各报 1 次", na == 1 && nb == 1);
+    }
+    // 5) 空/空串不报也不建槽
+    {
+        RetrigGate g;
+        check("空串不报", !g.tick("", 0, AB));
+        check("nullptr 不报", !g.tick(nullptr, 0, AB));
+    }
+    // 6) reset 清空
+    {
+        RetrigGate g;
+        g.tick("a", 1000, AB);
+        g.reset();
+        check("reset 后 a 可再报", g.tick("a", 1100, AB));
+    }
+}
+
 static void testProto() {
     printf("\n== Proto JSON/topic ==\n");
     std::string ack = ackJson("j123", "divert", "ok", "");
@@ -697,6 +767,7 @@ int main() {
     testConveyor();
     testSorter();
     testHuskyLens();
+    testRetrigGate();
     testProto();
     testMcpEn();
     testGate();

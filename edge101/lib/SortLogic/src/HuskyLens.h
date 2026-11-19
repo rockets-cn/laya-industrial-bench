@@ -118,4 +118,61 @@ class HuskyLens {
     }
 };
 
+// 纯逻辑: 在视野去重门 (按任意字符串键, 如物料名).
+// I2C 轮询路径 (main.cpp hlTick) 用: HL2 对同一件每轮询(300ms)都报一次,
+// 单件视野停留 ~5.7s -> 一件被"识别" ~19 次 (2026-11-19 用户反馈"看到一个
+// 产生好多个"). 本门: 某物料首次见到 (或间隔 >= retrigger_ms 后再次出现,
+// 即上一件已出视野/新件入) 返回 true (应上报一次); 窗口内的连续观测返回
+// false (同一件持续在视野, 不再重复上报).
+// 键用物料名而非对象 ID: 定制模型 129 的 ID 全 0, ID 无法区分件.
+// 取舍: 两件同物料同时在视野内会被合并成一件 (密集同物料欠发, 见
+// OPEN_QUESTIONS; 彻底方案 = 位置式下发).
+// 注意: 只在实际上报的对象上调用 (conf 被丢弃的不更新计时).
+class RetrigGate {
+ public:
+    static constexpr int kMax = 8;
+
+    // 在视野去重 (I2C 轮询路径):
+    //   - 每物料连续在视野 (轮询期每 tick 更新 last_) → 只在首见上报一次,
+    //     之后间隔永远停在轮询周期 (300ms < absence_ms), 不重报;
+    //   - 出视野后复现: 间隔(=缺席时长) >= absence_ms → 视为新件上报;
+    //     < absence_ms (HL2 短暂丢跟踪/闪烁) → 并回同一件, 不重报。
+    // 2026-11-19: 原阈值 500ms 太小 — HL2 对薄/远工件丢跟踪间隙常 >=500ms,
+    // 同一件在 ~5.7s 视野停留内被重报多次 (用户报"还是出现重复多余的传感器")。
+    // 抬到 1500ms: 吸收闪烁间隙; 真实新件间隔 >=3.5s (带速 52.5mm/s + 人工放料)
+    // 仍可区分。密集同件 <1.5s 会合并 — 已知取舍 (OPEN_QUESTIONS §F, 用户选 A)。
+    bool tick(const char* mat, uint32_t now_ms, uint32_t absence_ms) {
+        if (!mat || !*mat) return false;
+        int i = findSlot(mat);
+        bool fresh;
+        if (i < 0) {
+            if (used_ >= kMax) return true;      // 表满: 放行 (退回旧行为, 不丢事件)
+            i = used_++;
+            mats_[i] = mat;
+            fresh = true;
+        } else {
+            // last_ 每次轮询都更新 → 连续在视野只报一次; 复现时 now-last_ = 缺席时长
+            fresh = (now_ms - last_[i] >= absence_ms);
+        }
+        last_[i] = now_ms;
+        return fresh;
+    }
+
+    void reset() {
+        used_ = 0;
+        for (int i = 0; i < kMax; i++) { mats_[i].clear(); last_[i] = 0; }
+    }
+
+ private:
+    int findSlot(const char* mat) const {
+        for (int i = 0; i < used_; i++)
+            if (mats_[i] == mat) return i;
+        return -1;
+    }
+
+    int used_ = 0;
+    std::string mats_[kMax];
+    uint32_t last_[kMax] = {0};
+};
+
 }  // namespace sort

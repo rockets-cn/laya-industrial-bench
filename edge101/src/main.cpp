@@ -421,6 +421,13 @@ static const char* hlMaterialName(int algo, int id) {
 static HuskylensV2 hl;
 static uint32_t lastHlPollMs = 0;
 static uint32_t g_hl_ok = 0, g_hl_fail = 0;
+// 在视野去重门: HL2 每轮询(300ms)对同一件都报一次, 单件视野停留 ~5.7s
+// -> 不门控时一件产生 ~19 条识别事件 ("看到一个产生好多个", 2026-11-19).
+// 门控后: 同一物料持续在视野只在首见上报一次; 出视野 >= HL2_ABSENCE_MS (1.5s)
+// 后再出现才视为新件再报 — 1.5s 内的丢跟踪/闪烁复现并回同一件
+// (原 500ms 阈值下 HL2 丢跟踪间隙 >=500ms 即重报 -> "还是出现重复多余的传感器").
+// 网关侧 vision_dispatch_absence_s=0.8s 存在性去重与此配套 (下发侧双保险).
+static sort::RetrigGate hlGate;
 static void hlTick() {
     uint32_t now = millis();
     if (now - lastHlPollMs < HL_POLL_MS) return;
@@ -464,6 +471,9 @@ static void hlTick() {
                           mat, conf, g_confmin);
             continue;
         }
+        // 在视野去重: 同一物料持续在视野 -> 只报首次 (一件 = 一条识别)
+        if (!hlGate.tick(mat, now, HL2_ABSENCE_MS))
+            continue;
         char fid[32];
         snprintf(fid, sizeof(fid), "hl-%lu-%d", now, id);
         std::string p = sort::visionJson(mat, conf, fid, r->xCenter, r->yCenter,
