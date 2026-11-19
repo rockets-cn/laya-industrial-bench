@@ -135,7 +135,7 @@ lab.add(railR, { name: '侧轨 (推杆侧)', explode: [0, 0.05, 0.24], count: 1 
 // 皮带
 const beltG = new THREE.Group()
 const band = new THREE.Mesh(GEO.rbox(0.634, 0.036, 0.066, 0.016), M.belt) // 实际带面宽 62 mm
-band.position.set(0, 0.329, 0)
+band.position.set(0, 0.3260, 0) // 顶面 0.3440, 压在滚花带面 (0.3442) 之下, 避免穿出
 const beltTop = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.062), beltTopM)
 beltTop.rotation.x = -Math.PI / 2
 beltTop.position.set(0, 0.3442, 0)
@@ -154,7 +154,7 @@ function addPulley(dst, x) {
   }
   const hubG = GEO.disc(0.0065, 0.018, 0.001, 16); hubG.rotateX(Math.PI / 2)
   dst.add(new THREE.Mesh(hubG, M.steel))
-  dst.position.set(x, 0.329, 0)
+  dst.position.set(x, 0.3260, 0) // 随带体中心 (带体中心 0.3260)
 }
 addPulley(pulL, -0.317); addPulley(pulR, 0.317)
 lab.add(pulL, { name: '主动轮 (驱动端)', explode: [-0.20, 0.18, 0], count: 6 })
@@ -521,7 +521,7 @@ function spawnItem(kind, bin, x, z) {
   if (sim.items.length > 26) return
   const mesh = makeItem(kind)
   mesh.scale.setScalar(0.01)
-  mesh.position.set(x, 0.344, z)
+  mesh.position.set(x, 0.3453, z) // 板底 0.3444, 坐在滚花带面 (0.3442) 上, 不嵌进带体
   lab.root.add(mesh)
   sim.items.push({ x, z, kind, bin, mesh, ph: 'belt', t0: sim.t, s: 0, seen: false, arm: mesh.userData.arm || null })
 }
@@ -591,7 +591,10 @@ lab.onTick((dt) => {
         if (ahead && ahead.ph !== 'chute' && ahead.ph !== 'land') nx = Math.min(nx, ahead.x - 0.055)
         if (it.bin >= 1 && it.bin <= 3) {
           const lane = it.bin - 1, p = pushers[lane]
-          if (nx >= X_B[lane] - 0.012 && p.mode === 'idle') {
+          // sim 模式: 件到推杆位自动推 (演示动画). device 模式: 推杆只认真实
+          // motion 事件 (pollTwin busy) — 无指令物料直通带尾, 3D 不假装推
+          // (2026-11-19 用户报"真实源下推杆自己动、真推杆不动": 即此动画假象)
+          if (sim.src === 'sim' && nx >= X_B[lane] - 0.012 && p.mode === 'idle') {
             nx = X_B[lane] - 0.012
             it.ph = 'hold'; p.item = it; p.mode = 'ejecting'; p.e = 0; p.t0 = sim.t
           }
@@ -601,7 +604,7 @@ lab.onTick((dt) => {
       if (it.x > 0.322) { removeItem(it); continue }
       if (!it.seen && it.x >= X_CAM) {
         it.seen = true
-        sim.fwq = Math.min(FIFO, sim.fwq + (sim.phantom ? 2 : 1))
+        if (sim.src === 'sim') sim.fwq = Math.min(FIFO, sim.fwq + (sim.phantom ? 2 : 1))
         sim.visionLabel = `${MATCN[it.kind]} → ${it.bin} 号仓`
         sim.visionUntil = sim.t + 3
         sim.fovPulse = 1
@@ -611,7 +614,7 @@ lab.onTick((dt) => {
       if (p) {
         const face = pusherKin(p)
         it.z = Math.max(it.z, Math.min(face + it.mesh.userData.wz / 2, 0.044))
-        it.mesh.position.set(it.x, 0.344, it.z)
+        it.mesh.position.set(it.x, 0.3453, it.z)
       }
     } else if (it.ph === 'chute') {
       it.s = 0.5 * 6.3 * (sim.t - it.t0) * (sim.t - it.t0)
@@ -630,7 +633,7 @@ lab.onTick((dt) => {
       if (sim.t - it.t0 > 0.85) { removeItem(it); continue }
     }
     if (it.ph === 'belt') {
-      it.mesh.position.set(it.x, 0.344, it.z)
+      it.mesh.position.set(it.x, 0.3453, it.z)
       if (it.mesh.scale.x < 1) it.mesh.scale.setScalar(Math.min(1, it.mesh.scale.x + dt * 8))
     }
     if (it.arm) it.arm.rotation.y = Math.sin(sim.t * 3 + it.x * 20) * 0.5
@@ -669,7 +672,11 @@ lab.onTick((dt) => {
   const fault = sim.fault || (sim.src === 'device' && !!sim.live.fault)
   const state = fault ? 'FAULT · 队列满' : anyBusy ? '推送中 · 带停' : beltRun ? '运行中' : '带停'
   const srcNote = sim.src === 'device' ? (sim.live.online ? ' · 实时' : ' · 离线') : ''
-  lab.setHero(rate, { state, sub: `带速 52.5 mm/s · 单件周期 1.62 s · HL2 下发队列 ${sim.fwq}/24${srcNote}`, bad: fault })
+  // device 模式不显示仿真队列计数 (固件 FIFO 未上 MQTT, 显示会是假数据)
+  const sub = sim.src === 'sim'
+    ? `带速 52.5 mm/s · 单件周期 1.62 s · HL2 下发队列 ${sim.fwq}/24${srcNote}`
+    : `带速 52.5 mm/s · 单件周期 1.62 s${srcNote}`
+  lab.setHero(rate, { state, sub, bad: fault })
 })
 
 // ---------- 实时模式: 轮询 /twin ----------
