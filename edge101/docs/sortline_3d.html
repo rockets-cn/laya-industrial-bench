@@ -346,97 +346,113 @@ const bDome = new THREE.Mesh(new THREE.SphereGeometry(0.011, 20, 12, 0, Math.PI 
 bDome.position.set(-0.29, 0.351, -0.095); beaconG.add(bDome)
 lab.add(beaconG, { name: '故障警示灯', explode: [-0.05, 0.16, -0.12], count: 2 })
 
-// ---------- 上料物 (4 类传感器模块, 按实物产品照片建模) ----------
+// ---------- 上料物 (4 类传感器模块, 按实物产品照片逐件建模) ----------
 // 共同特征: 黑色 PCB 板 · 金色定位孔 · 白/奶白排针端子 · 丝印
 const M_PCB = MAT.paint({ color: [0.026, 0.028, 0.034], roughness: 0.3, clearcoat: 0.5 })
 const M_CREAM = MAT.paint({ color: [0.80, 0.73, 0.58], roughness: 0.5, clearcoat: 0.15 })
 const M_SILK = MAT.glow({ emissive: [0.92, 0.92, 0.85], emissiveIntensity: 0.16 })
+const M_GRID = MAT.paint({ color: [0.36, 0.36, 0.38], roughness: 0.55 })            // DHT20 顶面网格 (哑灰)
+const M_ULTRA = MAT.paint({ color: [0.032, 0.032, 0.038], roughness: 0.2, clearcoat: 0.8 }) // 超声波换能器黑壳
+const M_GRILLE = MAT.paint({ color: [0.12, 0.12, 0.13], roughness: 0.5 })           // 换能器顶面格栅
+const M_DHT = MAT.paint({ color: [0.028, 0.028, 0.033], roughness: 0.28, clearcoat: 0.6 }) // DHT20 传感盒
+const M_POT = MAT.paint({ color: [0.13, 0.21, 0.58], roughness: 0.35, clearcoat: 0.4 })    // 电位器蓝壳
 function makeItem(kind) {
   const g = new THREE.Group()
   const col = MATCOL[kind] || [0.6, 0.6, 0.62]
   let wz = 0.02, L = 0.045
-  const addBoard = () => {
-    g.add(new THREE.Mesh(GEO.rbox(L, 0.0018, wz, 0.001), M_PCB))
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const h = new THREE.Mesh(GEO.disc(0.0016, 0.0004, 0.0002, 14), M.gold)
-      h.position.set(sx * (L / 2 - 0.004), 0.00095, sz * (wz / 2 - 0.0035)); g.add(h)
-    }
+  let tagX = null, tagZ = null                                    // 色标位置 (默认 +x+z 角, 可覆盖避让)
+  const y0 = 0.0009                                              // 板顶面
+  const addBoard = () => g.add(new THREE.Mesh(GEO.rbox(L, 0.0018, wz, 0.001), M_PCB))
+  const hole = (x, z) => {                                       // 金色定位孔 (金环 + 通孔)
+    const r = new THREE.Mesh(GEO.disc(0.0024, 0.0005, 0.0002, 18, 0.0011), M.gold)
+    r.position.set(x, y0 + 0.00025, z); g.add(r)
   }
-  const header = (x, n, len, mat = M.white) => {
-    const b = new THREE.Mesh(GEO.rbox(0.006, 0.0055, len, 0.0008), mat)
-    b.position.set(x, 0.0009 + 0.00275, 0); g.add(b)
+  const header = (x, n, len, mat = M.white) => {                 // 排针端子 (本体 + 针脚)
+    const b = new THREE.Mesh(GEO.rbox(0.0062, 0.0056, len, 0.0008), mat)
+    b.position.set(x, y0 + 0.0028, 0); g.add(b)
     for (let i = 0; i < n; i++) {
-      const p = new THREE.Mesh(GEO.rbox(0.0018, 0.0012, 0.0018, 0.0003), M.dark)
-      p.position.set(x + 0.0012, 0.0009 + 0.0058, -len / 2 + 0.002 + i * ((len - 0.004) / Math.max(1, n - 1)))
+      const p = new THREE.Mesh(GEO.rbox(0.0016, 0.0014, 0.0016, 0.0003), M.dark)
+      p.position.set(x + 0.0014, y0 + 0.006, -len / 2 + 0.0022 + i * ((len - 0.0044) / Math.max(1, n - 1)))
       g.add(p)
     }
   }
-  const silk = (x, len) => {
-    const s = new THREE.Mesh(new THREE.PlaneGeometry(0.0035, len), M_SILK)
-    s.rotation.x = -Math.PI / 2; s.position.set(x, 0.001, 0); g.add(s)
+  const silk = (x, z, w, d) => {                                 // 丝印 (平面发光)
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(w, d), M_SILK)
+    s.rotation.x = -Math.PI / 2; s.position.set(x, y0 + 0.00012, z); g.add(s)
   }
-  const ic = (x, z, w, d) => {
-    const c = new THREE.Mesh(GEO.rbox(w, 0.0024, d, 0.0004), M.dark)
-    c.position.set(x, 0.0009 + 0.0012, z); g.add(c)
+  const smd = (x, z, w, d) => {                                  // 贴片元件
+    const c = new THREE.Mesh(GEO.rbox(w, 0.0012, d, 0.0002), M.dark)
+    c.position.set(x, y0 + 0.0006, z); g.add(c)
   }
   switch (kind) {
     case 'ultrasonic_sensor': {
-      // 超声波传感器: 黑色 45×20 板, 前端两只黑色发射/接收换能器 (凹腔+中心振子)
-      L = 0.045; wz = 0.020
+      // 超声波: 深色板, 两只大号黑色圆柱换能器 (斜向错开), 顶面同心格栅 + 银色振膜中心, DFRobot 丝印
+      L = 0.050; wz = 0.034
+      tagX = -L / 2 + 0.008                                       // 色标移到 -x+z 角, 避开右上换能器
       addBoard()
-      for (const dz of [-0.0062, 0.0062]) {
-        const ring = new THREE.Mesh(GEO.disc(0.0072, 0.0032, 0.0005, 28, 0.0048), MAT.paint({ color: [0.04, 0.04, 0.045], roughness: 0.18, clearcoat: 0.8 }))
-        ring.position.set(-0.0135, 0.0009 + 0.0016, dz); g.add(ring)
-        const el = new THREE.Mesh(GEO.disc(0.0046, 0.002, 0.0005, 20), MAT.paint({ color: [0.13, 0.13, 0.14], roughness: 0.3 }))
-        el.position.set(-0.0135, 0.0009 + 0.0011, dz); g.add(el)
+      for (const [tx, tz] of [[-0.010, -0.009], [0.014, 0.008]]) {
+        const body = new THREE.Mesh(GEO.disc(0.0075, 0.0108, 0.0018, 30), M_ULTRA)
+        body.position.set(tx, y0 + 0.0054, tz); g.add(body)
+        for (const rr of [0.0063, 0.0048, 0.0033]) {              // 顶面同心格栅
+          const ring = new THREE.Mesh(GEO.disc(rr, 0.00025, 0.0001, 26), M_GRILLE)
+          ring.position.set(tx, y0 + 0.0108, tz); g.add(ring)
+        }
+        const ctr = new THREE.Mesh(GEO.disc(0.0021, 0.0005, 0.0002, 18), M.aluM)  // 银色振膜
+        ctr.position.set(tx, y0 + 0.0110, tz); g.add(ctr)
       }
-      ic(0.008, 0, 0.007, 0.007)
-      silk(0.008, 0.011)
-      header(0.0185, 3, 0.009)
+      silk(0, 0, 0.010, 0.0035)                                   // DFRobot 标识
+      header(-0.0215, 3, 0.009)
+      hole(-0.023, -0.015); hole(0.023, -0.015)
       break
     }
     case 'pir_sensor': {
-      // 人体红外: 黑色 46×30 板, 前端白色半球菲涅尔透镜, 尾部白色 3P 排针 (D/F 输出)
-      L = 0.046; wz = 0.030
+      // 人体红外: 黑 40×24 板, 前端大号白色菲涅尔半球透镜, 中部贴片, 后端 4P 白端子, 左侧 2 金孔
+      L = 0.040; wz = 0.024
       addBoard()
-      const dome = new THREE.Mesh(new THREE.SphereGeometry(0.0105, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2), M.white)
-      dome.position.set(-0.012, 0.0009, 0); g.add(dome)
-      ic(0.010, 0.006, 0.007, 0.010)
-      for (const dx of [0.003, 0.014]) {
-        const r = new THREE.Mesh(GEO.rbox(0.0022, 0.0009, 0.0011, 0.0002), M.dark)
-        r.position.set(dx, 0.0009 + 0.0005, -0.006); g.add(r)
-      }
-      silk(0.017, 0.008)
-      header(0.0195, 3, 0.010)
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(0.0100, 28, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.white)
+      dome.position.set(-0.0128, y0, 0); g.add(dome)
+      smd(0.002, 0.004, 0.006, 0.0035)
+      for (const [sx, sz] of [[0.006, -0.005], [0.010, -0.005], [0.006, 0.006], [0.010, 0.006]]) smd(sx, sz, 0.0016, 0.0009)
+      silk(0.012, -0.006, 0.012, 0.003)
+      header(0.0168, 4, 0.0115)
+      hole(-0.004, 0.0095); hole(-0.004, -0.0095)
       break
     }
     case 'temp_humidity_sensor': {
-      // 温湿度 (DHT20): 黑色 38×26 板, 黑色方形传感封装 (带透光窗), 尾部奶白 4P 端子 (GND/VCC/SDA/SCL)
-      L = 0.038; wz = 0.026
+      // 温湿度 DHT20: 黑 32×24 板, 前端黑色方形传感盒 (顶面网格), 后端奶白 4P, 2 金孔
+      L = 0.032; wz = 0.024
       addBoard()
-      const chip = new THREE.Mesh(GEO.rbox(0.0135, 0.003, 0.0135, 0.0006), M.dark)
-      chip.position.set(-0.010, 0.0009 + 0.0015, 0); g.add(chip)
-      const win = new THREE.Mesh(new THREE.PlaneGeometry(0.0065, 0.0065), MAT.paint({ color: [0.72, 0.76, 0.76], roughness: 0.15, clearcoat: 1 }))
-      win.rotation.x = -Math.PI / 2; win.position.set(-0.010, 0.0009 + 0.003 + 0.00012, 0); g.add(win)
-      silk(0.001, 0.010)
-      header(0.0125, 4, 0.013, M_CREAM)
+      const box = new THREE.Mesh(GEO.rbox(0.0155, 0.0060, 0.0098, 0.0014), M_DHT)
+      box.position.set(-0.0078, y0 + 0.0030, 0); g.add(box)
+      const topY = y0 + 0.0060
+      for (let i = -2; i <= 2; i++) {                             // 顶面网格
+        const v = new THREE.Mesh(new THREE.PlaneGeometry(0.00025, 0.0086), M_GRID)
+        v.rotation.x = -Math.PI / 2; v.position.set(-0.0078 + i * 0.0029, topY + 0.00006, 0); g.add(v)
+        const h = new THREE.Mesh(new THREE.PlaneGeometry(0.0135, 0.00025), M_GRID)
+        h.rotation.x = -Math.PI / 2; h.position.set(-0.0078, topY + 0.00006, i * 0.0019); g.add(h)
+      }
+      header(0.012, 4, 0.011, M_CREAM)
+      silk(0.002, -0.0095, 0.014, 0.0028)
+      hole(0.003, -0.0095); hole(0.008, -0.0095)
       break
     }
     case 'angle_sensor': {
-      // 角度传感器: 黑色 36×24 板, 金属支架 + 电位器 (黑色旋钮带白色指示线, 随角度摆动), 白色 3P 排针
-      L = 0.036; wz = 0.024
+      // 角度传感器: 近方 30×30 板, 蓝色电位器座 + 银色基座 + 黑色旋钮 (侧面白色指示线, 随角度摆动), 后端 3P, 2 金孔
+      L = 0.030; wz = 0.030
       addBoard()
-      const brk = new THREE.Mesh(GEO.rbox(0.012, 0.0016, 0.014, 0.0004), M.aluM)
-      brk.position.set(-0.008, 0.0009 + 0.0008, 0); g.add(brk)
-      const knobG = new THREE.Group(); knobG.position.set(-0.008, 0.0015, 0)
-      const flange = new THREE.Mesh(GEO.disc(0.0062, 0.0022, 0.0004, 20), M.aluM)
-      flange.position.y = 0.0011; knobG.add(flange)
-      const knob = new THREE.Mesh(GEO.disc(0.0048, 0.0042, 0.0004, 24), MAT.paint({ color: [0.05, 0.05, 0.055], roughness: 0.4, clearcoat: 0.5 }))
-      knob.position.y = 0.0038; knobG.add(knob)
-      const ind = new THREE.Mesh(GEO.rbox(0.0007, 0.0005, 0.0038, 0.0002), M.white)
-      ind.position.set(0, 0.006, 0); knobG.add(ind)
+      const blue = new THREE.Mesh(GEO.rbox(0.0115, 0.0044, 0.013, 0.0012), M_POT)
+      blue.position.set(-0.0035, y0 + 0.0022, 0); g.add(blue)
+      const base = new THREE.Mesh(GEO.rbox(0.0105, 0.0018, 0.0115, 0.0008), M.aluM)
+      base.position.set(-0.0035, y0 + 0.0044 + 0.0009, 0); g.add(base)
+      const knobG = new THREE.Group(); knobG.position.set(-0.0035, y0 + 0.0044 + 0.0018, 0)
+      const knob = new THREE.Mesh(GEO.disc(0.0058, 0.0062, 0.0014, 30), MAT.paint({ color: [0.05, 0.05, 0.055], roughness: 0.4, clearcoat: 0.5 }))
+      knob.position.y = 0.0031; knobG.add(knob)
+      const ind = new THREE.Mesh(GEO.rbox(0.0016, 0.0034, 0.0009, 0.0002), M.white)  // 白色指示线 (侧面)
+      ind.position.set(0.0056, 0.0044, 0); knobG.add(ind)
       g.add(knobG); g.userData.arm = knobG
-      header(0.0145, 3, 0.009)
+      header(0.0125, 3, 0.010)
+      silk(0.004, -0.0095, 0.012, 0.0028)
+      hole(-0.0125, 0.0125); hole(0.0125, -0.0125)
       break
     }
     default: {
@@ -446,7 +462,7 @@ function makeItem(kind) {
   }
   // 物料色标 (与列表/语音播报颜色一致, 便于区分)
   const tag = new THREE.Mesh(GEO.rbox(0.005, 0.002, 0.005, 0.0005), MAT.glow({ emissive: col, emissiveIntensity: 1.1 }))
-  tag.position.set(L / 2 - 0.008, 0.002, wz / 2 - 0.0035)
+  tag.position.set(tagX ?? (L / 2 - 0.008), 0.002, tagZ ?? (wz / 2 - 0.0035))
   g.add(tag)
   g.userData.wz = wz
   return g
