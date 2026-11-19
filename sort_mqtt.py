@@ -260,6 +260,10 @@ class SortGateway:
         # verified_loop 处理. {job_id: {job, remaining, pushed, deadline}}
         self.verified_jobs = {}
         self.verified_lock = threading.Lock()
+        # 完成延时停带 (用户 2026-11-19: 完成任务后 10s 停传送带):
+        # 作业完成时刻 + idle_stop_after_job_s; 新作业/手动起带清除;
+        # verified_loop 到期且全闲时发 stop. None=无待停.
+        self._idle_stop_at = None
         self.dev_state = {}                        # {"conveyor": ..., "sorter1": ...}
         self.conveyor_note = ""                    # 最近一次 conveyor 遥测 note (带健康监测原因)
         self.ir_present = False                    # 红外 T0 实时"物品在 IR"态 (固件每 500ms 上报 + 沿即时)
@@ -612,6 +616,8 @@ class SortGateway:
                     self.active_job = None
 
     def _run_job(self, job):
+        # 新作业开始: 撤销任何待停 (命令一到就起带, 不再停)
+        self._idle_stop_at = None
         job["outcome"] = "done"
         self._batch_event(job, "accepted")
         # 指令路由台账登记时机 = job 开始 (命令已受理即生效, 早于物理执行;
@@ -636,8 +642,8 @@ class SortGateway:
         #     需求已在 job 开头登记; 这里只做起带 + 转"待核对". 物理逐件
         #     divert 由 vision 事件逐件下发 (_on_vision, 逐件 job 带
         #     parent_job_id), 进度由 _verified_progress 记账, 超时由
-        #     verified_loop 处理. 带子不自动停 (料要持续上带直到需求耗尽);
-        #     stop_conveyor_after_batch 对 verified 不适用.
+        #     verified_loop 处理. 核对期间带子不自动停 (料要持续上带直到
+        #     需求耗尽); 任务完成后 idle_stop_after_job_s 秒自动停带.
         if self.cfg.get("dispatch_mode") == "verified" \
                 and job.get("source") != "vision":
             remaining = sum(int(a["qty"]) for a in job["actions"])
@@ -693,7 +699,19 @@ class SortGateway:
         self._record_job(job)
         if job.get("parent_job_id"):
             # verified 进度: 逐件 vision divert 完成 -> 父语音 job pushed+1
+            # (父作业耗尽才算"任务完成", 停带时机由 _verified_progress 安排)
             self._verified_progress(job["parent_job_id"], "done")
+        else:
+            self._schedule_idle_stop()
+
+    def _schedule_idle_stop(self):
+        """任务完成后开始 N 秒停带倒计时 (idle_stop_after_job_s; 0=禁用)."""
+        delay = float(self.cfg.get("idle_stop_after_job_s", 0) or 0)
+        if delay <= 0:
+            return
+        self._idle_stop_at = time.time() + delay
+        print(f"[gateway] 任务完成, {delay:.0f}s 内无新作业/起带则自动停带",
+              flush=True)
 
     def _fail(self, job, device, error):
         job["outcome"] = "fault"
@@ -927,6 +945,8 @@ class SortGateway:
             self._publish("sort/event/verified",
                            {"ts": _now(), "job_id": job_id, "phase": "done",
                             "pushed": vj["pushed"]}, retain=True)
+            # 需求全部核对完成 = 任务完成: 开始停带倒计时
+            self._schedule_idle_stop()
         else:
             job["outcome"] = "fault"
             if not job.get("fault"):
@@ -978,6 +998,27 @@ class SortGateway:
                                {"ts": _now(), "job_id": job["job_id"],
                                 "phase": "timeout",
                                 "remaining": v["remaining"]}, retain=True)
+            # 完成延时停带 (用户 2026-11-19: 完成任务后 N s 停传送带):
+            # 每 tick 检查 (与有无待核对作业无关 — blind 批次完成同样触发):
+            # 到期且全闲 (无活动 job / 无排队 / 无待核对) 且带子 running 才停;
+            # 新作业开始在 _run_job 里已清除计时, 这里再做一次全闲复核兜底.
+            delay = float(self.cfg.get("idle_stop_after_job_s", 0) or 0)
+            idle_at = self._idle_stop_at
+            if delay > 0 and idle_at is not None and now >= idle_at:
+                with self.active_lock:
+                    busy = self.active_job is not None
+                if not busy:
+                    with self.queue_lock:
+                        busy = busy or len(self.job_queue) > 0
+                if not busy:
+                    with self.verified_lock:
+                        busy = busy or bool(self.verified_jobs)
+                if not busy and self.dev_state.get("conveyor") == "running":
+                    self._idle_stop_at = None
+                    print(f"[gateway] 任务完成 {delay:.0f}s 无新作业, "
+                          f"自动停带", flush=True)
+                    self._conveyor_cmd({"job_id": "idle-stop"},
+                                       "stop", required=False)
 
     def cancel_job(self, job_id):
         """撤销作业: verified 待核对 job (作废需求) / 排队中的盲拨 job.
@@ -1002,6 +1043,7 @@ class SortGateway:
             print(f"[gateway] verified job {job_id} 已撤销 "
                   f"(pushed={vj['pushed']} remaining={vj['remaining']})",
                   flush=True)
+            self._schedule_idle_stop()  # 任务已无待办: 开始停带倒计时
             return True
         removed = None
         with self.queue_lock:
@@ -1017,6 +1059,7 @@ class SortGateway:
             self._batch_event(removed, "cancelled")
             self.stats.job_finished(removed)
             self._record_job(removed)
+            self._schedule_idle_stop()  # 排队作业撤销后无待办: 停带倒计时
             return True
         with self.active_lock:
             active = self.active_job
@@ -1052,6 +1095,7 @@ class SortGateway:
             def do_GET(self):
                 if self.path == "/health":
                     self._send(200, {"status": "ok",
+                                      "dispatch_mode": gw.cfg.get("dispatch_mode", "blind"),
                                       "broker_connected": gw._connected.is_set(),
                                       "active_job": (gw.active_job or {}).get("job_id"),
                                       "queue": len(gw.job_queue),
@@ -1062,8 +1106,13 @@ class SortGateway:
                                       "conveyor_note": gw.conveyor_note,
                                       # 红外 T0 实时"物品在 IR"态 (0/1): 数字孪生同步反馈
                                       "ir_present": gw.ir_present,
-                                      # 红外 T0 上升沿累计 (物体过 IR 次数): 事件驱动, 供孪生锁存不漏
+                                      # 红外 T0 上升沿累计 (物体过 IR 次数): 事件驱动, 绝不漏, 供孪生锁存
                                       "ir_edge_count": gw.ir_edge_count,
+                                      # 完成延时停带倒计时余量 (s): 任务完成后
+                                      # N s 内无新作业/起带则自动停带; null=无待停
+                                      "idle_stop_in_s": (
+                                          round(gw._idle_stop_at - time.time(), 1)
+                                          if gw._idle_stop_at else None),
                                       # verified 待核对作业 (2026-11-19 方案 B):
                                       # 逐件核对进度 pushed/remaining + 超时余量
                                       "verified": [
@@ -1199,6 +1248,8 @@ class SortGateway:
                         return
                     job = {"job_id": gw._new_job_id()}
                     ok, note = gw._conveyor_cmd(job, action)
+                    if ok and action in ("start", "resume"):
+                        gw._idle_stop_at = None  # 手动起带: 撤销待停
                     self._send(200 if ok else 502,
                                {"ok": ok, "note": note, "action": action})
                 elif self.path == "/push":

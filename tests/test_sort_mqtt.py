@@ -805,6 +805,166 @@ def main():
         with gw.demands_lock:
             gw.demands.clear()
 
+    # ---------- 13. 完成延时停带 (用户 2026-11-19: 命令即时起带, 任务完成后
+    #        idle_stop_after_job_s 秒无新作业/起带 -> 自动停带) ----------
+    print("\n== 13. 完成延时停带 (完成任务后 N 秒停带) ==")
+    saved13 = {k: gw.cfg.get(k) for k in
+               ("dispatch_mode", "idle_stop_after_job_s",
+                "verified_timeout_s", "stop_conveyor_after_batch")}
+    try:
+        gw.cfg["idle_stop_after_job_s"] = 1.0   # 测试用短延时
+        gw.cfg["stop_conveyor_after_batch"] = False  # 旧"批间立即停带"与本功能互斥, 关闭
+        gw.cfg["dispatch_mode"] = "blind"
+
+        # 13a. 手动起带
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/belt",
+                             {"action": "start"})
+        check("13a 手动起带", st == 200 and body.get("ok"),
+              f"st={st} body={body}")
+        ok = wait_for(lambda: conv.state == "running", 5, "带 running")
+        check("13a 带态 running", ok, f"conv={conv.state}")
+
+        # 13b. blind 批次 done -> 窗口内带子保持 running -> 延时到期自动停带
+        base13b = gw.stats.batches["done"]
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test-idle",
+                              "actions": [{"yard": 1, "material": "angle_sensor",
+                                           "qty": 1}]})
+        check("13b dispatch 202", st == 202, f"st={st} body={body}")
+        ok = wait_for(lambda: gw.stats.batches["done"] > base13b, 8,
+                      "13b 批次 done")
+        check("13b 批次完成", ok)
+        ok = wait_for(lambda: gw._idle_stop_at is not None, 2,
+                      "13b 停带计时")
+        check("13b done 后停带计时已设", ok,
+              f"idle_stop_at={gw._idle_stop_at}")
+        time.sleep(0.4)   # 延时 1.0s 的窗口内: 不得立即停
+        check("13b 窗口内带子仍 running", conv.state == "running",
+              f"conv={conv.state}")
+        ok = wait_for(lambda: conv.state == "stopped", 5, "延时到期自动停带")
+        check("13b 任务完成后 N s 自动停带", ok, f"conv={conv.state}")
+        check("13b 停带后计时已清", gw._idle_stop_at is None)
+
+        # 13c. 新作业取消待停: A done 计时中, 窗口内下发 B -> A 的旧到期点
+        #      不得停带; B done 后按 B 的时刻重新计时停带
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/belt",
+                          {"action": "start"})
+        base13c = gw.stats.batches["done"]
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                         {"source": "test-idle",
+                          "actions": [{"yard": 2, "material": "ultrasonic_sensor",
+                                       "qty": 1}]})
+        ok = wait_for(lambda: gw.stats.batches["done"] > base13c, 8,
+                      "13c 批次 A done")
+        check("13c 批次 A 完成", ok)
+        t_a = time.time()
+        time.sleep(0.3)      # 窗口内 (延时 1.0s) 下发 B
+        base13c2 = gw.stats.batches["done"]
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                         {"source": "test-idle",
+                          "actions": [{"yard": 3, "material": "pir_sensor",
+                                       "qty": 1}]})
+        ok = wait_for(lambda: gw.stats.batches["done"] > base13c2, 8,
+                      "13c 批次 B done")
+        check("13c 批次 B 完成", ok)
+        time.sleep(max(0.0, t_a + 1.25 - time.time()))  # 越过 A 旧到期点+tick
+        check("13c A 旧到期点已过, 带子仍 running (B 取消了待停)",
+              conv.state == "running", f"conv={conv.state}")
+        ok = wait_for(lambda: conv.state == "stopped", 5,
+                      "13c 按 B 的完成时刻重新计时停带")
+        check("13c B 完成后重新计时 -> 自动停带", ok, f"conv={conv.state}")
+
+        # 13d. 手动起带取消待停: C done 后窗口内 /belt start -> 到点不停
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/belt",
+                          {"action": "start"})
+        base13d = gw.stats.batches["done"]
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                         {"source": "test-idle",
+                          "actions": [{"yard": 3, "material": "pir_sensor",
+                                       "qty": 1}]})
+        ok = wait_for(lambda: gw.stats.batches["done"] > base13d, 8,
+                      "13d 批次 C done")
+        check("13d 批次 C 完成", ok)
+        check("13d C done 后计时已设", gw._idle_stop_at is not None)
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/belt",
+                             {"action": "start"})
+        check("13d 窗口内手动起带", st == 200 and body.get("ok"))
+        check("13d 手动起带后计时已清", gw._idle_stop_at is None,
+              f"idle_stop_at={gw._idle_stop_at}")
+        time.sleep(1.5)   # 越过原到期点
+        check("13d 原到期点已过, 带子仍 running (手动起带取消待停)",
+              conv.state == "running", f"conv={conv.state}")
+
+        # 13e. verified 需求核对齐 -> 同样延时停带
+        with gw.demands_lock:
+            gw.demands.clear()
+        gw.cfg["dispatch_mode"] = "verified"
+        gw.cfg["verified_timeout_s"] = 6.0
+        base13e = s2c.diverted_total
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                             {"source": "test-idle-vrf",
+                              "actions": [{"yard": 2,
+                                           "material": "ultrasonic_sensor",
+                                           "qty": 1}]})
+        check("13e verified dispatch 202",
+              st == 202 and body.get("verified"), f"st={st} body={body}")
+        vjob13 = body.get("job_id")
+        # 需求登记在 worker 内完成 (_run_job); 等登记后再发视觉, 避免
+        # 视觉先到 -> 无需求 -> 该件直通 -> 超时 fault 的竞态
+        ok = wait_for(lambda: len(gw.demands.get("ultrasonic_sensor") or ()) > 0,
+                      5, "13e 需求登记")
+        check("13e 需求已登记", ok)
+        pub("sort/inbound/vision", {"material": "ultrasonic_sensor",
+                                    "confidence": 0.9,
+                                    "frame_id": "t-idle-vrf", "source": "test"})
+        ok = wait_for(lambda: vjob13 not in gw.verified_jobs
+                      and any(r.get("job_id") == vjob13
+                              and r.get("outcome") == "done"
+                              for r in gw.job_history), 8,
+                      "13e verified job done")
+        check("13e 逐件核对齐 -> job done", ok,
+              f"vj={gw.verified_jobs.get(vjob13)}")
+        check("13e done 后计时已设", gw._idle_stop_at is not None)
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/health")
+        check("13e /health idle_stop_in_s 可见",
+              body.get("idle_stop_in_s") is not None,
+              f"health={ {k: body.get(k) for k in ('idle_stop_in_s',)} }")
+        ok = wait_for(lambda: conv.state == "stopped", 5,
+                      "13e verified 完成后自动停带")
+        check("13e verified 任务完成后 N s 自动停带", ok,
+              f"conv={conv.state}")
+        st, body = http_json(f"http://127.0.0.1:{GPORT}/health")
+        check("13e 停带后 idle_stop_in_s=null",
+              body.get("idle_stop_in_s") is None, f"body={body.get('idle_stop_in_s')}")
+
+        # 13f. idle_stop_after_job_s=0 -> 禁用, 完成后不停带
+        gw.cfg["idle_stop_after_job_s"] = 0
+        gw.cfg["dispatch_mode"] = "blind"
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/belt",
+                          {"action": "start"})
+        base13f = gw.stats.batches["done"]
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/dispatch",
+                         {"source": "test-idle-off",
+                          "actions": [{"yard": 1, "material": "angle_sensor",
+                                       "qty": 1}]})
+        ok = wait_for(lambda: gw.stats.batches["done"] > base13f, 8,
+                      "13f 批次 done")
+        check("13f 批次完成 (disabled)", ok)
+        time.sleep(1.5)
+        check("13f 禁用后完成不自动停带",
+              conv.state == "running" and gw._idle_stop_at is None,
+              f"conv={conv.state} idle_stop_at={gw._idle_stop_at}")
+        st, _ = http_json(f"http://127.0.0.1:{GPORT}/belt",
+                          {"action": "stop"})
+    finally:
+        for k, v in saved13.items():
+            if v is None:
+                gw.cfg.pop(k, None)
+            else:
+                gw.cfg[k] = v
+        with gw.demands_lock:
+            gw.demands.clear()
+
     pc.loop_stop(); pc.disconnect()
     gw.stop()
 
