@@ -48,7 +48,7 @@ const ITEM_Z0 = -0.004                                 // 上料位置 (带面�
 const KINDS = ['ultrasonic_sensor', 'pir_sensor', 'angle_sensor', 'temp_humidity_sensor']
 const MATCN = { angle_sensor: '角度传感器', ultrasonic_sensor: '超声波传感器', pir_sensor: '人体红外传感器', temp_humidity_sensor: '温湿度传感器' }
 const MATMAP = { angle_sensor: 1, ultrasonic_sensor: 2, pir_sensor: 3, temp_humidity_sensor: 1 }  // 测试占位映射 (无指令兜底)
-const MATCOL = { angle_sensor: [0.38, 0.65, 0.98], ultrasonic_sensor: [0.98, 0.569, 0.243], pir_sensor: [0.945, 0.318, 0.318], temp_humidity_sensor: [0.416, 0.816, 0.549] }
+const MATCOL = { angle_sensor: [0.38, 0.65, 0.98], ultrasonic_sensor: [0.98, 0.569, 0.243], pir_sensor: [0.945, 0.318, 0.318], temp_humidity_sensor: [0.45, 0.25, 0.85] }
 
 const lab = new Lab({
   prompt: 'DFRobot 工业分拣线: 52.5 mm/s 皮带 · 3 个伺服推杆 · HuskyLens2 俯视识别 4 类传感器 · IR T0 触发 · 45° 滑道分仓 (edge101 数字孪生)',
@@ -65,6 +65,7 @@ const M = {
   frame:  MAT.paint({ color: [0.10, 0.11, 0.125], roughness: 0.5, clearcoat: 0.25 }),
   rail:   MAT.paint({ color: [0.14, 0.15, 0.17], roughness: 0.45, clearcoat: 0.3 }),
   rubber: MAT.rubber({ color: [0.05, 0.05, 0.055] }),
+  belt: MAT.rubber({ color: [0.10, 0.42, 0.15] }),
   steel:  MAT.steel({ roughness: 0.28 }),
   alu:    MAT.aluminium({ roughness: 0.4 }),
   aluM:   MAT.aluminiumMachined({ roughness: 0.22 }),
@@ -86,15 +87,15 @@ const TREAD_TILE = 0.04
 const treadTex = (() => {
   const c = document.createElement('canvas'); c.width = 256; c.height = 128
   const g = c.getContext('2d')
-  g.fillStyle = '#141518'; g.fillRect(0, 0, 256, 128)
-  g.strokeStyle = '#27292e'; g.lineWidth = 7
+  g.fillStyle = '#f2f2f2'; g.fillRect(0, 0, 256, 128)
+  g.strokeStyle = '#8f8f8f'; g.lineWidth = 7
   for (let x = -64; x < 320; x += 32) { g.beginPath(); g.moveTo(x, -8); g.lineTo(x + 18, 64); g.lineTo(x, 136); g.stroke() }
   const t = new THREE.CanvasTexture(c)
   t.wrapS = t.wrapT = THREE.RepeatWrapping
   t.repeat.set(0.62 / TREAD_TILE, 1)
   return t
 })()
-const beltTopM = MAT.rubber({ color: [0.075, 0.075, 0.08], map: treadTex, roughness: 0.92 })
+const beltTopM = MAT.rubber({ color: [0.10, 0.42, 0.15], map: treadTex, roughness: 0.9 })
 
 function textTex(w, h, draw) {
   const c = document.createElement('canvas'); c.width = w; c.height = h
@@ -133,7 +134,7 @@ lab.add(railR, { name: '侧轨 (推杆侧)', explode: [0, 0.05, 0.24], count: 1 
 
 // 皮带
 const beltG = new THREE.Group()
-const band = new THREE.Mesh(GEO.rbox(0.634, 0.036, 0.066, 0.016), M.rubber) // 实际带面宽 62 mm
+const band = new THREE.Mesh(GEO.rbox(0.634, 0.036, 0.066, 0.016), M.belt) // 实际带面宽 62 mm
 band.position.set(0, 0.329, 0)
 const beltTop = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.062), beltTopM)
 beltTop.rotation.x = -Math.PI / 2
@@ -225,7 +226,7 @@ const cScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.021, 0.012), new THREE.
     g.fillText('HL2 · 129', 18, 58)
     g.fillStyle = '#8a93a3'; g.font = '400 30px "JetBrains Mono", monospace'
     g.fillText('yolov8n 864×486 @15fps', 18, 104)
-    ;['#62a5fa', '#fa943d', '#f25252', '#6ad18c'].forEach((cc, i) => { g.fillStyle = cc; g.fillRect(18 + i * 26, 120, 18, 14) })
+    ;['#62a5fa', '#fa943d', '#f25252', '#9d63d0'].forEach((cc, i) => { g.fillStyle = cc; g.fillRect(18 + i * 26, 120, 18, 14) })
   }), transparent: true, side: THREE.DoubleSide }))
 cScreen.rotation.x = -Math.PI / 2; cScreen.position.set(X_CAM, 0.5205, -0.045); camG.add(cScreen)
 // FOV 锥 (相机视野 → 带面)
