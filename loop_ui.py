@@ -703,7 +703,7 @@ PAGE = """<!doctype html>
 <div class="tabpanes">
  <div class="pane on" id="pane-res"><div id="out"></div></div>
  <div class="pane" id="pane-ledger"><div id="ledger" style="margin:4px 0"></div></div>
- <div class="pane" id="pane-trace"><div class="sec">全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</div><div id="tracebody"></div></div>
+ <div class="pane" id="pane-trace"><div id="tracebody"></div></div>
 </div>
 </div><!-- /colR -->
 </div><!-- /main -->
