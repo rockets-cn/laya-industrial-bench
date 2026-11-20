@@ -819,21 +819,22 @@ async function ledgerReset(){
  catch(e){alert('清空失败: '+e.message)}
 }
 // 决策流程图: 不再挂标题下, 渲染到运行输出的「仓库分拣下发」段之后 (属于本次运行的结果表达)
-const FLOW_SVG=`<svg id="flow" viewBox="0 0 900 84" xmlns="http://www.w3.org/2000/svg">
+// 2026-11-20: 纵向压缩 20% (viewBox 84→67, 节点 36→30 高, 间距收紧), 横向/字号不变
+const FLOW_SVG=`<svg id="flow" viewBox="0 0 900 67" xmlns="http://www.w3.org/2000/svg">
  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3a4152"/></marker></defs>
- <line class="edge" x1="108" y1="32" x2="130" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="240" y1="32" x2="262" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="372" y1="32" x2="394" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="504" y1="32" x2="526" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="636" y1="32" x2="658" y2="32" marker-end="url(#arr)"/>
- <line class="edge" x1="768" y1="32" x2="790" y2="32" marker-end="url(#arr)"/>
- <g id="fn1" class="n off"><rect x="2" y="14" width="104" height="36" rx="9"/><text x="54" y="37" text-anchor="middle">语音/文本</text></g>
- <g id="fn2" class="n off"><rect x="134" y="14" width="104" height="36" rx="9"/><text x="186" y="29" text-anchor="middle">ASR</text><text x="186" y="43" text-anchor="middle" class="sub">SenseVoice</text><text id="fn-asr" x="186" y="66" text-anchor="middle" class="ms">—</text></g>
- <g id="fn3" class="n off"><rect x="266" y="14" width="104" height="36" rx="9"/><text x="318" y="29" text-anchor="middle">规则归一化</text><text x="318" y="43" text-anchor="middle" class="sub">抽取 · 归属</text></g>
- <g id="fn4" class="n off"><rect x="398" y="14" width="104" height="36" rx="9"/><text x="450" y="29" text-anchor="middle">Laya 决策</text><text x="450" y="43" text-anchor="middle" class="sub">物料终审</text><text id="fn-laya" x="450" y="66" text-anchor="middle" class="ms">—</text></g>
- <g id="fn5" class="n off"><rect x="530" y="14" width="104" height="36" rx="9"/><text x="582" y="29" text-anchor="middle">校验器</text><text x="582" y="43" text-anchor="middle" class="sub">白名单 · 去重</text></g>
- <g id="fn6" class="n off"><rect x="662" y="14" width="104" height="36" rx="9"/><text x="714" y="29" text-anchor="middle">LLM 旁路</text><text x="714" y="43" text-anchor="middle" class="sub">校验拒绝 · 分配展开</text><text id="fn-bypass" x="714" y="66" text-anchor="middle" class="ms">未触发</text></g>
- <g id="fn7" class="n off"><rect x="794" y="14" width="104" height="36" rx="9"/><text x="846" y="29" text-anchor="middle">PLC 下发</text><text x="846" y="43" text-anchor="middle" class="sub">暂停 = 不发</text><text id="fn-e2e" x="846" y="66" text-anchor="middle" class="ms">—</text></g>
+ <line class="edge" x1="108" y1="23" x2="130" y2="23" marker-end="url(#arr)"/>
+ <line class="edge" x1="240" y1="23" x2="262" y2="23" marker-end="url(#arr)"/>
+ <line class="edge" x1="372" y1="23" x2="394" y2="23" marker-end="url(#arr)"/>
+ <line class="edge" x1="504" y1="23" x2="526" y2="23" marker-end="url(#arr)"/>
+ <line class="edge" x1="636" y1="23" x2="658" y2="23" marker-end="url(#arr)"/>
+ <line class="edge" x1="768" y1="23" x2="790" y2="23" marker-end="url(#arr)"/>
+ <g id="fn1" class="n off"><rect x="2" y="8" width="104" height="30" rx="8"/><text x="54" y="27" text-anchor="middle">语音/文本</text></g>
+ <g id="fn2" class="n off"><rect x="134" y="8" width="104" height="30" rx="8"/><text x="186" y="21" text-anchor="middle">ASR</text><text x="186" y="33" text-anchor="middle" class="sub">SenseVoice</text><text id="fn-asr" x="186" y="52" text-anchor="middle" class="ms">—</text></g>
+ <g id="fn3" class="n off"><rect x="266" y="8" width="104" height="30" rx="8"/><text x="318" y="21" text-anchor="middle">规则归一化</text><text x="318" y="33" text-anchor="middle" class="sub">抽取 · 归属</text></g>
+ <g id="fn4" class="n off"><rect x="398" y="8" width="104" height="30" rx="8"/><text x="450" y="21" text-anchor="middle">Laya 决策</text><text x="450" y="33" text-anchor="middle" class="sub">物料终审</text><text id="fn-laya" x="450" y="52" text-anchor="middle" class="ms">—</text></g>
+ <g id="fn5" class="n off"><rect x="530" y="8" width="104" height="30" rx="8"/><text x="582" y="21" text-anchor="middle">校验器</text><text x="582" y="33" text-anchor="middle" class="sub">白名单 · 去重</text></g>
+ <g id="fn6" class="n off"><rect x="662" y="8" width="104" height="30" rx="8"/><text x="714" y="21" text-anchor="middle">LLM 旁路</text><text x="714" y="33" text-anchor="middle" class="sub">校验拒绝 · 分配展开</text><text id="fn-bypass" x="714" y="52" text-anchor="middle" class="ms">未触发</text></g>
+ <g id="fn7" class="n off"><rect x="794" y="8" width="104" height="30" rx="8"/><text x="846" y="21" text-anchor="middle">PLC 下发</text><text x="846" y="33" text-anchor="middle" class="sub">暂停 = 不发</text><text id="fn-e2e" x="846" y="52" text-anchor="middle" class="ms">—</text></g>
 </svg>`;
 function drawFlow(d){
  const set=(id,c)=>{const el=$(id);el.classList.remove('on','off','warn','stop');el.classList.add(c)};
