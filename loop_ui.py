@@ -722,9 +722,11 @@ function updateCtlButtons(src, sorters, fault){
  const cb=document.getElementById('btnBelt');
  if(cb){cb.disabled=!can;
   cb.textContent=(can?(lastConveyor==='running'?'⏸ 停止传送带':'▶ 启动传送带'):'⏯ 传送带 (切真实源可用)');}
- // 清故障按钮: 仅真实源且故障锁存时显示; 清后 /belt 与 /push 解除 409
+ // 清故障按钮: 常驻显示 (2026-11-20 用户: 找不到按钮) — 无故障锁存时也可点,
+ // 顺带固件 reset 清队列 (串单/测试复位用); 有锁存时红色高亮
  const fb=document.getElementById('btnFaultClear');
- if(fb)fb.style.display=(can&&fault)?'':'none';
+ if(fb){fb.style.display=can?'':'none';
+  fb.style.opacity=(can&&fault)?'1':'.55';}
  // 推杆按钮: 随 /twin motion (busy=行程中) 实时显示「推杆中」并禁用; 完成后自动恢复
  document.querySelectorAll('.pushbtn').forEach(b=>{
   const n=+b.dataset.n;
