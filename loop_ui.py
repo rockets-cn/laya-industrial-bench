@@ -149,6 +149,8 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit",
                     "validator_ok": True, "actions": [], "reject_reasons": [],
                     "bypass_ms": 0, "bypass": None, "path": "QA", "answer": qans,
                     "qa_source": qsrc,
+                    # 兜底实际用的模型名 (页面区块标注用; 规则层直答为 None)
+                    "qa_model": local_qa.LLM_MODEL if qsrc == "llm" else None,
                     "dist_total": None, "dist_ms": 0,
                     "e2e_ms": round((time.perf_counter() - t0 + asr_dt) * 1000)}  # E2E 含 ASR (同主路径口径)
     sides = ["fruit", "block"] if domain == "mixed" else [domain]
@@ -1081,6 +1083,13 @@ async function render(d){
  // 指标卡已并入决策流程图 (2026-11-20 用户要求: 同一信息不重复出现) —
  // 路径=节点点亮 + 下发 chip, E2E/ASR/Laya/旁路 ms 全在流程图节点上
  let out='';
+ // 输入回显进结果页 (2026-11-20 用户): ASR 原文/文本输入直接显示在结果最上方
+ out+=sec('🎤 输入 <span class="chip">'+(d.asr_model||'文本')+'</span>')+`<pre>${d.asr_text}</pre>`;
+ // LLM 兜底回复独立成块 (2026-11-20 用户): 醒目展示, 标注"仅转述注入事实, 未下发 PLC"
+ if(d.answer!=null)out+=sec(d.qa_source==='llm'
+   ?'🤖 LLM 兜底回复 <span class="chip">'+(d.qa_model||'LLM')+' · 仅转述注入事实 · 未下发 PLC</span>'
+   :'💬 简单回答 <span class="chip">规则层直答 · 未下发 PLC</span>')
+  +`<pre style="font-size:15px;border-color:#2f9e63;color:#4ade80">${d.answer}</pre>`;
  if(d.domain==='yard'){
   const lines=d.actions.map(a=>`${a.yard}号仓库: ${MATCN[a.material]||a.material} × ${a.qty}`);
   // 下发列表实时减行基线: 逐件展开 [{yard,material}]; 作业级终态由 updateDispatchList 判定
@@ -1093,7 +1102,7 @@ async function render(d){
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
  } else {dispBase=null;dispJobId=null;}
  const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':'💬 简单回答'):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
- out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+(d.qa_source==='llm'?' (≤30字 · LLM 兜底, 仅转述注入事实, 未下发 PLC)':' (≤30字 · 规则层直答, 未下发 PLC)'):JSON.stringify(d.actions)}</pre>`;
+ out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${d.answer!=null?'':String.fromCharCode(10)+JSON.stringify(d.actions)}</pre>`; // 答案已在上方独立区块, 这里不重复
  $('out').innerHTML=out;
  // 决策流程图: 常驻区 #flowbox (库存条之上, 不随 tab 切换 — 2026-11-20 用户: 别放结果里)
  $('flowbox').innerHTML=FLOW_SVG;

@@ -120,7 +120,7 @@ HSV 阈值完成（mean 3.6 ms / p95 4.6 ms），Laya 只在下游做决策与�
 loopback 探测, 取不到时静默省略该行不影响其余事实）作答：
 - **页面开关**: 输入行「☑ LLM 兜底」复选框（运行时切换, 无需重启服务, 状态存浏览器
   localStorage, 每次 /run 请求携带 `qa_llm`）; 或启动默认: `QA_LLM=1 python3 loop_ui.py`
-  （模型默认 qwen3.5:4b, `QA_LLM_MODEL` 可覆盖）; 请求未带 `qa_llm` 时以环境变量为准;
+  （模型跟随 `LLM_MODEL` (systemd drop-in 统一切换, 现 dsv4-qwen35:4b), `QA_LLM_MODEL` 可单独覆盖）; 请求未带 `qa_llm` 时以环境变量为准;
 - 纪律: 只转述注入事实, 事实外答「不知道」; 答案只展示、QA 路径无 PLC 输出;
   超时(20s)/失败/空答案 → 回落分拣路径（PAUSE+HUMAN）; 页面徽标 `💬 简单回答 · LLM 兜底`。
   默认关的原因: 本机 4b 实测 10~16s/请求, 规则层能确定性回答的问题绝不绕道 LLM。

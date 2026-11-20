@@ -301,7 +301,10 @@ def _mat_where_family(word):
 #       模型可用 QA_LLM_MODEL 覆盖 (默认 qwen3.5:4b, 与旁路同款)。
 # ---------------------------------------------------------------------------
 OLLAMA = "http://127.0.0.1:11434/api/generate"
-LLM_MODEL = os.environ.get("QA_LLM_MODEL", "qwen3.5:4b")
+# 模型: QA_LLM_MODEL 专用覆盖; 否则跟随 LLM_MODEL (systemd drop-in llm-model.conf
+# 统一切换, 2026-11-20 发现 QA 兜底没跟上旁路的 dsv4-qwen35:4b — 变量名不一致)
+LLM_MODEL = (os.environ.get("QA_LLM_MODEL")
+             or os.environ.get("LLM_MODEL", "qwen3.5:4b"))
 LLM_TIMEOUT_S = 20.0          # 4b iGPU 实测 10~16s; 超 20s 直接回落分拣路径
 LLM_ENABLED = os.environ.get("QA_LLM") == "1"   # 默认关
 
