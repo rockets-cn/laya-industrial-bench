@@ -686,6 +686,7 @@ PAGE = """<!doctype html>
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
+<div id="flowbox"></div>
 <div id="stockcards" class="cards" style="margin:4px 0 2px"></div>
 <div class="tabbar">
  <button class="tab on" data-tab="res" onclick="switchTab('res')">📋 结果</button>
@@ -693,7 +694,7 @@ PAGE = """<!doctype html>
  <button class="tab" data-tab="trace" onclick="switchTab('trace')">🔍 trace</button>
 </div>
 <div class="tabpanes">
- <div class="pane on" id="pane-res"><div id="flowbox"></div><div id="yardcards" class="cards"></div><div id="out"></div></div>
+ <div class="pane on" id="pane-res"><div id="out"></div></div>
  <div class="pane" id="pane-ledger"><div id="ledger" style="margin:4px 0"></div></div>
  <div class="pane" id="pane-trace"><details class="fold" id="trace" open><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details></div>
 </div>
@@ -1079,23 +1080,15 @@ async function render(d){
   dispBase=[];d.actions.forEach(a=>{for(let i=0;i<(a.qty||1);i++)dispBase.push({yard:a.yard,material:a.material});});
   if(!dispBase.length)dispBase=null;
   dispJobId=null;dispLastHtml='';
-  let yc=''; [1,2,3].forEach(y=>{
-   const items=d.actions.filter(a=>a.yard===y);
-   const tot=items.reduce((s,a)=>s+a.qty,0);
-   const detail=items.length?items.map(a=>
-    `<div class="yd">${MATCN[a.material]||a.material} × ${a.qty}</div>`).join('')
-    :'<div class="yd">—</div>';
-   yc+=`<div class="card"><div class="k">${y}号仓库</div><div class="v ${tot?'':'muted'}">${tot?tot+' 件':'空'}</div>${detail}</div>`;
-  });
-  $('yardcards').innerHTML=yc;
+  // per-run 仓库卡已删 (2026-11-20 用户: 与常驻库存条重复); 各仓库存看常驻库存条
   out+=sec('🚚 仓库分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL')?'PLC 可执行':d.path)+'</span>')
    +(lines.length?`<pre id="displines">${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
- } else {$('yardcards').innerHTML='';dispBase=null;dispJobId=null;}
+ } else {dispBase=null;dispJobId=null;}
  const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':'💬 简单回答'):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
  out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+(d.qa_source==='llm'?' (≤30字 · LLM 兜底, 仅转述注入事实, 未下发 PLC)':' (≤30字 · 规则层直答, 未下发 PLC)'):JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;
- // 决策流程图: 渲染到结果页顶部 #flowbox (2026-11-20 用户要求: 放在仓库数据之前)
+ // 决策流程图: 常驻区 #flowbox (库存条之上, 不随 tab 切换 — 2026-11-20 用户: 别放结果里)
  $('flowbox').innerHTML=FLOW_SVG;
  drawFlow(d); // 注入 DOM 后再点亮状态
  let h='';
