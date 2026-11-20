@@ -478,7 +478,8 @@ async def twin():
     页面回落循环演示 (安全降级, 不影响其他功能)。"""
     out = {"online": False, "fault": None, "active_job": None, "queue": 0,
            "belt_mps": _GATEWAY_CFG.get("conveyor_speed_mps", 1.0),
-           "events": [], "stats": None, "vision": [], "jobs": []}
+           "events": [], "stats": None, "vision": [], "jobs": [],
+           "demands": []}
     try:
         with urllib.request.urlopen(GATEWAY_URL + "/health", timeout=0.4) as r:
             h = json.loads(r.read().decode())
@@ -490,6 +491,8 @@ async def twin():
         out["ir_present"] = bool(h.get("ir_present", False))  # 红外 T0 实时检测 (同步反馈到孪生)
         out["ir_edge_count"] = int(h.get("ir_edge_count", 0))  # 红外 T0 上升沿累计 (事件驱动, 供孪生锁存不漏)
         out["verified"] = h.get("verified") or []  # verified 待核对作业 (方案 B): pushed/remaining/超时余量
+        # 指令需求台账 (2026-11-20): 页面「仓库分拣下发」列表按剩余件数实时减行
+        out["demands"] = h.get("demands") or []
         with urllib.request.urlopen(GATEWAY_URL + "/motion", timeout=0.4) as r:
             m = json.loads(r.read().decode())
         out["events"] = list(m.get("motion", []))[-8:]
@@ -850,6 +853,7 @@ async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
   __gla.setJob(items);}
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
   lastRun=null;setLastRun(null);
+  dispJobId=r.job_id||null;dispLastHtml=''; // 实时减行锚定本 job 的需求台账
   const vnote=r.verified?' · <b>物料校验模式</b>: 已登记需求, 等 HuskyLens 逐件核对后才推 (不匹配直通/超时报警)':'';
   $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued})${vnote} — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
   refreshTwin(); // 下发立即刷一次, 光门运行示意尽快跟上真实时序
@@ -905,6 +909,40 @@ let last3dJobId=''; // 3D 页 (BroadcastChannel 'laya3d'): 仅最新批次转发
 let lastConveyor='stopped'; // 真实带态 (belt 按钮起/停判定 + 文案)
 let twinTimer=null;
 function scheduleTwin(ms){if(twinTimer)clearTimeout(twinTimer);twinTimer=setTimeout(refreshTwin,ms);}
+// ---- 下发列表实时减行 (2026-11-20): 每实推一件, 对应 (仓|物料) 行减一行 ----
+// 数据源 = 网关需求台账 /health demands (job 受理时登记, 每实推一件 consume 1);
+// 作业终态 (/jobs outcome) → ✅ 全部推完 / ⚠ 故障·取消. 仅显示层, 不改业务态.
+let dispBase=null;    // 最近一次下发的逐件基线 [{yard,material}] (render 时记)
+let dispJobId=null;   // 网关 job_id (dispatchRun 成功时记; null=未下发, 不减行)
+let dispLastHtml='';  // 防抖: 内容不变不重排 DOM
+function updateDispatchList(d){
+ const pre=$('displines'); if(!pre)return;
+ if(!dispBase||!dispJobId||!d||d.online===false)return;
+ const jobs=d.jobs||[];
+ const job=jobs.find(j=>String(j.job_id)===String(dispJobId))||null;
+ const rem={};
+ (d.demands||[]).forEach(e=>{if(e.job_id!==dispJobId)return;
+  const k=e.yard+'|'+e.material;rem[k]=(rem[k]||0)+(e.remaining||0);});
+ const hasDem=Object.keys(rem).length>0;
+ const total=dispBase.length;
+ let html;
+ if(job&&job.outcome==='done'&&!hasDem){
+  html=`<span style="color:#4ade80">✅ 已全部推完 (${total} 件)</span>`;
+ }else if(job&&(job.outcome==='fault'||job.outcome==='cancelled')&&!hasDem){
+  html=`<span style="color:#f87171">⚠ 作业${job.outcome==='fault'?'故障中断':'已取消'} · 已推 ${job.pushed||0}/${total} 件 · 剩余作废</span>`;
+ }else{
+  if(!hasDem)return; // 作业未开始登记需求 / 台账暂不可见: 保持基线不动
+  // 按基线顺序消耗剩余池: 某 (仓|物料) 还剩几件就保留几行
+  const pool={};Object.keys(rem).forEach(k=>pool[k]=rem[k]);
+  const lines=[];
+  dispBase.forEach(u=>{const k=u.yard+'|'+u.material;
+   if((pool[k]||0)>0){pool[k]--;lines.push(`${u.yard}号仓库: ${MATCN[u.material]||u.material} × 1`);}});
+  const pushed=total-lines.length;
+  html=(lines.length?lines.join('<br>'):'')
+   +(pushed>0?`${lines.length?'<br>':''}<span style="color:#4ade80">✅ 已推 ${pushed}/${total} 件${(d.verified||[]).some(v=>String(v.job_id)===String(dispJobId))?' · 核对中…':''}</span>`:'');
+ }
+ if(html!==dispLastHtml){dispLastHtml=html;pre.innerHTML=html;}
+}
 async function refreshTwin(){
  const chip=$('gla-mode');
  const srcSel=$('gla-src');
@@ -931,6 +969,7 @@ async function refreshTwin(){
   scheduleTwin(1500);
   return;
  }
+ updateDispatchList(d); // 下发列表实时减行: 每实推一件, 对应 (仓|物料) 减一行
  const st=[{state:'ready',ts_ms:0,manual:false},{state:'ready',ts_ms:0,manual:false},{state:'ready',ts_ms:0,manual:false}];
  (d.events||[]).forEach(ev=>{
   if(!ev||ev.state==null)return; // reset/cancel 只记 via 无 state, 不改状态
@@ -1004,6 +1043,10 @@ async function render(d){
  let out='';
  if(d.domain==='yard'){
   const lines=d.actions.map(a=>`${a.yard}号仓库: ${MATCN[a.material]||a.material} × ${a.qty}`);
+  // 下发列表实时减行基线: 逐件展开 [{yard,material}]; 作业级终态由 updateDispatchList 判定
+  dispBase=[];d.actions.forEach(a=>{for(let i=0;i<(a.qty||1);i++)dispBase.push({yard:a.yard,material:a.material});});
+  if(!dispBase.length)dispBase=null;
+  dispJobId=null;dispLastHtml='';
   let yc=''; [1,2,3].forEach(y=>{
    const items=d.actions.filter(a=>a.yard===y);
    const tot=items.reduce((s,a)=>s+a.qty,0);
@@ -1014,10 +1057,10 @@ async function render(d){
   });
   $('yardcards').innerHTML=yc;
   out+=sec('🚚 仓库分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL')?'PLC 可执行':d.path)+'</span>')
-   +(lines.length?`<pre>${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
+   +(lines.length?`<pre id="displines">${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'')
    +FLOW_SVG; // 决策流程图: 紧跟在仓库分拣下发之后
- } else {$('yardcards').innerHTML='';out+=FLOW_SVG;}
+ } else {$('yardcards').innerHTML='';out+=FLOW_SVG;dispBase=null;dispJobId=null;}
  const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':'💬 简单回答'):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
  out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+(d.qa_source==='llm'?' (≤30字 · LLM 兜底, 仅转述注入事实, 未下发 PLC)':' (≤30字 · 规则层直答, 未下发 PLC)'):JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;

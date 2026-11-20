@@ -536,6 +536,16 @@ class SortGateway:
                 {"yard": yard, "remaining": qty, "job_id": job_id,
                  "t": time.time()})
 
+    def _demands_snapshot(self):
+        """需求台账快照 (/health 暴露): 逐条 {material, yard, remaining, job_id},
+        仅 remaining>0 — 页面「仓库分拣下发」列表按此实时减行
+        (2026-11-20: 每实推一件 consume 1, 对应物料行数 -1)."""
+        with self.demands_lock:
+            return [{"material": mat, "yard": e["yard"],
+                     "remaining": e["remaining"], "job_id": e["job_id"]}
+                    for mat, dq in sorted(self.demands.items())
+                    for e in dq if e["remaining"] > 0]
+
     def _demand_drop_job(self, job_id):
         """丢弃某 job 的未消费需求 (job 失败/撤销: 不再按它的仓路由)."""
         with self.demands_lock:
@@ -1203,6 +1213,10 @@ class SortGateway:
                                       "idle_stop_in_s": (
                                           round(gw._idle_stop_at - time.time(), 1)
                                           if gw._idle_stop_at else None),
+                                      # 指令需求台账快照 (2026-11-20):
+                                      # 逐 (物料|仓) 剩余件数 — 页面下发列表
+                                      # 按此实时减行 (每实推一件减一行)
+                                      "demands": gw._demands_snapshot(),
                                       # verified 待核对作业 (2026-11-19 方案 B):
                                       # 逐件核对进度 pushed/remaining + 超时余量
                                       "verified": [
