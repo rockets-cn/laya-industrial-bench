@@ -687,7 +687,6 @@ PAGE = """<!doctype html>
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
-<div id="cards" class="cards"></div>
 <div id="stockcards" class="cards" style="margin:4px 0 2px"></div>
 <div class="tabbar">
  <button class="tab on" data-tab="res" onclick="switchTab('res')">📋 结果</button>
@@ -762,7 +761,6 @@ async function pushBin(n){
  }catch(e){alert('推杆 '+n+' 失败: '+e.message);}
  scheduleTwin(0); // 立即轮询一次: 推杆按钮「推杆中」+ SVG 动画即时更新, 不等下一 tick
 }
-function card(k,v,cls){return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`}
 function sec(t){return `<div class="sec">${t}</div>`}
 const domain='yard'; // 页面专属仓库分拣 (后端 API 仍支持 fruit/block/mixed 基准域; 域标识保持 yard 不变)
 const LEDGER_MAT={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:'梨',red_block:'红色方块',green_block:'绿色方块',yellow_block:'黄色方块',blue_block:'蓝色方块',
@@ -840,7 +838,7 @@ function drawFlow(d){
  else{['fn1','fn2','fn3','fn4','fn5'].forEach(i=>set(i,'on'));set('fn6',d.bypass_ms?'warn':'off');set('fn7','stop')}
  $('fn-asr').textContent=d.asr_ms!=null?d.asr_ms+' ms':'—';
  $('fn-laya').textContent=d.laya_ms!=null?d.laya_ms+' ms':'—';
- $('fn-bypass').textContent=d.bypass_ms?d.bypass_ms+' ms':'未触发';
+ $('fn-bypass').textContent=d.dist_ms?d.dist_ms+' ms':(d.bypass_ms?d.bypass_ms+' ms':'未触发');
  $('fn-e2e').textContent='E2E '+d.e2e_ms+' ms';
 }
 async function runText(){
@@ -1073,8 +1071,8 @@ async function render(d){
  // 台账面板开着时, 每次产生可执行下发 (已自动记入) 就刷新
  if(ledOpen&&d.actions&&d.actions.length&&['FAST','EXPAND','PARTIAL'].includes(d.path))refreshLedger();
  const pcls='path-'+d.path;
- $('cards').innerHTML=card('路径',d.path,pcls)+card('E2E',d.e2e_ms+' ms')+card('ASR',d.asr_ms+' ms')
-   +card('Laya',d.laya_ms+' ms')+(d.dist_ms?card('LLM 分配',d.dist_ms+' ms'):d.bypass_ms?card('LLM 旁路',d.bypass_ms+' ms'):card('LLM 旁路','—','muted'));
+ // 指标卡已并入决策流程图 (2026-11-20 用户要求: 同一信息不重复出现) —
+ // 路径=节点点亮 + 下发 chip, E2E/ASR/Laya/旁路 ms 全在流程图节点上
  let out='';
  if(d.domain==='yard'){
   const lines=d.actions.map(a=>`${a.yard}号仓库: ${MATCN[a.material]||a.material} × ${a.qty}`);
