@@ -620,7 +620,6 @@ PAGE = """<!doctype html>
 </style></head><body><div class="wrap">
 <h1>🏭 仓库分拣线 · 数字孪生<span class="ver">光门/推杆/带态 实时还原 + 语音·文本决策回路 · 模拟/真实数据源 · 失败降级 暂停+人工</span></h1>
 <div class="main"><div id="colL">
-<div class="sec" style="margin-top:4px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
 <div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
   <button id="btnBelt" onclick="beltToggle()" title="传送带 起/停 (真机 + 网页同步)" style="min-width:104px">⏯ 传送带</button>
