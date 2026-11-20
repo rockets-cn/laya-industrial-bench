@@ -503,8 +503,8 @@ async def twin():
                                      .get("vision", []))[-8:]
         except Exception:
             pass
-        # 模型 vs 实际对照 (网关 /jobs): 逐批次 命令 vs 执行 vs HL 实际看到.
-        # 独立 try — 旧网关无此端点时只缺对照表, 不拖垮孪生同步 (安全降级).
+        # 批次转发数据源 (网关 /jobs): 最新 job → BC 下发 3D 页复现指令批次.
+        # 独立 try — 旧网关无此端点时不拖垮孪生同步 (安全降级).
         try:
             with urllib.request.urlopen(GATEWAY_URL + "/jobs", timeout=0.4) as r:
                 out["jobs"] = list(json.loads(r.read().decode())
@@ -650,11 +650,6 @@ PAGE = """<!doctype html>
 </ul>
 </details>
 </div><!-- /svgView -->
-</div>
-<div class="sec" style="margin-top:12px">🔍 模型 vs 实际对照（laya 命令 ↔ edge101 执行 ↔ HuskyLens 实际看到 · 逐批次 · mismatch 高亮）</div>
-<div id="cmpwrap" style="background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 12px">
- <div id="cmphead" style="font-size:12px;color:#8a91a0;margin-bottom:6px">网关离线 · 暂无对照数据</div>
- <div id="cmp" style="overflow-x:auto"></div>
 </div>
 <div class="row">
  <select id="preset" onchange="runPresetSel()" title="测试指令预设"><option value="" selected>预设指令…</option></select>
@@ -906,7 +901,6 @@ window.addEventListener('resize',function(){if(camOn)camPlace();});
 // ---- 光门运行示意 · 数字孪生同步: 轮询 /twin (代理网关 health/motion/stats) ----
 // 在线 → SVG 切实时模式 (推杆/光门/料道按运动时间线还原); 离线 → 回落循环演示
 let twinSig='';
-let lastJobsSig=''; // 模型vs实际对照表: 仅 jobs 变化时重渲, 避免每 250ms 闪烁
 let last3dJobId=''; // 3D 页 (BroadcastChannel 'laya3d'): 仅最新批次转发一次
 let lastConveyor='stopped'; // 真实带态 (belt 按钮起/停判定 + 文案)
 let twinTimer=null;
@@ -984,12 +978,10 @@ async function refreshTwin(){
  }
  if(chip)chip.textContent=`数字孪生在线 · ${src==='sim'?'模拟':'真实'} · 实时同步 (带速 ${d.belt_mps||1} m/s${beltOn?' · 运行中':(d.conveyor==='fault'?' · ⚠ 带故障':' · 待机')})`;
  updateCtlButtons(src, st, d.fault); // 手动控制按钮: 真实源可用 + 推杆随 motion 显示「推杆中」 + 传送带随带态改文案 + 故障锁存时显示「清故障」
- // 模型 vs 实际对照表: 仅 jobs 变化时重渲 (网关 /jobs 逐批次 命令 vs 执行 vs HL)
- {const jsig2=JSON.stringify(d.jobs||[]);
-  const jb=(d.jobs||[])[(d.jobs||[]).length-1];
+ // 3D 页批次转发: 最新 job 变化时经 BC 下发 (3D 页 sim 模式按此复现指令批次)
+ {const jb=(d.jobs||[])[(d.jobs||[]).length-1];
   if(jb&&String(jb.job_id||'')!==last3dJobId){last3dJobId=String(jb.job_id||'');
-   if(bc3d)bc3d.postMessage({type:'job',items:(jb.actions||[]).map(a=>({material:a.material,bin:a.yard,qty:a.qty}))});}
-  if(jsig2!==lastJobsSig){lastJobsSig=jsig2;renderJobs(d.jobs||[]);}}
+   if(bc3d)bc3d.postMessage({type:'job',items:(jb.actions||[]).map(a=>({material:a.material,bin:a.yard,qty:a.qty}))});}}
  const anyBusy=st.some(s=>s.state==='busy')||(src==='device'&&lastConveyor==='running');
  scheduleTwin(src==='sim'?250:(anyBusy?70:500)); // 有运动(推杆忙/带在跑)→70ms 紧跟真机; 待机 500ms; 模拟 250ms
 }
@@ -1000,43 +992,6 @@ const MATCN={red_apple:'红苹果',green_apple:'绿苹果',banana:'香蕉',pear:
 const MATCOL={red_apple:'#ef4444',green_apple:'#4ade80',banana:'#fbbf24',pear:'#a3d977',
  red_block:'#ef4444',green_block:'#4ade80',yellow_block:'#facc15',blue_block:'#60a5fa',
  angle_sensor:'#60a5fa',ultrasonic_sensor:'#fb923c',pir_sensor:'#ef4444',temp_humidity_sensor:'#4ade80'};
-// ---- 模型 vs 实际对照 (网关 /jobs 逐批次): laya 命令 vs edge101 执行 vs HL 实际看到 ----
-const CMP_JC={ok:{t:'✓ 一致',c:'#4ade80'},mismatch:{t:'⚠ 物料mismatch',c:'#fb923c'},fault:{t:'✗ 执行失败',c:'#f87171'},cancelled:{t:'✎ 已撤销',c:'#8a91a0'}};
-function mc(m){return (typeof MATCN!=='undefined'&&MATCN[m])||m;}
-function renderJobs(jobs){
- const el=document.getElementById('cmp'),head=document.getElementById('cmphead');
- if(!el)return;
- if(!jobs.length){el.innerHTML='';head.textContent='暂无批次 · 下发一条指令后此处逐件对照 命令 vs 执行 vs HL实际看到';return;}
- head.textContent='最近 '+jobs.length+' 批次 · 命令(laya) vs 执行(edge101) vs HuskyLens实际看到 · HL按时间窗就近关联(时序近似, 非逐件绑定)';
- let h='<table style="width:100%;border-collapse:collapse;font-size:12.5px">'
-  +'<tr><th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">批次</th>'
-  +'<th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">命令 (物料/仓/数量)</th>'
-  +'<th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">执行 (edge101)</th>'
-  +'<th style="border:1px solid #262b36;padding:6px 8px;text-align:left;color:#8a91a0">HL 实际看到</th>'
-  +'<th style="border:1px solid #262b36;padding:6px 8px;text-align:center;color:#8a91a0">判定</th></tr>';
- jobs.forEach(j=>{
-  const cmd=(j.actions||[]).map(a=>`${a.yard}号 ${mc(a.material)} ×${a.qty}`).join(' · ')||'—';
-  let exec;
-  if(j.outcome==='cancelled'){const tot=(j.pushed||0)+(j.remaining||0);
-   exec=`<span style="color:#8a91a0">✎ 已撤销 (已推 ${j.pushed||0}/${tot})</span>`;}
-  else if(j.outcome!=='done'){const f=j.fault||{};
-   exec=`<span style="color:#f87171">✗ ${f.device||'故障'} ${f.error||''}</span>`;}
-  else{const drs=(j.divert_results||[]).map(d=>`${d.yard}号${d.ok?' <span style="color:#4ade80">✓</span>':' <span style="color:#f87171">✗</span>'}${(d.qty>1)?'×'+d.qty:''}`).join(' · ');
-   exec=`<span style="color:#4ade80">done</span> · ${drs||'—'}${(j.pushed!=null)?` · 🔍核对 ${j.pushed} 件`:''}${(j.e2e_ms!=null)?' · '+j.e2e_ms+'ms':''}`;}
-  const hl=(j.hl_materials&&j.hl_materials.length)?j.hl_materials.map((m,i)=>{
-    const conf=(j.hl_conf&&j.hl_conf[i]!=null)?' '+Math.round(j.hl_conf[i]*100)+'%':'';
-    const bad=j.hl_mismatch&&j.hl_mismatch.indexOf(m)>=0;
-    return `<span style="color:${bad?'#fb923c':'#8a91a0'}">${mc(m)}${conf}${bad?' ⚠':''}</span>`;}).join(', '):'<span style="color:#5b6270">—</span>';
-  const jc=CMP_JC[j.judgment]||CMP_JC.ok;
-  h+=`<tr><td style="border:1px solid #262b36;padding:6px 8px;color:#8a91a0">${String(j.job_id||'').slice(-8)}</td>`
-   +`<td style="border:1px solid #262b36;padding:6px 8px">${cmd}</td>`
-   +`<td style="border:1px solid #262b36;padding:6px 8px">${exec}</td>`
-   +`<td style="border:1px solid #262b36;padding:6px 8px">${hl}</td>`
-   +`<td style="border:1px solid #262b36;padding:6px 8px;text-align:center;font-weight:700;color:${jc.c}">${jc.t}</td></tr>`;
- });
- h+='</table>';
- el.innerHTML=h;
-}
 async function render(d){
  setLastRun(d);
  if(lastRun)dispatchRun(); // 语音/文本指令 → 自动执行到所选数据源, 动画演示对应操作 (QA/暂停路径无 actions, 不触发)
