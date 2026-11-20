@@ -703,7 +703,7 @@ PAGE = """<!doctype html>
 <div class="tabpanes">
  <div class="pane on" id="pane-res"><div id="out"></div></div>
  <div class="pane" id="pane-ledger"><div id="ledger" style="margin:4px 0"></div></div>
- <div class="pane" id="pane-trace"><details class="fold" id="trace" open><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details></div>
+ <div class="pane" id="pane-trace"><div class="sec">全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</div><div id="tracebody"></div></div>
 </div>
 </div><!-- /colR -->
 </div><!-- /main -->
@@ -1107,7 +1107,6 @@ async function render(d){
  h+=sec('校验器')+`<pre>通过: ${d.validator_ok?'✅':'❌'}  动作: ${JSON.stringify(d.actions)}  拒绝原因: ${d.reject_reasons.join('; ')||'无'}</pre>`;
  if(d.bypass)h+=sec('LLM 旁路')+`<pre>输出提及: ${JSON.stringify(d.bypass.raw_mentions)}  原因: ${d.bypass.reasons.join('; ')||'无'}</pre>`;
  $('tracebody').innerHTML=h;
- $('trace').open=d.path!=='FAST';
  switchTab('res'); // 每次运行后自动切回结果页 (单页 tab 布局, 2026-11-20)
 }
 let ac=null,proc=null,src=null,stream=null,armed=false,flushing=false;
