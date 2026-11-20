@@ -810,24 +810,12 @@ async function refreshLedger(){
    yc+=`<div class="card"><div class="k">${y}号仓库 库存</div><div class="v ${tot?'':'muted'}">${tot>0?tot+' 件':(tot<0?'负 '+Math.abs(tot):'空')}</div>${rows}</div>`;
   });
   let h='<div class="cards">'+yc+'</div>'
-   +sec('📜 最近流水 <span class="chip">'+d.moves+' 笔 · 入=分拣下发自动记 出=手动</span>')
+   +sec('📜 最近流水 <span class="chip">'+d.moves+' 笔 · 入=分拣下发自动记 出=API</span>')
    +'<pre style="font-size:12px">'+(d.recent.length?d.recent.map(r=>
     `${r.ts.slice(5)} ${r.direction==='in'?'入':'<span style="color:#fb923c">出</span>'} ${r.yard}号 ${LEDGER_MAT[r.material]||r.material} ×${r.qty} (${r.path})`).join(String.fromCharCode(10)):'暂无流水 — 跑一条分拣指令试试')+'</pre>'
-   +sec('📤 手动出库')+'<div class="row">'
-   +'<select id="loyard">'+[1,2,3].map(y=>`<option value="${y}">${y}号</option>`).join('')+'</select>'
-   +'<select id="lomat">'+Object.entries(LEDGER_MAT).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')+'</select>'
-   +'<input id="loqty" type="number" min="1" max="999" value="1" style="width:72px">'
-   +'<button onclick="ledgerOut()">出库</button>'
-   +'<button onclick="ledgerReset()" style="margin-left:auto;color:#f87171" title="DELETE 全部流水, 库存归零 (服务无需停止)">🗑 清空台账</button></div>';
+   +'<div class="row"><button onclick="ledgerReset()" style="margin-left:auto;color:#f87171" title="DELETE 全部流水, 库存归零 (服务无需停止)">🗑 清空台账</button></div>';
   $('ledger').innerHTML=h;refreshStock();
  }catch(e){$('ledger').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
-}
-async function ledgerOut(){
- const q=+$('loqty').value;
- if(!(q>=1&&q<=999)){alert('数量需 1~999');return}
- try{await jpost('/ledger/out',{yard:+$('loyard').value,material:$('lomat').value,qty:q});
-  $('loqty').value=1;refreshLedger();
- }catch(e){alert('出库失败: '+e.message)}
 }
 async function ledgerReset(){
  if(!confirm('确定清空整个台账？所有流水与库存将归零, 不可恢复。'))return;
