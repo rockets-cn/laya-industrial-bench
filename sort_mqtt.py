@@ -73,6 +73,10 @@ DEFAULT_CFG = {
     "conveyor_speed_mps": 0.0525,
     "ack_timeout_s": 3.0,
     "ack_retries": 2,
+    # 仓距 (2026-11-20 起运行时可调, 免编译/烧录): IR 触点 -> 推杆, [d1,d2,d3] mm.
+    # 单一真源: 改这里 → 重启网关或 POST /config/apply → 固件落 NVS (掉电/重烧保持).
+    # 当前定案值 2026-11-20 用户尺量: 等距 53/53mm.
+    "bin_dist_mm": [105.0, 158.0, 211.0],
     # divert 实际耗时 ≈ 0.9s/件 (固件 SERVO 拨出+件间间隔), 固定 3s 超时
     # 在 qty≥4 时会误判超时 -> 重发 -> 设备 busy -> 故障锁存/重复拨料.
     # 因此 divert 超时 = ack_timeout_s + divert_timeout_per_item_s × qty.
@@ -268,6 +272,10 @@ class SortGateway:
         self.conveyor_note = ""                    # 最近一次 conveyor 遥测 note (带健康监测原因)
         self.ir_present = False                    # 红外 T0 实时"物品在 IR"态 (固件每 500ms 上报 + 沿即时)
         self.ir_edge_count = 0                     # 红外 T0 上升沿累计 (物体过 IR 次数): 事件驱动, 绝不漏, 供孪生锁存
+        # 仓距运行时可调 (2026-11-20): 设备侧实际值 (来自遥测 bin_dist) 与
+        # config bin_dist_mm 对账; _dev_last_tele 用于检测设备重新上线 → 重推.
+        self.bin_dist_device = None
+        self._dev_last_tele = 0.0
         self._pending = {}                         # (kind, name, job_id) -> ack 槽位
         self._pending_lock = threading.Lock()
         self._rr_counter = {}                      # round_robin 每物料轮转计数
@@ -301,6 +309,7 @@ class SortGateway:
         c = self.cfg["conveyor_id"]
         # 注意: paho-mqtt 2.x 要求 + / # 独占一级, "sort/sorter+/..." 是非法过滤器
         return [f"sort/{c}/conveyor/telemetry", f"sort/{c}/conveyor/ack/+",
+                f"sort/{c}/config/ack/+",
                 "sort/+/telemetry", "sort/+/ack/+",
                 f"sort/{c}/motion",
                 "sort/inbound/command", "sort/inbound/vision",
@@ -336,11 +345,22 @@ class SortGateway:
                 if _new_ir and not self.ir_present:
                     self.ir_edge_count += 1   # 上升沿: 一件物体过 IR (事件驱动记录, 绝不漏)
                 self.ir_present = _new_ir
+                if isinstance(payload.get("bin_dist"), list) and len(payload["bin_dist"]) == 3:
+                    self.bin_dist_device = [float(x) for x in payload["bin_dist"]]
+                # 设备重新上线 (遥测中断 >10s 后恢复): 重推仓距, 保 json→设备一致
+                _now_t = time.time()
+                if self._dev_last_tele and _now_t - self._dev_last_tele > 10.0:
+                    self._push_bin_dist("device-reconnect", wait_s=None)
+                self._dev_last_tele = _now_t
                 if self.dev_state["conveyor"] == "fault":
                     self._latch_conveyor_fault()
             else:
                 self._set_ack("conveyor", self.cfg["conveyor_id"],
                               m.group(3) or "", payload)
+            return
+        m = re.match(r"sort/([^/]+)/config/ack/(.+)$", t)
+        if m:
+            self._set_ack("config", m.group(1), m.group(2), payload)
             return
         m = re.match(r"sort/(sorter\d+)/(telemetry|ack)(?:/(.+))?$", t)
         if m:
@@ -912,6 +932,67 @@ class SortGateway:
         except Exception as e:
             print(f"[gateway] 发布失败 {topic}: {e}", flush=True)
 
+    # ---------- 仓距下发 (2026-11-20 运行时可调) ----------
+    def _push_bin_dist(self, reason="startup", wait_s=None):
+        """把 config 的 bin_dist_mm 推给固件 (sort/line1/config/cmd set_bin_dist).
+
+        固件校验 (0<d1<d2<d3<400) → 写 RAM + 落 NVS → ACK. wait_s=None 时
+        fire-and-forget (启动/设备重连场景: 设备可能还没上线, 不等 ack);
+        /config/apply 用 wait_s=ack_timeout_s 同步等应答. 返回 result
+        (ok/fault/None=未等/None=超时).
+        """
+        vals = self.cfg.get("bin_dist_mm") or []
+        if len(vals) != 3:
+            print(f"[gateway] bin_dist_mm 缺/非法 {vals!r}, 不推送", flush=True)
+            return None
+        try:
+            vals = [float(v) for v in vals]
+        except Exception:
+            print(f"[gateway] bin_dist_mm 非数值 {vals!r}, 不推送", flush=True)
+            return None
+        job_id = self._new_job_id()
+        payload = {"job_id": job_id, "action": "set_bin_dist",
+                   "bin_dist": vals, "ts": _now()}
+        self._publish(f"sort/{self.cfg['conveyor_id']}/config/cmd", payload)
+        if wait_s is None:
+            print(f"[gateway] bin_dist 已推送 {vals} ({reason}, fire-and-forget)",
+                  flush=True)
+            return "sent"
+        result, note = self._wait_ack("config", self.cfg["conveyor_id"],
+                                      job_id, float(wait_s))
+        tag = "ok" if result == "ok" else ("timeout" if result is None else result)
+        print(f"[gateway] bin_dist 推送 {tag}: {vals} ({reason}) note={note}",
+              flush=True)
+        if result is not None and result != "ok":
+            return f"{result}: {note}"   # fault 时带上设备原因, 供 HTTP 400 回显
+        return result
+
+    def _push_bin_dist_with(self, vals, reason="http", wait_s=None):
+        """_push_bin_dist 的定值版: 推送给定的 [d1,d2,d3] (而非 config 值).
+        供 /config/apply 请求体传值用; 返回 ok/"sent"/"fault: 原因"/None(超时)."""
+        try:
+            vals = [float(v) for v in vals]
+        except Exception:
+            return "bin_dist 需 [d1,d2,d3] 三个值"
+        if len(vals) != 3:
+            return "bin_dist 需 [d1,d2,d3] 三个值"
+        job_id = self._new_job_id()
+        payload = {"job_id": job_id, "action": "set_bin_dist",
+                   "bin_dist": vals, "ts": _now()}
+        self._publish(f"sort/{self.cfg['conveyor_id']}/config/cmd", payload)
+        if wait_s is None:
+            print(f"[gateway] bin_dist 已推送 {vals} ({reason}, fire-and-forget)",
+                  flush=True)
+            return "sent"
+        result, note = self._wait_ack("config", self.cfg["conveyor_id"],
+                                      job_id, float(wait_s))
+        tag = "ok" if result == "ok" else ("timeout" if result is None else result)
+        print(f"[gateway] bin_dist 推送 {tag}: {vals} ({reason}) note={note}",
+              flush=True)
+        if result is not None and result != "ok":
+            return f"{result}: {note}"   # fault 时带上设备原因, 供 HTTP 400 回显
+        return result
+
     # ---------- verified (2026-11-19 方案 B: 物料校验式下发) ----------
     def _verified_progress(self, job_id, outcome):
         """verified 作业进度记账: 逐件 vision divert done -> pushed+1 /
@@ -1108,6 +1189,15 @@ class SortGateway:
                                       "ir_present": gw.ir_present,
                                       # 红外 T0 上升沿累计 (物体过 IR 次数): 事件驱动, 绝不漏, 供孪生锁存
                                       "ir_edge_count": gw.ir_edge_count,
+                                      # 仓距 (2026-11-20 运行时可调): config 值 vs 设备实际值 (遥测)
+                                      "bin_dist_mm": gw.cfg.get("bin_dist_mm"),
+                                      "bin_dist_device": gw.bin_dist_device,
+                                      "bin_dist_in_sync": (
+                                          gw.bin_dist_device is not None
+                                          and gw.cfg.get("bin_dist_mm") is not None
+                                          and [round(float(x), 1) for x in gw.bin_dist_device]
+                                          == [round(float(x), 1)
+                                              for x in gw.cfg["bin_dist_mm"]]),
                                       # 完成延时停带倒计时余量 (s): 任务完成后
                                       # N s 内无新作业/起带则自动停带; null=无待停
                                       "idle_stop_in_s": (
@@ -1220,6 +1310,33 @@ class SortGateway:
                     if gw.cfg.get("dispatch_mode") == "verified":
                         resp["verified"] = True  # 已登记需求, 等相机逐件核对
                     self._send(202, resp)
+                elif self.path == "/config/apply":
+                    # 仓距下发 (2026-11-20): 推给固件 (校验+落 NVS), 免编译/烧录.
+                    # 值来源: 请求体 {"bin_dist_mm":[d1,d2,d3]} 优先, 否则用
+                    # 启动时加载的 config (改 config/sort_gateway.json 需重启
+                    # 网关或直接在请求体传值).
+                    if not gw._connected.is_set():
+                        self._send(503, {"error": "gateway mqtt 未连接"})
+                        return
+                    vals = body.get("bin_dist_mm") or gw.cfg.get("bin_dist_mm")
+                    if vals is None:
+                        self._send(500, {"ok": False,
+                                         "note": "无 bin_dist_mm (config 未配且请求体未传)"})
+                        return
+                    result = gw._push_bin_dist_with(vals, "http /config/apply",
+                                                    wait_s=float(gw.cfg["ack_timeout_s"]))
+                    if result == "ok":
+                        self._send(200, {"ok": True, "bin_dist_mm": vals,
+                                         "note": "设备已应用并落 NVS (掉电保持)"})
+                    elif result is None:
+                        self._send(502, {"ok": False, "bin_dist_mm": vals,
+                                         "note": "设备未应答 (未上线? 超时)"})
+                    else:
+                        rstr = str(result)
+                        note = rstr.split(": ", 1)[1] if rstr.startswith("fault: ") \
+                            else rstr
+                        self._send(400, {"ok": False, "bin_dist_mm": vals,
+                                         "note": "设备校验拒绝: " + note})
                 elif self.path == "/fault/clear":
                     had = gw.clear_fault("http")
                     self._send(200, {"cleared": had is not None, "had": had})
@@ -1302,6 +1419,9 @@ class SortGateway:
         self.client.loop_start()
         if not self._connected.wait(10):
             raise RuntimeError("MQTT 连接超时")
+        # 仓距下发 (2026-11-20): 启动即推 (fire-and-forget: 设备可能还没
+        # 上线; 设备上线后遥测断口检测会重推, 不丢).
+        self._push_bin_dist("gateway startup", wait_s=None)
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.stats_loop, daemon=True).start()
         threading.Thread(target=self.verified_loop, daemon=True).start()

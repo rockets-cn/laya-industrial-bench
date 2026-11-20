@@ -136,6 +136,29 @@ topic: `sort/line1/conveyor/telemetry` / `sort/sorter{n}/telemetry`
 - 分拣器 `state`: `ready|armed|busy|fault`
 - 网关据此选择传送带动作 (running 跳过 / stopped→start / paused→resume /
   fault→直接故障等人工 reset)。遥测丢失不阻塞命令路径, 只影响状态优化。
+- 传送带遥测另含 `ir_present` (红外 T0 实时态) 与 `bin_dist` ([d1,d2,d3]mm,
+  设备侧仓距实际值, 2026-11-20 起; 网关 /health 与 config 对账)。
+
+### 配置通道 `sort/line1/config/cmd` (网关 → 设备, QoS1, 2026-11-20 起)
+
+运行时参数 (当前仅仓距), 免编译/烧录。
+
+topic: `sort/line1/config/cmd` (下行) / `sort/line1/config/ack/{job_id}` (应答, **不 retain**)
+
+```json
+{"job_id": "j123", "action": "set_bin_dist", "bin_dist": [105.0, 158.0, 211.0], "ts": "..."}
+{"job_id": "j123", "action": "set_bin_dist", "result": "ok", "note": "105/158/211mm 已落 NVS", "ts": ""}
+```
+
+- `set_bin_dist`: 仓距 = IR 触点 → 推杆 (mm), [d1,d2,d3] 对应 1/2/3 号仓。
+  固件校验 `0 < d1 < d2 < d3 < 400` (严格递增), 非法回 `result:"fault"` + 原因。
+  合法 → 写 RAM (立即生效) + 落 NVS (namespace `sortcfg`, 掉电/重烧保持;
+  esptool 烧录只写 app 分区, 不擦 NVS)。
+- 网关行为: 启动即推 (fire-and-forget); 设备重连上线 (遥测断口 >10s) 自动重推;
+  `POST /config/apply` 同步推 (等 3s ACK, 200=ok / 502=超时 / 400=校验拒绝)。
+- 单一真源: 网关 `config/sort_gateway.json` 的 `bin_dist_mm`; 固件 config.h
+  的 `BIN_DIST_MM_*` 仅作无 NVS 记录时的回退默认。设备侧实际值见
+  `/health` → `bin_dist_device` / `bin_dist_in_sync`。
 
 ### 运动事件 `sort/line1/motion` (设备 → 网关, QoS0, 状态迁移时)
 

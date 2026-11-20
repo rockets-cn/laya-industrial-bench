@@ -19,10 +19,16 @@
   "queue_max": 16,
   "dispatch_mode": "verified",
   "_dispatch_mode_comment": "blind=语音指令盲拨 qty=N (不认料, 过 IR 就推, 残留指令=无叫也推); verified=物料校验式下发 (2026-11-19 方案 B, 实机回归中): 指令=需求不盲拨, HuskyLens 逐件核对物料后推, 不匹配直通带尾, 超时 verified_timeout_s 未见匹配物料->故障. 切回 blind: 改本字段 + systemctl --user restart laya-sort-gateway",
-  "idle_stop_after_job_s": 10.0,
+  "idle_stop_after_job_s": 0,
   "_idle_stop_comment": "任务完成后 (blind 批次 done / verified 需求核对齐 / 作业撤销) N 秒内无新作业且无手动起带 -> 自动停带 (用户 2026-11-19: 完成任务后 10 秒停传送带). 0=禁用 (带子保持 running)",
   "verified_timeout_s": 90.0,
   "vision_dispatch": false,
   "_vision_dispatch_comment": "false=无指令物料直通带尾, 不自动推 (用户 2026-11-18: 没指令不要自己推); true=HL 自动分拣模式 (按需求/映射表自动下发). 注: dispatch_mode=verified 时逐件核对下发自动生效, 此开关只控制'无指令自动分拣'旧行为, verified 下无指令仍不推",
-  "vision_dispatch_absence_s": 0.8
+  "vision_dispatch_absence_s": 0.8,
+  "bin_dist_mm": [
+    105.0,
+    158.0,
+    211.0
+  ],
+  "_bin_dist_comment": "仓距 IR触点->推杆 [d1,d2,d3]mm (2026-11-20 用户尺量定案, 等距53/53). 运行时可调: 改本值 -> POST :8123/config/apply (或重启网关) -> 固件落 NVS 掉电保持, 免编译/烧录; 设备侧实际值见 /health bin_dist_device"
 }

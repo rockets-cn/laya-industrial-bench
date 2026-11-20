@@ -35,18 +35,27 @@ inline std::string ackJson(const char* job_id, const char* action,
            ",\"ts\":" + jsonStr(ts) + "}";
 }
 
-// 传送带遥测: {state, speed_mps, steps_total, ts, note, ir_present}
+// 传送带遥测: {state, speed_mps, steps_total, ts, note, ir_present, bin_dist?}
 // ir_present: 红外 T0 (GPIO34) 实时"物品在 IR"态 (0/1), 供数字孪生同步反馈 (不依赖分拣指令)
+// bin_dist: 设备侧仓距 [d1,d2,d3]mm (2026-11-20 起; 网关 /health 对账用).
 inline std::string conveyorTele(const char* state, double speed,
                                 uint64_t steps, const char* ts = "",
-                                const char* note = "", int ir_present = 0) {
+                                const char* note = "", int ir_present = 0,
+                                const double* bin_dist_mm = nullptr) {
     char speed_s[32];
     snprintf(speed_s, sizeof(speed_s), "%.2f", speed);
-    return "{\"state\":" + jsonStr(state) + ",\"speed_mps\":" + speed_s +
+    std::string out = "{\"state\":" + jsonStr(state) + ",\"speed_mps\":" + speed_s +
            ",\"steps_total\":" + std::to_string(steps) +
            ",\"ts\":" + jsonStr(ts) +
            ",\"note\":" + jsonStr(note ? note : "") +
-           ",\"ir_present\":" + std::to_string(ir_present ? 1 : 0) + "}";
+           ",\"ir_present\":" + std::to_string(ir_present ? 1 : 0);
+    if (bin_dist_mm) {
+        char d[3][16];
+        for (int i = 0; i < 3; i++)
+            snprintf(d[i], sizeof(d[i]), "%.1f", bin_dist_mm[i + 1]);
+        out += ",\"bin_dist\":[" + std::string(d[0]) + "," + d[1] + "," + d[2] + "]";
+    }
+    return out + "}";
 }
 
 // 分拣器遥测: {state, diverted_total, last_material, ts}
@@ -116,5 +125,26 @@ inline std::string sorterTeleTopic(int n) {
 }
 inline std::string visionTopic() { return "sort/inbound/vision"; }
 inline std::string motionTopic() { return "sort/line1/motion"; }
+// 配置通道 (2026-11-20): 仓距等参数运行时可调, 免编译/烧录.
+// 下行 {"job_id","action":"set_bin_dist","bin_dist":[d1,d2,d3]} (QoS1);
+// 应答 sort/line1/config/ack/{job_id} (不 retain: job_id 每次唯一,
+// 与 conveyor/ack 的 retained 陷阱无关).
+inline std::string configCmdTopic() { return "sort/line1/config/cmd"; }
+inline std::string configAckTopic(const char* job_id) {
+    return "sort/line1/config/ack/" + std::string(job_id);
+}
+
+// set_bin_dist 校验: 返回错误串 (空 = 通过). 仓距 = IR 触点 -> 推杆 (mm).
+// 约束: 3 值全在 (0,400) 且严格递增 (仓 1/2/3 沿带面顺序). 上限 400mm =
+// 带面可视行程的宽裕上限 (640px 相机面 ≈ 160mm, 推杆最大行程 ~260mm).
+inline std::string binDistValidate(double d1, double d2, double d3) {
+    if (d1 <= 0.0 || d2 <= 0.0 || d3 <= 0.0)
+        return "bin_dist 值必须 >0";
+    if (d1 >= 400.0 || d2 >= 400.0 || d3 >= 400.0)
+        return "bin_dist 值必须 <400mm";
+    if (!(d1 < d2) || !(d2 < d3))
+        return "bin_dist 必须严格递增 (d1<d2<d3)";
+    return "";
+}
 
 }  // namespace sort

@@ -391,6 +391,21 @@ static void testProto() {
     check("conveyor 遥测",
           conveyorTele("running", 1.5, 42).find("\"speed_mps\":1.50") != std::string::npos);
 
+    // bin_dist (2026-11-20 运行时可调仓距): 校验 + 遥测字段
+    double bd[4] = { 0.0, 105.0, 158.0, 211.0 };
+    check("binDistValidate 合法 (11-20 定案 105/158/211)",
+          binDistValidate(bd[1], bd[2], bd[3]).empty());
+    check("binDistValidate 拒非递增", !binDistValidate(158.0, 105.0, 211.0).empty());
+    check("binDistValidate 拒相等", !binDistValidate(105.0, 105.0, 211.0).empty());
+    check("binDistValidate 拒零/负", !binDistValidate(0.0, 158.0, 211.0).empty()
+                                     && !binDistValidate(-5.0, 158.0, 211.0).empty());
+    check("binDistValidate 拒超上限", !binDistValidate(105.0, 158.0, 400.0).empty());
+    std::string ctele = conveyorTele("stopped", 0.0, 0, "", "", 0, bd);
+    check("conveyor 遥测含 bin_dist",
+          ctele.find("\"bin_dist\":[105.0,158.0,211.0]") != std::string::npos);
+    check("conveyor 遥测无 bin_dist 时字段缺席",
+          conveyorTele("stopped", 0.0, 0).find("bin_dist") == std::string::npos);
+
     std::string vis = visionJson("blue_block", 1.0, "hl2-1", 1, 2, 3, 4);
     check("vision JSON", vis.find("\"confidence\":1.000") != std::string::npos
                           && vis.find("\"bbox\":[1,2,3,4]") != std::string::npos

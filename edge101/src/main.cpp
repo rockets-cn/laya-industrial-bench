@@ -19,6 +19,7 @@
 #include <NetworkClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <nvs.h>
 #include <esp_netif.h>
 #include "driver/rmt_tx.h"
 #include "driver/rmt_encoder.h"
@@ -105,10 +106,56 @@ static double  g_ir_spacing = IR_SPACING_MM;  // 推杆间距
 static bool    g_ir_low     = IR_ACTIVE_LOW;  // 接近=低电平 (默认 NPN)
 static uint32_t g_hold_ms   = 0;             // hold=0 定案 (在线 hold 可调)
 static double  g_confmin    = HL_CONFMIN;    // HuskyLens 置信度门槛
-// 各仓到 IR 触点的实际距离 (标定定案; 非等间距: 1→2=62mm, 2→3=57mm).
+// 各仓到 IR 触点的实际距离 (标定定案; 2026-11-20 用户尺量: 等距 53/53mm).
 // 带速已标定=准(52.49mm/s, 过冲系数1.000), 故落点=精确等于 d.
 // 下标=仓号(1/2/3), [0] 占位. 取代原等间距 d1+(bin-1)*spacing.
+// 2026-11-20 起运行时可调: MQTT sort/line1/config/cmd set_bin_dist / 串口 binset
+// -> RAM + NVS 持久化, 启动时从 NVS 加载 (无记录回退 config.h). 免编译/烧录改仓距.
 static double  g_bin_dist_mm[4] = { 0.0, BIN_DIST_MM_1, BIN_DIST_MM_2, BIN_DIST_MM_3 };
+static bool    g_bindist_custom = false;     // 启动值来源 (banner 报告; true=NVS/运行时, false=config.h 默认)
+
+// ---- bin_dist NVS 持久化 (namespace "sortcfg", 裸 C API) ----
+// 注意: 本 framework 的 nvs.h 是裁剪版 (仅 blob/open/commit/erase), 无
+// nvs_set_float — 三个值打包成一个 12 字节 blob 原子写入.
+struct BinDistNvs { float d1, d2, d3; };
+
+static void binDistPersist() {
+    nvs_handle_t h;
+    if (nvs_open("sortcfg", NVS_READWRITE, &h) != ESP_OK) {
+        Serial.println("[cfg] NVS 打开失败 (bin_dist 未持久化)");
+        return;
+    }
+    BinDistNvs v{ (float)g_bin_dist_mm[1], (float)g_bin_dist_mm[2], (float)g_bin_dist_mm[3] };
+    esp_err_t e = nvs_set_blob(h, "bd", &v, sizeof(v));
+    if (e == ESP_OK) e = nvs_commit(h);
+    nvs_close(h);
+    if (e != ESP_OK)
+        Serial.printf("[cfg] NVS 写入失败 err=%d (bin_dist 未持久化)\n", e);
+}
+// 运行时改仓距 (MQTT/串口共用): 校验 -> 写 RAM -> 落 NVS. 返回 true=成功.
+static bool binDistSet(double d1, double d2, double d3, std::string& err) {
+    err = sort::binDistValidate(d1, d2, d3);
+    if (!err.empty()) return false;
+    g_bin_dist_mm[1] = d1; g_bin_dist_mm[2] = d2; g_bin_dist_mm[3] = d3;
+    g_bindist_custom = true;   // 已脱离 config.h 默认值
+    binDistPersist();
+    return true;
+}
+// 启动加载: NVS 有合法值则用 (掉电保持; 固件重烧不擦 NVS 分区, 故
+// 重烧后仍沿用上次运行时值), 否则回退 config.h 默认.
+static void binDistLoad() {
+    nvs_handle_t h;
+    if (nvs_open("sortcfg", NVS_READONLY, &h) != ESP_OK) return;   // 无命名空间 = 用默认
+    BinDistNvs v{};
+    size_t len = sizeof(v);
+    esp_err_t e = nvs_get_blob(h, "bd", &v, &len);
+    nvs_close(h);
+    if (e == ESP_OK && sort::binDistValidate(v.d1, v.d2, v.d3).empty()) {
+        g_bin_dist_mm[1] = v.d1; g_bin_dist_mm[2] = v.d2; g_bin_dist_mm[3] = v.d3;
+        g_bindist_custom = true;
+        Serial.printf("[cfg] NVS bin_dist 载入: %.0f/%.0f/%.0fmm\n", v.d1, v.d2, v.d3);
+    }
+}
 
 // 红外 (GPIO34, 位置基准 T0).
 static uint32_t g_ir_count = 0;              // 累计过 IR 物品数 (遥测/顺序对账)
@@ -246,6 +293,13 @@ static void publishConveyorAck(const char* job_id, const char* action,
                                const char* result, const char* note) {
     mqtt.publish(sort::conveyorAckTopic(job_id).c_str(),
                  sort::ackJson(job_id, action, result, note).c_str(), true);
+}
+// 配置应答 (2026-11-20): 不 retain — job_id 每次唯一, retain 只会留垃圾
+// (conveyor/ack 的 retain 是历史保留行为, 新通道不再继承).
+static void publishConfigAck(const char* job_id, const char* action,
+                             const char* result, const char* note) {
+    mqtt.publish(sort::configAckTopic(job_id).c_str(),
+                 sort::ackJson(job_id, action, result, note).c_str(), false);
 }
 // 运动事件: 每次状态迁移广播一条 (sort/line1/motion, QoS0), 供孪生还原"实际情况".
 // via = 迁移原因 (cmd/ir_due/next/done/timeout/cancel/reset...).
@@ -560,6 +614,30 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int len) {
                 servoRestAll();
             }
         }
+    } else if (t == sort::configCmdTopic()) {
+        // 配置通道 (2026-11-20): 目前仅 set_bin_dist (仓距运行时可调, NVS 持久化).
+        if (!action || !strcmp(action, "set_bin_dist")) {
+            const JsonArray arr = doc["bin_dist"];
+            if (arr.size() != 3) {
+                publishConfigAck(job_id, "set_bin_dist", "fault",
+                                 "bin_dist 需 [d1,d2,d3] 三个值");
+                return;
+            }
+            double d1 = (double)arr[0], d2 = (double)arr[1], d3 = (double)arr[2];
+            std::string err;
+            if (binDistSet(d1, d2, d3, err)) {
+                char note[64];
+                snprintf(note, sizeof(note), "%.0f/%.0f/%.0fmm 已落 NVS", d1, d2, d3);
+                Serial.printf("[cfg] bin_dist 更新: %s (job=%s)\n", note, job_id);
+                publishConfigAck(job_id, "set_bin_dist", "ok", note);
+            } else {
+                Serial.printf("[cfg] bin_dist 拒绝: %s (job=%s)\n", err.c_str(), job_id);
+                publishConfigAck(job_id, "set_bin_dist", "fault", err.c_str());
+            }
+        } else {
+            publishConfigAck(job_id, action, "fault", "未知 action (仅 set_bin_dist)");
+        }
+        return;
     } else {
         int n = parseSorterN(t);
         if (n < 1 || n > 3) return;
@@ -627,7 +705,8 @@ static void mqttConnect() {
         mqtt.subscribe(sort::conveyorCmdTopic().c_str(), 1);
         for (int n = 1; n <= 3; n++)
             mqtt.subscribe(sort::sorterCmdTopic(n).c_str(), 1);
-        Serial.println("[mqtt] connected, subscribed conveyor + 3 sorter cmd");
+        mqtt.subscribe(sort::configCmdTopic().c_str(), 1);
+        Serial.println("[mqtt] connected, subscribed conveyor + 3 sorter cmd + config");
     } else {
         static uint32_t lastFailLog = 0;
         if (millis() - lastFailLog > 10000) {
@@ -651,6 +730,7 @@ static void onSerialCmd(const String& line) {
         Serial.println("belt stop | belt start <mps> | belt resume | push <1-3>");
         Serial.println("state | ir | irset <d1mm> [spacingmm] | irset pol | spset <mm>");
         Serial.println("hold <ms> | confmin <0..1> | vision <material> | servo <n> <deg>");
+        Serial.println("binset <d1> <d2> <d3>  (仓距 mm, 校验+落 NVS, 免烧录)");
         Serial.println("track | stepstat | mqtt | eth | reboot");
     } else if (line == "state") {
         Serial.printf("conveyor=%s v=%.3fm/s P=%.0fmm | 待分=%d 待推=%d | push=%s ir=%lu 已推=%lu/%lu/%lu\n",
@@ -718,6 +798,23 @@ static void onSerialCmd(const String& line) {
         double v = line.substring(7).toDouble();
         if (v >= 0.0 && v <= 1.0) { g_confmin = v; Serial.printf("confmin: %.2f\n", v); }
         else Serial.println("confmin: 用法 confmin <0..1>");
+    } else if (line.startsWith("binset")) {
+        // binset <d1> <d2> <d3> — 仓距 (IR 触点->推杆, mm), 校验+落 NVS (MQTT config 同路径).
+        int sp1 = line.indexOf(' ', 6);
+        if (sp1 < 0) { Serial.println("binset: 用法 binset <d1mm> <d2mm> <d3mm>"); return; }
+        String rest = line.substring(sp1 + 1);
+        int sp2 = rest.indexOf(' ');
+        if (sp2 < 0) { Serial.println("binset: 用法 binset <d1mm> <d2mm> <d3mm>"); return; }
+        int sp3 = rest.indexOf(' ', sp2 + 1);
+        double d1 = rest.substring(0, sp2).toDouble();
+        double d2 = rest.substring(sp2 + 1, sp3 < 0 ? rest.length() : sp3).toDouble();
+        double d3 = (sp3 < 0) ? 0.0 : rest.substring(sp3 + 1).toDouble();
+        std::string err;
+        if (binDistSet(d1, d2, d3, err))
+            Serial.printf("binset: %.0f/%.0f/%.0fmm 已生效并落 NVS\n", d1, d2, d3);
+        else
+            Serial.printf("binset: %s (当前 %.0f/%.0f/%.0f)\n", err.c_str(),
+                          g_bin_dist_mm[1], g_bin_dist_mm[2], g_bin_dist_mm[3]);
     } else if (line.startsWith("vision")) {
         String m = line.substring(6);
         m.trim();
@@ -848,6 +945,12 @@ void setup() {
     else
         Serial.println("[mcp] MCP23017 未检测到 (步进 EN 浮空=使能, 不影响)");
 
+    // 仓距: NVS 有合法值则用 (掉电/重烧保持), 无则 config.h 默认.
+    binDistLoad();
+    Serial.printf("[cfg] bin_dist: %.0f/%.0f/%.0fmm (%s; 运行时可调: MQTT config cmd / 串口 binset)\n",
+                  g_bin_dist_mm[1], g_bin_dist_mm[2], g_bin_dist_mm[3],
+                  g_bindist_custom ? "NVS/运行时" : "config.h 默认");
+
     Serial.printf("[ir] 红外位置基准 GPIO%d: d1=%.0fmm spacing=%.0fmm 接近=%s (irset/spset 可调)\n",
                   IR_PIN, g_ir_d1_mm, g_ir_spacing, g_ir_low ? "low" : "high");
 
@@ -899,7 +1002,8 @@ void loop() {
     if (pres != g_ir_prev && mqtt.connected()) {
         mqtt.publish(sort::conveyorTeleTopic().c_str(),
                      sort::conveyorTele(conv.state(), conv.speed_mps,
-                                        stepsLive(), "", "", pres ? 1 : 0).c_str(), false);
+                                        stepsLive(), "", "", pres ? 1 : 0,
+                                        g_bin_dist_mm).c_str(), false);
     }
     if (pres && !g_ir_prev) {
         g_ir_prev = true;
@@ -932,7 +1036,8 @@ void loop() {
         lastTeleMs = millis();
         mqtt.publish(sort::conveyorTeleTopic().c_str(),
                      sort::conveyorTele(conv.state(), conv.speed_mps,
-                                        stepsLive(), "", "", pres ? 1 : 0).c_str(), false);
+                                        stepsLive(), "", "", pres ? 1 : 0,
+                                        g_bin_dist_mm).c_str(), false);
         for (int n = 1; n <= 3; n++)
             mqtt.publish(sort::sorterTeleTopic(n).c_str(),
                          sort::sorterTele(push.active && push.bin == n ? "busy" : "ready",
