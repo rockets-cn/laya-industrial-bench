@@ -1335,6 +1335,7 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 })();
 refreshState();
 refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
+$('flowbox').innerHTML=FLOW_SVG; // 决策流程图常驻: 加载即显示(全灰), 运行后点亮 (2026-11-20 用户反馈首屏流程图没了)
 // 3D 数字孪生页 (machine-skill kit · /sortline3d): 同源 BroadcastChannel 转发新批次 (job).
 // 数据源切换器已删 (2026-11-20): 页面固定真实源, 3D 页经 ?src=device 打开;
 // 3D 页自己的 src pill 不再反向控制父页 (无源可切).
