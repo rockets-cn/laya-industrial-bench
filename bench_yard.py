@@ -70,12 +70,13 @@ def _yard_num_of(token):
 # "旋钮" = 用户口语: 角度传感器实物为旋钮式, 用户直接叫"旋钮" (2026-11-19 实麦确认)
 # "人体热释电" = PIR 正式名称 (用户 2026-11-19 确认), 与 人体红外/红外 同义
 SENSOR_RE = re.compile(
-    r"角度传感器|超声波传感器|人体红外传感器|人体热释电传感器|热释电传感器"
+    r"角度传感器|超声波传感器|超声传感器|人体红外传感器|人体热释电传感器|热释电传感器"
     r"|温湿度传感器|温度湿度传感器"
-    r"|角度|超声波|人体红外|人体热释电|热释电|红外传感器|红外|温湿度|温度湿度|旋钮|传感器")
+    r"|角度|超声波|超声|人体红外|人体热释电|热释电|红外传感器|红外|温湿度|温度湿度|旋钮|传感器")
 SENSOR_KEY = {
     "角度传感器": "angle_sensor", "角度": "angle_sensor", "旋钮": "angle_sensor",
     "超声波传感器": "ultrasonic_sensor", "超声波": "ultrasonic_sensor",
+    "超声传感器": "ultrasonic_sensor", "超声": "ultrasonic_sensor",
     "人体红外传感器": "pir_sensor", "人体红外": "pir_sensor",
     "人体热释电传感器": "pir_sensor", "人体热释电": "pir_sensor",
     "热释电传感器": "pir_sensor", "热释电": "pir_sensor",
@@ -86,14 +87,24 @@ SENSOR_KEY = {
 # 否定提及 (不要/别要/不需要/不用 + 物料词)
 SENSOR_NEG_RE = re.compile(
     r"(?:不要|别要?|不需要|不用)\s*"
-    r"(角度传感器|超声波传感器|人体红外传感器|人体热释电传感器|热释电传感器"
+    r"(角度传感器|超声波传感器|超声传感器|人体红外传感器|人体热释电传感器|热释电传感器"
     r"|温湿度传感器|温度湿度传感器"
-    r"|角度|超声波|人体红外|人体热释电|热释电|红外传感器|红外|温湿度|温度湿度|旋钮)")
+    r"|角度|超声波|超声|人体红外|人体热释电|热释电|红外传感器|红外|温湿度|温度湿度|旋钮)")
 
 # 简繁 -> 领域词 (ASR 噪声); 传感器名短, 同音变体已覆盖在 SENSOR_RE 简称词表里
 T2S = str.maketrans({"紅": "红", "綠": "绿", "黃": "黄", "藍": "蓝",
                      "塊": "块", "個": "个", "離": "离", "號": "号"})
-HOMOPHONE = []  # 同音变体 (a, b) 对; 传感器名短, 暂无需要 (ASR 变体走 SENSOR_RE 简称词表)
+# ASR 乱码 -> 领域词 (2026-11-20 实测: sensevoice-small 对词表外词「热释电」解码为
+# 「热水环向」; 长对在前, replace 按序执行)
+HOMOPHONE = [("热水环向红外", "热释电"), ("热水环向", "热释电"),
+             ("热试电", "热释电")]  # fp32 同音误字 (2026-11-20 实测)
+
+# ASR 慢速/犹豫朗读的重复字归并 (2026-11-20 实测: 「三三号」「库库」「传传感器」)
+# 仓号字重复限定在 号 前, 避免误伤正常文本
+DEDUP_ASR = [
+    (re.compile(r"([一二两三四五六七八九十幺壹0-9])\1(?=\s*号)"), r"\1"),
+    (re.compile(r"([仓库传])\1"), r"\1"),
+]
 
 
 def _cn_num(tok):
@@ -121,12 +132,11 @@ _QTY_BEFORE_RE = re.compile(
 def _qty_before(text, pos):
     """前置数量: 「五个角度传感器」为默认; 数量与物料之间允许口语填充词
     (那个/这个/的/测/些 等, 2026-11-20 实测「整两个那个测温度湿度的玩意儿」qty 曾丢成 1)。
-    料场号不会被误吞: 「三号仓那个角度传感器」中 号 不在量词/填充词表, 匹配失败回退 1."""
+    料场号不会被误吞: 「三号仓那个角度传感器」中 号 不在量词/填充词表, 匹配失败回退 None。
+    返回 None = 无显式前置数量 (调用方回退 1, 并用于对称后置修正的守卫)."""
     pre = text[max(0, pos - 12):pos]
     m = _QTY_BEFORE_RE.search(pre)
-    if not m:
-        return 1
-    return _cn_num(m.group(1))
+    return _cn_num(m.group(1)) if m else None
 
 
 _QTY_AFTER = re.compile(
@@ -145,7 +155,9 @@ def _qty_after(text, end):
 _QUANT_LOOSE = re.compile(
     r"[，、。！？!?,;；\s]*(?:放到|放入|放进|进|放|来|要|送|需)?\s*"
     r"(?:[1-9一二两三四五六七八九十幺壹]+号\s*(?:仓库|料场|场地|库|位置|区)?\s*)?"
-    r"([一两二三四五六七八九十\d]+)\s*(?:个|块|条)?")
+    r"([一两二三四五六七八九十\d]+)(?!\s*号)\s*(?:个|块|条)?")
+    # num 后的 (?!号): 料场号可选组回退时不得把仓号数字读成数量
+    # (2026-11-20 「人体热释电传感器三号仓库…」loose 曾把 三号 的 三 当 qty=3)
 
 
 def _qty_after_loose(text, end):
@@ -163,25 +175,29 @@ def _materials_in(seg):
     由下方确认逻辑修正 — 相邻两项都带后置数量时, 前一项的"前置数量"其实是自己的后置."""
     found = []
     for m in SENSOR_RE.finditer(seg):
-        qty = _qty_before(seg, m.start())
+        qb = _qty_before(seg, m.start())
+        has_pre = qb is not None
+        qty = qb if has_pre else 1
         if qty == 1:
             q2 = _qty_after(seg, m.end())
             if q2:
                 qty = q2
         found.append((m.start(), m.end(),
-                      {"material": SENSOR_KEY[m.group(0)], "qty": qty}))
+                      {"material": SENSOR_KEY[m.group(0)], "qty": qty}, has_pre))
     found.sort(key=lambda x: x[0])
-    # 对称后置修正: "A qty B qty" — B 的前置数量其实紧邻 A 之后, 且 B 自己也有后置
+    # 对称后置修正: "A qty B qty" — B 的前置数量其实紧邻 A 之后, 且 B 自己也有后置.
+    # 守卫: A 自己已带显式前置数量时不修 (无标点密集句
+    # 「一个角度传感器两个超声波」中「两个」是 B 的前置, 不是 A 的后置, 2026-11-20)
     for i in range(len(found) - 1):
-        pos, mend, mm = found[i]
-        if mm["qty"] != 1:
+        pos, mend, mm, has_pre = found[i]
+        if mm["qty"] != 1 or has_pre:
             continue
         q_a = _qty_after_loose(seg, mend)
         q_b = _qty_after_loose(seg, found[i + 1][1])
         if q_a and q_b and found[i + 1][2]["qty"] == q_a:
             mm["qty"] = q_a
             found[i + 1][2]["qty"] = q_b
-    return found
+    return [(p, e, mm) for p, e, mm, _ in found]
 
 
 def _nearest_yard(matches, pos):
@@ -248,6 +264,8 @@ def normalize(text):
     text = text.translate(T2S)
     for a, b in HOMOPHONE:
         text = text.replace(a, b)
+    for pat, rep in DEDUP_ASR:
+        text = pat.sub(rep, text)
     dist = expand_distribution(text)
     if dist:
         dm, _total, _yards = dist
@@ -263,9 +281,9 @@ def normalize(text):
     clean = text
     # 否定剥离: 长名优先 (人体红外传感器 先于 人体红外/红外; 角度传感器 先于 角度;
     # 温度湿度传感器 先于 温湿度/温度湿度)
-    for name in ("角度传感器", "超声波传感器", "人体红外传感器", "温湿度传感器",
+    for name in ("角度传感器", "超声波传感器", "超声传感器", "人体红外传感器", "温湿度传感器",
                  "温度湿度传感器", "人体红外", "红外传感器", "红外", "角度",
-                 "超声波", "温湿度", "温度湿度"):
+                 "超声波", "超声", "温湿度", "温度湿度"):
         pat = re.compile(
             rf"(?:不要|别要?|不需要|不用)(?:(?!角度|超声波|红外|温湿度|温度湿度).){{0,3}}{name}"
             rf"|{name}(?:不要|不用)")

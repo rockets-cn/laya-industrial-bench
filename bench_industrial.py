@@ -178,12 +178,13 @@ def _fix_negation_punct(text):
 
 
 def _voxtype_asr_choice():
-    """ASR selection: SenseVoice small int8 (239MB, fast on CPU). Falls back to
-    the fp32 build when the int8 weights are missing."""
+    """ASR selection: SenseVoice small fp32 (937MB, 精度优先 — int8 对生僻词
+    「热释电」与慢速/犹豫朗读乱码率高, 2026-11-20 实测 voxtype(fp32) 明显准).
+    Falls back to the int8 build (239MB, fast on CPU) when fp32 is missing."""
     base = os.path.expanduser("~/.local/share/voxtype/models")
-    if os.path.exists(os.path.join(base, "sensevoice-small", "model.int8.onnx")):
-        return "sensevoice", "sensevoice-small"
-    return "sensevoice", "sensevoice-small-fp32"
+    if os.path.exists(os.path.join(base, "sensevoice-small-fp32", "model.onnx")):
+        return "sensevoice", "sensevoice-small-fp32"
+    return "sensevoice", "sensevoice-small"
 
 
 LAST_ASR_MODEL = "?"
