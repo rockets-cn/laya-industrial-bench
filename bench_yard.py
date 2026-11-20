@@ -197,14 +197,16 @@ def _nearest_yard(matches, pos):
 
 def _is_reverse_attach(clean, mat_end, marker_start):
     """物料尾与下一个料场标记之间是否只有 标点/空格 + 短运送动词
-    ('两个角度传感器放到二号' / '红外给1号' 倒序黏附信号). 空间隔/纯标点 = 正序."""
+    ('两个角度传感器放到二号' / '红外给1号' / '超声波去3号' 倒序黏附信号).
+    空间隔/纯标点 = 正序. 动词集含裸 去/往 (2026-11-20 探针实测
+    '另外3个超声波去3号' 曾误归前一料场)."""
     gap = clean[mat_end:marker_start]
     if len(gap) > 4:
         return False
-    if not re.fullmatch(r"[\s，,。；;！!？?]*(?:送到|送去|送|给|放|进|到|来)?[\s，,。；;！!？?]*",
+    if not re.fullmatch(r"[\s，,。；;！!？?]*(?:送到|送去|送|给|放|进|到|来|去|往)?[\s，,。；;！!？?]*",
                         gap):
         return False
-    return any(v in gap for v in "送给放进来到")
+    return any(v in gap for v in "送给放进来到往去")
 
 
 def _yard_at(clean, cms, pos, mat_end):
@@ -557,6 +559,14 @@ CASES = [
      [(1, "ultrasonic_sensor", 1), (2, "pir_sensor", 1)]),
     ("两个角度传感器送到3号料场",
      [(3, "angle_sensor", 1)]),                          # 物料在料场前 (倒序)
+    # 裸 去/往 倒序黏附 (2026-11-20 探针实测: '另外3个超声波去3号' 曾误归前一料场
+    # 1号 → 被 LLM 幻觉防护拦下 PAUSE+HUMAN; 修法=动词表补 去/往, 非子句重写)
+    ("5个角度传感器进1号仓库，另外3个超声波去3号",
+     [(1, "angle_sensor", 1), (3, "ultrasonic_sensor", 1)]),   # 逐件展开
+    ("两个角度传感器进1号，超声波去3号",
+     [(1, "angle_sensor", 1), (3, "ultrasonic_sensor", 1)]),   # 逗号+去
+    ("两个角度进1号，三个超声波往2号",
+     [(1, "angle_sensor", 1), (2, "ultrasonic_sensor", 1)]),   # 裸 往
     ("1号料场送四个超声波传感器，不要人体红外传感器",
      [(1, "ultrasonic_sensor", 1)]),                               # 段内否定
     ("3号料场来8个温湿度传感器和一个人体红外传感器",
