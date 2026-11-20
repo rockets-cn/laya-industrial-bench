@@ -105,7 +105,11 @@ def run_side(side, text):
     # 所有提及都无有效料场 (yard=0 "料场未指定"): 旁路幻觉防护只放行规则层听过的
     # (yard,material) 组合, LLM 无法新造料场号 -> 结果确定 PAUSE, 跳过旁路不白等几十秒
     no_valid_yard = bool(mentions) and all(m.get("yard") not in (1, 2, 3) for m in mentions)
-    if not ok and not no_valid_yard:
+    # 规则层已带明确挂起理由 (oob_msg: 分配未定/分配含超纲等): 跳过旁路 — 规则层
+    # 看懂了句子结构且有意挂起, LLM 只会猜 (2026-11-20 实测: 「两个角度到一号二号
+    # 三号」分配未定, 旁路猜成 1号×2 下发)
+    deliberate_hold = any(m.get("oob_msg") for m in mentions)
+    if not ok and not no_valid_yard and not deliberate_hold:
         try:
             dt_b, b_mentions, b_reasons = ns.llm_bypass(norm, mentions)
             if b_mentions:
