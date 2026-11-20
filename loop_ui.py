@@ -555,11 +555,27 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>仓库分拣线 · 数字孪生</title>
 <style>
- body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
- .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
- h1{font-size:18px;font-weight:600;margin:0}
- .ver{color:#6b7280;font-size:12px;font-weight:400;margin-left:8px}
- .cards{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+ body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6;overflow:hidden}
+ .wrap{max-width:1680px;margin:0 auto;padding:10px 14px;height:100vh;box-sizing:border-box;display:flex;flex-direction:column}
+ h1{font-size:16px;font-weight:600;margin:2px 0}
+ .ver{color:#6b7280;font-size:11px;font-weight:400;margin-left:8px}
+ /* 单页布局 (2026-11-20 用户要求: 不上下滚动, 超出的走 tab): 左栏孪生, 右栏输入+tab */
+ .main{display:flex;gap:10px;flex:1;min-height:0;margin-top:6px}
+ #colL{flex:1;min-width:0;display:flex;flex-direction:column}
+ #colR{width:470px;flex:none;display:flex;flex-direction:column;min-height:0}
+ #gate{flex:1;display:flex;flex-direction:column;min-height:0}
+ #threeView{flex:1;min-height:0;position:relative}
+ #threeView iframe{position:absolute;inset:0;width:100%;height:100%}
+ .tabbar{display:flex;gap:6px;margin-top:8px}
+ .tab{background:#171a21;border:1px solid #262b36;border-bottom:0;border-radius:8px 8px 0 0;
+  padding:6px 14px;font-size:13px;color:#8a91a0;cursor:pointer}
+ .tab.on{color:#e6e6e6;background:#12141a;border-color:#3a4152}
+ .tabpanes{flex:1;min-height:0;overflow-y:auto;border:1px solid #262b36;
+  border-radius:0 8px 8px 8px;padding:6px 10px}
+ .pane{display:none}.pane.on{display:block}
+ @media (max-width:1100px){body{overflow:auto}.wrap{height:auto}
+  .main{flex-direction:column}#colR{width:100%}#threeView{flex:none;height:420px}}
+ .cards{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
  .card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:10px 14px;flex:1;min-width:110px}
  .card .k{font-size:11px;color:#8a91a0} .card .v{font-size:19px;font-weight:700;margin-top:3px}
  .path-FAST{color:#4ade80}.path-QA{color:#4ade80}.path-PARTIAL{color:#fb923c}.path-BYPASS{color:#facc15}.path-EXPAND{color:#facc15}.path-PAUSE+HUMAN{color:#f87171}
@@ -603,7 +619,8 @@ PAGE = """<!doctype html>
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
 <h1>🏭 仓库分拣线 · 数字孪生<span class="ver">光门/推杆/带态 实时还原 + 语音·文本决策回路 · 模拟/真实数据源 · 失败降级 暂停+人工</span></h1>
-<div class="sec" style="margin-top:12px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
+<div class="main"><div id="colL">
+<div class="sec" style="margin-top:4px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
 <div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
 <span style="display:flex;align-items:center;gap:8px">
@@ -629,7 +646,7 @@ PAGE = """<!doctype html>
 </div>
 <!-- 3D 数字孪生 (machine-skill kit): 同源 iframe → 父页 BC 'laya3d' 批次/数据源转发自动生效; 默认视图 -->
 <div id="threeView" style="border:1px solid #262b36;border-radius:8px;overflow:hidden;background:#0d0e10">
-<iframe id="iframe3d" src="/sortline3d" title="3D 数字孪生" style="display:block;width:100%;height:560px;border:0"></iframe>
+<iframe id="iframe3d" src="/sortline3d" title="3D 数字孪生" style="display:block;width:100%;height:100%;border:0"></iframe>
 </div>
 <!-- 俯视 SVG 示意 (打印/导出): 由视图切换按钮显隐, 摄像头画面仅在此视图定位 -->
 <div id="svgView" style="display:none">
@@ -653,7 +670,9 @@ PAGE = """<!doctype html>
 </ul>
 </details>
 </div><!-- /svgView -->
-</div>
+</div><!-- /gate -->
+</div><!-- /colL -->
+<div id="colR">
 <div class="row">
  <select id="preset" onchange="runPresetSel()" title="测试指令预设"><option value="" selected>预设指令…</option></select>
  <input id="txt">
@@ -675,11 +694,19 @@ PAGE = """<!doctype html>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
 <div id="cards" class="cards"></div>
-<div id="stockcards" class="cards" style="margin:10px 0 4px"></div>
-<div id="yardcards" class="cards"></div>
-<div id="ledger" style="display:none;margin:14px 0"></div>
-<div id="out"></div>
-<details class="fold" id="trace"><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details>
+<div id="stockcards" class="cards" style="margin:4px 0 2px"></div>
+<div class="tabbar">
+ <button class="tab on" data-tab="res" onclick="switchTab('res')">📋 结果</button>
+ <button class="tab" data-tab="ledger" onclick="switchTab('ledger')">📦 台账</button>
+ <button class="tab" data-tab="trace" onclick="switchTab('trace')">🔍 trace</button>
+</div>
+<div class="tabpanes">
+ <div class="pane on" id="pane-res"><div id="yardcards" class="cards"></div><div id="out"></div></div>
+ <div class="pane" id="pane-ledger"><div id="ledger" style="margin:4px 0"></div></div>
+ <div class="pane" id="pane-trace"><details class="fold" id="trace" open><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details></div>
+</div>
+</div><!-- /colR -->
+</div><!-- /main -->
 <script>
 const $=id=>document.getElementById(id);
 window.addEventListener('error',e=>{const m=$('micstate');
@@ -765,9 +792,14 @@ async function refreshStock(){
   $('stockcards').innerHTML=h;
  }catch(e){$('stockcards').innerHTML='<div class="card"><div class="k">📦 库存</div><div class="v muted">加载失败 '+(e.message||e)+'</div></div>'}
 }
+// ---- 单页 tab (2026-11-20): 结果/台账/trace 切换, 不上下滚动 ----
+let curTab='res',ledOpen=false;
+function switchTab(t){curTab=t;ledOpen=(t==='ledger');
+ document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
+ document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='pane-'+t));
+ if(ledOpen)refreshLedger();}
 // ---- 仓库台账 (yard_ledger.py, SQLite): 库存=入-出; 分拣下发自动记入, 面板内可手动记出 ----
-let ledOpen=false;
-function toggleLedger(){ledOpen=!ledOpen;$('ledger').style.display=ledOpen?'block':'none';if(ledOpen)refreshLedger();}
+function toggleLedger(){switchTab(ledOpen?'res':'ledger');}
 async function refreshLedger(){
  try{
   const d=await (await fetch('/ledger')).json();
@@ -1077,6 +1109,7 @@ async function render(d){
  if(d.bypass)h+=sec('LLM 旁路')+`<pre>输出提及: ${JSON.stringify(d.bypass.raw_mentions)}  原因: ${d.bypass.reasons.join('; ')||'无'}</pre>`;
  $('tracebody').innerHTML=h;
  $('trace').open=d.path!=='FAST';
+ switchTab('res'); // 每次运行后自动切回结果页 (单页 tab 布局, 2026-11-20)
 }
 let ac=null,proc=null,src=null,stream=null,armed=false,flushing=false;
 let bufs=[],speechStart=0,speechUntil=0,ctxRate=48000;
