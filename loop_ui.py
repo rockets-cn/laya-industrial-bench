@@ -684,8 +684,6 @@ PAGE = """<!doctype html>
  <button id="btnDispatch" onclick="dispatchRun()" disabled title="把最近一次运行的分类结果下发到 MQTT 分拣线">📤 下发分拣线</button>
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer" title="规则层认不出的问句交给 LLM 基于注入事实回答 (~10s, 仅展示不下发); 规则层能答的仍毫秒级直答; 开关状态保存在本浏览器"><input type="checkbox" id="qallm"> LLM 兜底</label>
  <button onclick="toggleLedger()" title="SQLite 出入库台账: 分拣下发自动记入, 这里可手动记出">📦 仓库台账</button>
- </div>
-<div class="row">
  <span id="micwrap" style="position:relative;display:inline-flex">
   <button id="mictrig" style="min-width:58px" title="麦克风 (点击打开授权菜单)" onclick="micMenuToggle(event)">🎤</button>
   <div id="micmenu" style="display:none;position:absolute;z-index:60;top:calc(100% + 4px);left:0;background:#1e2430;border:1px solid #2c3342;border-radius:8px;padding:4px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.55)">
@@ -693,9 +691,11 @@ PAGE = """<!doctype html>
    <div id="micmstate" style="font-size:11px;color:#5b6270;padding:2px 9px 4px">未授权</div>
   </div>
  </span>
- <button id="ptt" title="按住说话 (或按住 空格键)" style="min-width:120px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
+ </div>
+<div class="row">
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
+ <button id="ptt" title="按住说话 (或按住 空格键)" style="min-width:120px;touch-action:none;user-select:none" onpointerdown="pttDown(event)" onpointerup="pttUp()" onpointerleave="pttUp()" onpointercancel="pttUp()" oncontextmenu="event.preventDefault();return false" disabled>🗣 按住说话</button>
 </div>
 <div id="stockcards" class="cards" style="margin:4px 0 2px"></div>
 <div class="tabbar">
