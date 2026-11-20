@@ -103,8 +103,9 @@ DEFAULT_CFG = {
     #              物料) -> 故障锁存. 逐件 divert 由 vision 事件驱动, 结构上
     #              不可能双下发 (语音 job 不盲拨).
     "dispatch_mode": "blind",
-    # verified 模式作业超时: 窗口内未见齐匹配物料 -> 故障锁存 (显式失败,
-    # 绝不盲推). 实机建议 >= 90s (密集上料/放料节奏).
+    # verified 模式作业超时: 连续 N s 无任何一件被相机核对确认 -> 故障锁存
+    # (显式失败, 绝不盲推). 滑动窗口: 每推成一件截止时间顺延 (2026-11-20,
+    # 固定窗口对大批量必误伤). 实机建议 >= 90s (密集上料/放料节奏).
     "verified_timeout_s": 90.0,
     # 运动事件时间线 (sort/line1/motion): 保留最近 N 条, GET /motion 供
     # "让示意图动起来"的动画还原实际情况 (推杆何时推出/光门何时触发).
@@ -1017,6 +1018,13 @@ class SortGateway:
             with self.verified_lock:
                 vj["pushed"] += 1
                 vj["remaining"] -= 1
+                # 滑动超时 (2026-11-20): 每推成一件, 截止时间顺延一个窗口 —
+                # 固定 90s 对大批量必误伤 (实测 99 件 @ ~3.1s/件需 5 分钟,
+                # 推到 29 件被超时锁存); 语义改为「连续 N s 零进展才故障」,
+                # 有进展的作业永不超时, 小单行为不变.
+                vj["deadline"] = (time.time()
+                                  + float(self.cfg.get("verified_timeout_s",
+                                                       90.0)))
                 finished = vj["remaining"] <= 0
             if not finished:
                 self._publish("sort/event/verified",
@@ -1055,8 +1063,9 @@ class SortGateway:
             self._record_job(job)
 
     def verified_loop(self):
-        """verified 作业超时监视: 窗口内未见齐匹配物料 -> 故障锁存 + 作废
-        需求 (显式失败, 绝不盲推). 完成路径由 _verified_progress 驱动."""
+        """verified 作业超时监视: 连续 verified_timeout_s 零进展 (没有任何
+        一件被相机核对确认, 滑动窗口) -> 故障锁存 + 作废需求 (显式失败,
+        绝不盲推). 完成路径由 _verified_progress 驱动 (每推一件顺延截止)."""
         while not self._stop.is_set():
             time.sleep(0.5)
             now = time.time()
@@ -1069,7 +1078,9 @@ class SortGateway:
                                if a.get("material")})
                 job["outcome"] = "fault"
                 job["fault"] = {"device": "vision",
-                                 "error": (f"verified 超时: 仍有 "
+                                 "error": (f"verified 超时: 连续 "
+                                           f"{self.cfg.get('verified_timeout_s', 90.0):.0f}s "
+                                           f"零进展, 仍有 "
                                            f"{v['remaining']} 件 {mats} 未被"
                                            f"相机确认 (没见到匹配物料, 未盲推)"),
                                  "ts": _now()}
