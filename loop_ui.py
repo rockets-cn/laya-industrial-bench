@@ -618,7 +618,6 @@ PAGE = """<!doctype html>
 <a id="btn3d" onclick="open3d()" style="font-size:12px;color:#67e8f9;border:1px solid #164e63;border-radius:6px;padding:3px 9px;cursor:pointer;text-decoration:none;background:#0c2a36" title="machine-skill kit 的 3D 数字孪生页 (three.js · 真实尺寸建模 · 影片/爆炸/剖切/故障演示)">🎬 3D 数字孪生</a>
 </div>
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
-  <span style="font-size:11.5px;color:#8a91a0">手动控制 <span style="color:#5b6270">（真实源 · 点即真机动作 · 网页同步）:</span></span>
   <button id="btnBelt" onclick="beltToggle()" title="传送带 起/停 (真机 + 网页同步)" style="min-width:104px">⏯ 传送带</button>
   <button class="pushbtn" data-n="1" onclick="pushBin(1)" title="1 号推杆 手动推出">🔧 推杆 1</button>
   <button class="pushbtn" data-n="2" onclick="pushBin(2)" title="2 号推杆 手动推出">🔧 推杆 2</button>
