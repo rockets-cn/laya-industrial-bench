@@ -19,7 +19,7 @@
   "queue_max": 16,
   "dispatch_mode": "verified",
   "_dispatch_mode_comment": "blind=语音指令盲拨 qty=N (不认料, 过 IR 就推, 残留指令=无叫也推); verified=物料校验式下发 (2026-11-19 方案 B, 实机回归中): 指令=需求不盲拨, HuskyLens 逐件核对物料后推, 不匹配直通带尾, 超时 verified_timeout_s 未见匹配物料->故障. 切回 blind: 改本字段 + systemctl --user restart laya-sort-gateway",
-  "idle_stop_after_job_s": 0,
+  "idle_stop_after_job_s": 10.0,
   "_idle_stop_comment": "任务完成后 (blind 批次 done / verified 需求核对齐 / 作业撤销) N 秒内无新作业且无手动起带 -> 自动停带 (用户 2026-11-19: 完成任务后 10 秒停传送带). 0=禁用 (带子保持 running)",
   "verified_timeout_s": 90.0,
   "vision_dispatch": false,
