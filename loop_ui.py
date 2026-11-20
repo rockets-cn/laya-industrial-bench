@@ -559,12 +559,13 @@ PAGE = """<!doctype html>
 <style>
  body{font-family:system-ui,'Noto Sans CJK SC',sans-serif;margin:0;background:#0f1115;color:#e6e6e6;overflow:hidden}
  .wrap{max-width:1680px;margin:0 auto;padding:10px 14px;height:100vh;box-sizing:border-box;display:flex;flex-direction:column}
- h1{font-size:16px;font-weight:600;margin:2px 0}
+ h1{display:none} /* 标题行隐藏: 整体上移 ~30px (2026-11-20 用户; 文字仍留在 <title>) */
  .ver{color:#6b7280;font-size:11px;font-weight:400;margin-left:8px}
  /* 单页布局 (2026-11-20 用户要求: 不上下滚动, 超出的走 tab): 左栏孪生, 右栏输入+tab */
- .main{display:flex;gap:10px;flex:1;min-height:0;margin-top:6px}
+ .main{display:flex;gap:10px;flex:1;min-height:0;margin-top:2px}
  #colL{flex:1;min-width:0;display:flex;flex-direction:column}
  #colR{width:470px;flex:none;display:flex;flex-direction:column;min-height:0}
+ #colR>.row:first-child{margin-top:0} /* 预设指令行与左栏面板顶边平齐 (2026-11-20) */
  #gate{flex:1;display:flex;flex-direction:column;min-height:0}
  #threeView{flex:1;min-height:0;position:relative}
  #threeView iframe{position:absolute;inset:0;width:100%;height:100%}
