@@ -141,10 +141,20 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit",
         # 再让 LLM 基于注入事实答长尾 — 失败/未开则照旧回落分拣路径。
         qhit, qans, _qdt = local_qa.answer(text)
         qsrc = "rule"
+        if not qhit:
+            # 已学问答库 (2026-11-20): LLM 兜底命中的历史问答, Laya 同义路由秒回,
+            # 与 llm_on 无关 (不调 4b); miss 才落 4b 兜底
+            qhit, qans, _qlearn = local_qa.answer_learned(text)
+            qsrc = "learned"
         llm_on = bool(qa_llm) if qa_llm is not None else local_qa.llm_enabled()
         if not qhit and llm_on:
             qhit, qans, _qllm = local_qa.answer_llm(text)
             qsrc = "llm"
+            if qhit:
+                try:
+                    local_qa.learn_from_llm(text, qans)  # 兜底命中自动入库 (+后台教师造同义变体)
+                except Exception:
+                    pass
         if qhit:
             return {"domain": domain, "asr_text": asr_text if asr_text is not None else text,
                     "asr_model": getattr(bi, "LAST_ASR_MODEL", "?"), "last_wav": last_wav,
@@ -1092,7 +1102,9 @@ async function render(d){
  // LLM 兜底回复独立成块 (2026-11-20 用户): 醒目展示, 标注"仅转述注入事实, 未下发 PLC"
  if(d.answer!=null)out+=sec(d.qa_source==='llm'
    ?'🤖 LLM 兜底回复 <span class="chip">'+(d.qa_model||'LLM')+' · 仅转述注入事实 · 未下发 PLC</span>'
-   :'💬 简单回答 <span class="chip">规则层直答 · 未下发 PLC</span>')
+   :(d.qa_source==='learned'
+     ?'📚 已学问答 <span class="chip">同义匹配秒回 · 源自 LLM 兜底学习 · 未下发 PLC</span>'
+     :'💬 简单回答 <span class="chip">规则层直答 · 未下发 PLC</span>'))
   +`<pre style="font-size:15px;border-color:#2f9e63;color:#4ade80">${d.answer}</pre>`;
  if(d.domain==='yard'){
   const lines=d.actions.map(a=>`${a.yard}号仓库: ${MATCN[a.material]||a.material} × ${a.qty}`);
@@ -1105,7 +1117,7 @@ async function render(d){
    +(lines.length?`<pre id="displines">${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
    +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
  } else {dispBase=null;dispJobId=null;}
- const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':'💬 简单回答'):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
+ const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':(d.qa_source==='learned'?'📚 简单回答 · 已学问答':'💬 简单回答')):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
  out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${d.answer!=null?'':String.fromCharCode(10)+JSON.stringify(d.actions)}</pre>`; // 答案已在上方独立区块, 这里不重复
  $('out').innerHTML=out;
  // 决策流程图: 常驻区 #flowbox (库存条之上, 不随 tab 切换 — 2026-11-20 用户: 别放结果里)
@@ -1113,7 +1125,7 @@ async function render(d){
  drawFlow(d); // 注入 DOM 后再点亮状态
  let h='';
  h+=sec('ASR / 输入 <span class="chip">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a style="color:#60a5fa;font-size:12px" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
- if(d.answer!=null)h+=sec('问答 '+(d.qa_source==='llm'?'(LLM 兜底 · 仅转述注入事实)':'(规则层直答)'))+`<pre>${d.answer}</pre>`;
+ if(d.answer!=null)h+=sec('问答 '+(d.qa_source==='llm'?'(LLM 兜底 · 仅转述注入事实)':(d.qa_source==='learned'?'(已学问答库 · Laya 同义路由)':'(规则层直答)')))+`<pre>${d.answer}</pre>`;
  h+=sec('规则层')+`<pre>归一化: ${d.normalized}${String.fromCharCode(10)}否定项: ${d.negated.join(', ')||'无'}${String.fromCharCode(10)}提及: ${JSON.stringify(d.mentions)}</pre>`;
  if(Object.keys(d.laya_answers).length){
   h+=sec('Laya 决策 (每提及单独请求)')+'<pre>'+Object.entries(d.laya_answers).map(([k,v])=>

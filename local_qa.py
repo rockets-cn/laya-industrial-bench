@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import socket
+import threading
 import time
 import urllib.request
 
@@ -385,7 +386,7 @@ def _collect_facts():
 # 兜底层的问句判定: 规则层关键词表 (_QA_KW) 或 中文疑问词 — 比规则层宽,
 # 因为本层就是为 规则层认不出的 问句 兜底; 分拣指令仍被物料词门拦在外面。
 _INTERROG_RE = re.compile(
-    r"吗|呢|什么|怎么|为什么|哪个|哪一|是谁|几[个种次号点日]|多少|有无|能否|可否")
+    r"吗|呢|什么|啥|干吗|干什么|干啥|怎么|为什么|哪个|哪一|是谁|几[个种次号点日]|多少|有无|能否|可否")
 
 
 def answer_llm(text):
@@ -478,3 +479,197 @@ def answer(text):
         return True, ans, time.perf_counter() - t0
     except Exception:
         return True, "查询失败，请说分拣指令", time.perf_counter() - t0
+
+
+# ---------------------------------------------------------------------------
+# 已学问答库 (2026-11-20, 用户定案): LLM 兜底成功回答的静态问答自动入库
+# (data/qa_learned.jsonl); 下次同义问题绕开 4b (10~16s) 秒回:
+#   1) 归一化精确匹配 (去标点/语气词; 命中 原问 或 教师变体);
+#   2) Laya 选择题同义路由 (criteria=已学问题+变体, 选中即答, none=都不像).
+# 教师增强: 入库后后台守护线程让 4b 造 4 个同义问法补进条目 (变体只影响
+#   匹配命中率, 不改答案); 教师失败静默 — 条目本体入库即已可用。
+# 纪律: ① 动态事实问答 (库存/故障/多少/几点 等) 不学 — 缓存会说过期话,
+#        那些必须走实时事实; ② 物料词 = 分拣指令, 不抢; ③ 命中仅展示,
+#        与 QA 同纪律 — 无 PLC 输出。
+# ---------------------------------------------------------------------------
+LEARN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "data", "qa_learned.jsonl")
+LEARN_MAX = 200          # 库上限: 超出丢最旧
+LEARN_ROUTE_TOP = 30     # Laya 同义路由最多带最近 N 条 (选择题选项不宜过长)
+LAYA_URL = os.environ.get(
+    "LAYA_URL", "http://127.0.0.1:8000/v1/systemone")  # 与 bench_pipeline.LAYA 同端点
+LEARN_TIMEOUT_S = 15.0   # Laya 同义路由超时 (实测 ~0.2s; 超时回落 LLM 兜底)
+TEACHER_TIMEOUT_S = 30.0  # 教师造变体超时 (后台线程, 不阻塞主路径)
+
+_DYNAMIC_Q_RE = re.compile(
+    r"多少|几件|库存|故障|几点|星期|日期|时间|负载|内存|占用|磁盘|还剩|"
+    r"停了吗|在跑|还在|运行|温度|湿度|正常吗")
+_NORM_STRIP_RE = re.compile(r"[\s，,。．.？?！!；;：:、~～呢啊呀吧嘛哦哈的]+")
+_learn_lock = threading.Lock()
+_learn_cache = {"mtime": None, "entries": []}
+
+
+def _norm_q(t):
+    return _NORM_STRIP_RE.sub("", (t or "").strip())
+
+
+def _load_learned():
+    """读学习库 (jsonl), mtime 缓存. 返回 [{q, ans, ts, variants?}], 旧→新."""
+    try:
+        mt = os.path.getmtime(LEARN_PATH)
+    except OSError:
+        _learn_cache.update(mtime=None, entries=[])
+        return []
+    if _learn_cache["mtime"] != mt:
+        entries = []
+        try:
+            with open(LEARN_PATH, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if e.get("q") and e.get("ans"):
+                        entries.append(e)
+        except OSError:
+            entries = []
+        _learn_cache.update(mtime=mt, entries=entries)
+    return _learn_cache["entries"]
+
+
+def _save_learned(entries):
+    """整库重写 (jsonl 行序=入库序). 调用方持锁."""
+    os.makedirs(os.path.dirname(LEARN_PATH), exist_ok=True)
+    with open(LEARN_PATH, "w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    _learn_cache["mtime"] = None  # 强制下次重读
+
+
+_TEACHER_PROMPT = (
+    "把下面这个问题改写成 4 个意思完全相同的日常问法, 每行一个, "
+    "只输出问句本身, 不要编号不要解释:\n问题: {q}\n问法:")
+
+
+def _teacher_variants(q):
+    """教师增强: 4b 造同义问法. 返回 [str] (<=4, 已清洗去重); 失败返回 []."""
+    try:
+        body = json.dumps({"model": LLM_MODEL,
+                           "prompt": _TEACHER_PROMPT.format(q=q),
+                           "stream": False, "think": False,
+                           "options": {"temperature": 0.3, "num_predict": 128,
+                                       "num_gpu": 99}}).encode()
+        req = urllib.request.Request(OLLAMA, data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=TEACHER_TIMEOUT_S) as r:
+            d = json.loads(r.read())
+        out = []
+        for ln in (d.get("response") or "").splitlines():
+            ln = re.sub(r"^\s*(?:\d+[\.\、\)]|[-*•]|问法\d*[:：])\s*", "", ln).strip()
+            if not ln or len(ln) > 30:
+                continue
+            if _DYNAMIC_Q_RE.search(ln):
+                continue  # 教师造出动态问法 = 跑偏, 不收
+            if _norm_q(ln) == _norm_q(q):
+                continue  # 与原问同形, 不算变体 (2026-11-20 实测教师复述原句)
+            if _norm_q(ln) not in [_norm_q(v) for v in out]:
+                out.append(ln)
+            if len(out) >= 4:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _teacher_thread(nq):
+    """后台: 造变体 -> 补写进目标条目 (按归一化问句定位; 条目被清则放弃)."""
+    entries = _load_learned()
+    target = next((e for e in entries if _norm_q(e["q"]) == nq), None)
+    if target is None:
+        return
+    variants = _teacher_variants(target["q"])
+    if not variants:
+        return
+    with _learn_lock:
+        entries = _load_learned()
+        target = next((e for e in entries if _norm_q(e["q"]) == nq), None)
+        if target is None:
+            return
+        target["variants"] = variants
+        try:
+            _save_learned(entries)
+        except OSError:
+            pass
+
+
+def learn_from_llm(q, ans):
+    """LLM 兜底命中后自动入库 (幂等: 归一化同问覆盖旧条), 并起后台教师线程
+    造同义变体. 动态事实问答不学 (库存/故障等必须实时查)."""
+    if not q or not ans:
+        return
+    if _DYNAMIC_Q_RE.search(q):
+        return
+    nq = _norm_q(q)
+    with _learn_lock:
+        entries = [e for e in _load_learned() if _norm_q(e["q"]) != nq]
+        entries.append({"q": q.strip(), "ans": ans.strip(),
+                        "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+        try:
+            _save_learned(entries[-LEARN_MAX:])
+        except OSError:
+            return
+    threading.Thread(target=_teacher_thread, args=(nq,), daemon=True).start()
+
+
+def answer_learned(text):
+    """已学问答库: (hit, answer, dt). 两级: 归一化精确 (含教师变体) → Laya
+    同义路由. 任何一步异常都回落 (hit=False) 交给 LLM 兜底, 绝不阻断主路径."""
+    t0 = time.perf_counter()
+    t = (text or "").strip()
+    if not t:
+        return False, "", 0.0
+    if _MATER_RE.search(t) and not re.search(r"哪", t):
+        return False, "", 0.0   # 物料词 = 分拣指令, 不抢 (与 answer() 同门)
+    if not (_QA_KW.search(t) or _INTERROG_RE.search(t)):
+        return False, "", 0.0
+    entries = _load_learned()
+    if not entries:
+        return False, "", 0.0
+    nq = _norm_q(t)
+    for e in reversed(entries):  # 新的优先; 原问与变体都参与精确匹配
+        cand = [e["q"]] + list(e.get("variants") or [])
+        if any(_norm_q(c) == nq for c in cand):
+            return True, e["ans"], time.perf_counter() - t0
+    # Laya 选择题同义路由: 「用户问题与哪条已学问题同义?」
+    pool = entries[-LEARN_ROUTE_TOP:]
+    criteria, key2entry = {"none": "都不像, 不是同义问题"}, {}
+    for i, e in enumerate(pool):
+        key = f"q{i}"
+        criteria[key] = " / ".join([e["q"]] + list(e.get("variants") or [])[:2])
+        key2entry[key] = e
+    try:
+        body = json.dumps({
+            "state": f"用户问题: {t}", "model": "jev-latest",
+            "questions": {"q": {"type": "choice",
+                                "instructions": "用户问题与下面哪条已学问题是"
+                                                "同一个意思? 都不像就选 none",
+                                "criteria": criteria}}}).encode()
+        req = urllib.request.Request(LAYA_URL, data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=LEARN_TIMEOUT_S) as r:
+            d = json.loads(r.read())
+        ans_q = d.get("answers", {}).get("q") or {}
+        choice = ans_q.get("choice")
+        # 置信门槛 (2026-11-20 实测): Laya 对首候选有位置偏置 — 弱匹配
+        # (conf<0.5) 会错路由 (「支持什么物料」→「你会什么」conf 0.24);
+        # 真同义 conf 0.6~0.8. 弱匹配宁可 miss 落 LLM 兜底, 也不错答.
+        conf = float(ans_q.get("confidence") or 0.0)
+        if (choice and choice != "none" and choice in key2entry
+                and conf >= 0.5):
+            return True, key2entry[choice]["ans"], time.perf_counter() - t0
+    except Exception:
+        pass
+    return False, "", time.perf_counter() - t0
