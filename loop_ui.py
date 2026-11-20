@@ -701,7 +701,7 @@ PAGE = """<!doctype html>
  <button class="tab" data-tab="trace" onclick="switchTab('trace')">🔍 trace</button>
 </div>
 <div class="tabpanes">
- <div class="pane on" id="pane-res"><div id="yardcards" class="cards"></div><div id="out"></div></div>
+ <div class="pane on" id="pane-res"><div id="flowbox"></div><div id="yardcards" class="cards"></div><div id="out"></div></div>
  <div class="pane" id="pane-ledger"><div id="ledger" style="margin:4px 0"></div></div>
  <div class="pane" id="pane-trace"><details class="fold" id="trace" open><summary>全链路 trace (ASR 原文 · 规则层 · Laya 概率 · 校验器 · 旁路)</summary><div id="tracebody"></div></details></div>
 </div>
@@ -886,6 +886,7 @@ async function dispatchRun(){if(!lastRun)return;const keep=lastRun;
  try{const r=await jpost('/dispatch',{actions:keep.actions,path:keep.path});
   lastRun=null;setLastRun(null);
   dispJobId=r.job_id||null;dispLastHtml=''; // 实时减行锚定本 job 的需求台账
+  dispDoneAt=0;pushDone={};pushSeen=new Set(); // 新单: 物理推完计数清零
   const vnote=r.verified?' · <b>物料校验模式</b>: 已登记需求, 等 HuskyLens 逐件核对后才推 (不匹配直通/超时报警)':'';
   $('out').innerHTML=sec('📤 分拣下发')+`<pre class="path-FAST" style="font-size:14px">✅ 已入队 job=${r.job_id} (排队 ${r.queued})${vnote} — 结果见网关 :8123/stats 与 sort/event/batch</pre>`+$('out').innerHTML;
   refreshTwin(); // 下发立即刷一次, 光门运行示意尽快跟上真实时序
@@ -942,11 +943,17 @@ let lastConveyor='stopped'; // 真实带态 (belt 按钮起/停判定 + 文案)
 let twinTimer=null;
 function scheduleTwin(ms){if(twinTimer)clearTimeout(twinTimer);twinTimer=setTimeout(refreshTwin,ms);}
 // ---- 下发列表实时减行 (2026-11-20): 每实推一件, 对应 (仓|物料) 行减一行 ----
-// 数据源 = 网关需求台账 /health demands (job 受理时登记, 每实推一件 consume 1);
-// 作业终态 (/jobs outcome) → ✅ 全部推完 / ⚠ 故障·取消. 仅显示层, 不改业务态.
+// 行减 = 网关需求台账 /health demands (相机核对一件 consume 1);
+// 「已全部推完」横幅 = 物理推完才出 (用户 2026-11-20: 核对完≠推完, 提前显示误导):
+//   motion ready/done 事件 (推杆推出→收回一个完整周期=一件物理入仓) 按 job 归并计数,
+//   verified 逐件子 job 经 /jobs parent_job_id 指回语音父 job, blind 主 job 自己推.
+//   兜底: 核对完毕后 8s 未见齐推杆事件也亮 (防漏事件卡死) — 显示层, 不改业务态.
 let dispBase=null;    // 最近一次下发的逐件基线 [{yard,material}] (render 时记)
 let dispJobId=null;   // 网关 job_id (dispatchRun 成功时记; null=未下发, 不减行)
 let dispLastHtml='';  // 防抖: 内容不变不重排 DOM
+let dispDoneAt=0;     // 首次观察到 job outcome=done 的时刻 (兜底计时起点)
+let pushDone={};      // 父 job_id -> 物理推完件数 (motion 累加)
+let pushSeen=new Set(); // 已计数的 motion 事件 (ts|job_id 去重)
 function updateDispatchList(d){
  const pre=$('displines'); if(!pre)return;
  if(!dispBase||!dispJobId||!d||d.online===false)return;
@@ -959,11 +966,18 @@ function updateDispatchList(d){
  const total=dispBase.length;
  let html;
  if(job&&job.outcome==='done'&&!hasDem){
-  html=`<span style="color:#4ade80">✅ 已全部推完 (${total} 件)</span>`;
+  if(!dispDoneAt)dispDoneAt=Date.now();
+  const phys=pushDone[dispJobId]||0;
+  if(phys>=total||(dispDoneAt&&Date.now()-dispDoneAt>8000)){
+   html=`<span style="color:#4ade80">✅ 已全部推完 (${total} 件)</span>`;
+  }else{
+   html=`<span style="color:#fb923c">✅ 核对完毕 · 推杆收尾中 ${phys}/${total}</span>`;
+  }
  }else if(job&&(job.outcome==='fault'||job.outcome==='cancelled')&&!hasDem){
   html=`<span style="color:#f87171">⚠ 作业${job.outcome==='fault'?'故障中断':'已取消'} · 已推 ${job.pushed||0}/${total} 件 · 剩余作废</span>`;
  }else{
   if(!hasDem)return; // 作业未开始登记需求 / 台账暂不可见: 保持基线不动
+  dispDoneAt=0;
   // 按基线顺序消耗剩余池: 某 (仓|物料) 还剩几件就保留几行
   const pool={};Object.keys(rem).forEach(k=>pool[k]=rem[k]);
   const lines=[];
@@ -1001,6 +1015,15 @@ async function refreshTwin(){
   scheduleTwin(1500);
   return;
  }
+ // 物理推完计数: motion ready/done (推杆推出→收回=一件入仓) 按父 job 归并累加
+ {const j2p={};(d.jobs||[]).forEach(j=>{if(j.parent_job_id)j2p[j.job_id]=j.parent_job_id;});
+  (d.events||[]).forEach(ev=>{if(!ev||ev.state!=='ready'||ev.via!=='done'||!ev.job_id)return;
+   if((ev.src||'device')!==src)return;
+   const p=j2p[ev.job_id]||(dispJobId&&ev.job_id===dispJobId?dispJobId:null);
+   if(!p)return;
+   const k=ev.ts+'|'+ev.job_id;if(pushSeen.has(k))return;
+   pushSeen.add(k);pushDone[p]=(pushDone[p]||0)+1;});
+  if(pushSeen.size>2000)pushSeen=new Set([...pushSeen].slice(-500));}
  updateDispatchList(d); // 下发列表实时减行: 每实推一件, 对应 (仓|物料) 减一行
  const st=[{state:'ready',ts_ms:0,manual:false},{state:'ready',ts_ms:0,manual:false},{state:'ready',ts_ms:0,manual:false}];
  (d.events||[]).forEach(ev=>{
@@ -1090,13 +1113,14 @@ async function render(d){
   $('yardcards').innerHTML=yc;
   out+=sec('🚚 仓库分拣下发 <span class="chip">'+((d.path==='FAST'||d.path==='EXPAND'||d.path==='PARTIAL')?'PLC 可执行':d.path)+'</span>')
    +(lines.length?`<pre id="displines">${lines.join('<br>')}</pre>`:'<pre class="muted">无下发指令 (暂停/空订单)</pre>')
-   +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'')
-   +FLOW_SVG; // 决策流程图: 紧跟在仓库分拣下发之后
- } else {$('yardcards').innerHTML='';out+=FLOW_SVG;dispBase=null;dispJobId=null;}
+   +(d.dist_total?`<div class="yd" style="margin-top:6px">⚙ 分配指令 · 总量 ${d.dist_total} 件 · 已对账</div>`:'');
+ } else {$('yardcards').innerHTML='';dispBase=null;dispJobId=null;}
  const badge=d.path==='FAST'?'✅ FAST 快路径':(d.path==='QA'?(d.qa_source==='llm'?'💬 简单回答 · LLM 兜底':'💬 简单回答'):(d.path==='PARTIAL'?'⚠️ PARTIAL 部分下发 · 超纲挂起':(d.path==='EXPAND'?'⚙️ EXPAND LLM 分配展开':(d.path==='BYPASS'?'⚠️ LLM 旁路':'🛑 暂停 + 人工确认'))));
  out+=sec('最终下发')+`<pre class="${pcls}" style="font-size:15px">${badge}${String.fromCharCode(10)}${d.answer!=null?d.answer+(d.qa_source==='llm'?' (≤30字 · LLM 兜底, 仅转述注入事实, 未下发 PLC)':' (≤30字 · 规则层直答, 未下发 PLC)'):JSON.stringify(d.actions)}</pre>`;
  $('out').innerHTML=out;
- drawFlow(d); // 流程图在 #out 内 (仓库分拣下发之后), 注入 DOM 后再点亮状态
+ // 决策流程图: 渲染到结果页顶部 #flowbox (2026-11-20 用户要求: 放在仓库数据之前)
+ $('flowbox').innerHTML=FLOW_SVG;
+ drawFlow(d); // 注入 DOM 后再点亮状态
  let h='';
  h+=sec('ASR / 输入 <span class="chip">'+(d.asr_model||'')+'</span>')+`<pre>${d.asr_text}</pre>`+(d.last_wav?`<a style="color:#60a5fa;font-size:12px" href="/audio/file?file=${d.last_wav}" target="_blank">🔊 听一下 ASR 实际收到的音频</a>`:'');
  if(d.answer!=null)h+=sec('问答 '+(d.qa_source==='llm'?'(LLM 兜底 · 仅转述注入事实)':'(规则层直答)'))+`<pre>${d.answer}</pre>`;

@@ -777,6 +777,9 @@ class SortGateway:
             "fault": job.get("fault"),
             "e2e_ms": round(job.get("e2e_s", 0.0) * 1000, 1),
             "divert_results": job.get("divert_results"),
+            # verified 逐件子 job 指回父语音 job (2026-11-20: 页面按此把
+            # motion 物理推完事件归并到语音单, 「已全部推完」只在真推完后显示)
+            "parent_job_id": job.get("parent_job_id"),
         }
         with self.job_history_lock:
             self.job_history.append(rec)
