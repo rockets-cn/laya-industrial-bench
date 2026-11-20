@@ -150,7 +150,7 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit",
                     "bypass_ms": 0, "bypass": None, "path": "QA", "answer": qans,
                     "qa_source": qsrc,
                     "dist_total": None, "dist_ms": 0,
-                    "e2e_ms": round((time.perf_counter() - t0) * 1000)}
+                    "e2e_ms": round((time.perf_counter() - t0 + asr_dt) * 1000)}  # E2E 含 ASR (同主路径口径)
     sides = ["fruit", "block"] if domain == "mixed" else [domain]
     results = [run_side(s, text) for s in sides]
     active = [r for r in results if not r["empty"]]
@@ -193,7 +193,9 @@ def run_pipeline(text, asr_dt=0.0, asr_text=None, last_wav=None, domain="fruit",
         "dist_total": next((m.get("dist_total") for r in results
                             for m in r["mentions"] if m.get("dist_total")), None),
         "dist_ms": round(max((r.get("dist_ms", 0.0) for r in results), default=0.0) * 1000),
-        "e2e_ms": round((time.perf_counter() - t0) * 1000),
+        # E2E = ASR + 管线 (2026-11-20 用户: E2E 应含 ASR; 两段式 ASR 先于 t0 完成,
+        # asr_dt 从 /asr 复用传入, 这里加回)
+        "e2e_ms": round((time.perf_counter() - t0 + asr_dt) * 1000),
     }
     local_qa.set_last_order(_res["actions"])  # 问答兜底用: 最近一次分拣库存
     # 出入库台账: 产生可执行下发 (FAST/EXPAND/PARTIAL) 即自动记「入」—
