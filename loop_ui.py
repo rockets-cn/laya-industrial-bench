@@ -1299,7 +1299,7 @@ function flushWav(chunks, isWake){
   }catch(e){ /* 回落单发 */ }
   try{
    if(asrInfo)render(await jpost('/run',{text:asrInfo.text,domain:domain,qa_llm:$('qallm').checked,
-    asr_ms:asrInfo.asr_ms,last_wav:asrInfo.last_wav}));
+    asr_text:asrInfo.text,asr_ms:asrInfo.asr_ms,last_wav:asrInfo.last_wav})); // asr_text 字段必须带: 服务端两段式分支认它才计 asr_ms (2026-11-20 用户发现 ASR 恒 0ms)
    else render(await jpost('/run',{wav:b64,domain:domain,qa_llm:$('qallm').checked}));
   }catch(e){$('out').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
   if(armed){speechStart=0;flushing=false; if(wakeOn)setModeIdle()}
