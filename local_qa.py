@@ -427,6 +427,10 @@ def answer(text):
     # 例外: 带「哪」的物料问句 = 反查查询 (「哪个仓库有人体红外传感器」), 放行给 _ans_mat_where
     if not t or (_MATER_RE.search(t) and not re.search(r"哪", t)):
         return False, "", 0.0
+    # 身份/名字 (2026-11-20 用户定案: 固定答「工业机本地问答助手优优」= 唤醒词同名;
+    # 在 _QA_KW 门之前 — 「你是谁」无任何问答关键词)
+    if re.search(r"名字|你是谁|叫什么|你是哪位", t):
+        return True, "工业机本地问答助手优优", time.perf_counter() - t0
     if not _QA_KW.search(t):
         return False, "", 0.0
 
