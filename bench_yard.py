@@ -180,12 +180,15 @@ def _materials_in(seg):
         qb = _qty_before(seg, m.start())
         has_pre = qb is not None
         qty = qb if has_pre else 1
+        explicit = has_pre
         if qty == 1:
             q2 = _qty_after(seg, m.end())
             if q2:
                 qty = q2
+                explicit = True
         found.append((m.start(), m.end(),
-                      {"material": SENSOR_KEY[m.group(0)], "qty": qty}, has_pre))
+                      {"material": SENSOR_KEY[m.group(0)], "qty": qty,
+                       "_explicit": explicit}, has_pre))
     found.sort(key=lambda x: x[0])
     # 对称后置修正: "A qty B qty" — B 的前置数量其实紧邻 A 之后, 且 B 自己也有后置.
     # 守卫: A 自己已带显式前置数量时不修 (无标点密集句
@@ -198,7 +201,9 @@ def _materials_in(seg):
         q_b = _qty_after_loose(seg, found[i + 1][1])
         if q_a and q_b and found[i + 1][2]["qty"] == q_a:
             mm["qty"] = q_a
+            mm["_explicit"] = True
             found[i + 1][2]["qty"] = q_b
+            found[i + 1][2]["_explicit"] = True
     return [(p, e, mm) for p, e, mm, _ in found]
 
 
@@ -239,9 +244,10 @@ def _yard_at(clean, cms, pos, mat_end):
     """物料归属: 正序分域为主 — 料场标记拥有 [自身起点, 下一标记起点) 的物料,
     第一个标记之前的内容归第一个标记. 无标点密集句也成立
     ('一号仓库一个角度传感器两个超声波二号仓库…' 中 '两个超声波' 属一号).
-    倒序黏附覆盖: 物料尾与下一标记间仅隔短运送动词时归该下一标记."""
+    倒序黏附覆盖: 物料尾与下一标记间仅隔短运送动词时归该下一标记.
+    返回 (yard, 归属的 marker) — marker 供并列复合目标扩展用 (2026-11-20)."""
     if not cms:
-        return 0
+        return 0, None
     cur = cms[0]
     for m in cms:
         if m.start() <= pos:
@@ -253,7 +259,26 @@ def _yard_at(clean, cms, pos, mat_end):
         if m.start() > mat_end and _is_reverse_attach(clean, mat_end, m.start()):
             base = m
             break
-    return _yard_num_of(base.group(1))
+    return _yard_num_of(base.group(1)), base
+
+
+# 并列料场连词: 「二号仓库和三号仓库」「二号、三号」复合目标;
+# 仅逗号/空格分隔不算 (「角度二号,超声波三号」是并列子句, 不是同一目标).
+# 顿号「、」单列即并列 (A、B = A 和 B), 逗号不行.
+CONNECT_GAP_RE = re.compile(
+    r"^(?:[\s，,、]*(?:和|与|跟|及|还有)[\s，,、]*|[\s，,]*、[\s，,]*)$")
+
+
+def _yard_groups(clean, cms):
+    """并列料场组: 相邻标记间仅隔连词 (和/与/跟/及/还有) 归同一复合目标组."""
+    groups = []
+    for m in cms:
+        if groups and CONNECT_GAP_RE.match(
+                clean[groups[-1][-1].end():m.start()]):
+            groups[-1].append(m)
+        else:
+            groups.append([m])
+    return groups
 
 
 def normalize(text):
@@ -297,10 +322,37 @@ def normalize(text):
     # 距离判定会把 '一号…两个角度传感器二号' 的角度传感器误归二号. 分域用全料场号
     # (含超纲), 保证 '5号放6个红外' 的红外归 5号 而不是并入 2号.
     cms = list(ANY_YARD_RE.finditer(clean))
+    groups = _yard_groups(clean, cms)
     mentions = []
     for pos, mend, mm in _materials_in(clean):
-        mm["yard"] = _yard_at(clean, cms, pos, mend)  # 无料场标记 -> 0, 校验器路由 "料场未指定" 挂起
-        mentions.append(mm)
+        y, mk = _yard_at(clean, cms, pos, mend)  # 无料场标记 -> 0, 校验器路由 "料场未指定" 挂起
+        explicit = mm.pop("_explicit", False)
+        # 并列复合目标 (「放到二号仓库和三号仓库」, 2026-11-20 用户实测):
+        # 归到组内任一标记的提及扩到组内全部料场, 不再静默丢掉后面的号.
+        #   数量未明说 (默认1): 每场 1 件;
+        #   显式数量 + 「各」: 每场同数;
+        #   显式数量无「各」: 拆分未定 -> 挂起 (不猜分配; 旧行为静默全归第一号, 更错).
+        grp = next((g for g in groups if mk is not None and mk in g), None)
+        yards = sorted({_yard_num_of(x.group(1)) for x in grp}) if grp else []
+        if grp is None or len(yards) <= 1:
+            mm["yard"] = y
+            mentions.append(mm)
+        elif not explicit:
+            for yy in yards:
+                mentions.append({"material": mm["material"], "qty": 1,
+                                 "yard": yy})
+        elif "各" in clean[min(x.start() for x in grp):
+                            max(max(x.end() for x in grp), mend)]:
+            for yy in yards:
+                mentions.append({"material": mm["material"], "qty": mm["qty"],
+                                 "yard": yy})
+        else:
+            mentions.append({
+                "material": mm["material"], "qty": mm["qty"], "yard": y,
+                "oob_msg": (f"{MAT_CN.get(mm['material'], mm['material'])} "
+                            f"x{mm['qty']} 在 "
+                            f"{'/'.join(str(v) + '号' for v in yards)} 之间"
+                            f"分配未定, 不下发 (需人工确认拆分)")})
     if not matches and not mentions:
         return text, [], []
     return text, mentions, sorted(negated)
@@ -315,6 +367,8 @@ def laya_decide(mentions, norm_text=""):
     决定 + 校验器白名单检查. 返回 (dt, answers), answers keyed m{i}."""
     answers, t0 = {}, time.perf_counter()
     for i, m in enumerate(mentions):
+        if m.get("oob_msg"):
+            continue  # 挂起哨兵 (分配未定等): 校验器直接给理由, 不再请求
         if m.get("material") is None or m.get("yard") not in YARDS:
             continue  # 信息不足, 校验器直接给理由, 不再请求
         mat_cn = MAT_CN[m["material"]]
