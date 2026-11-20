@@ -604,7 +604,7 @@ PAGE = """<!doctype html>
 <div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
 <span style="display:flex;align-items:center;gap:8px">
-<span id="gla-mode" style="font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
+<span id="gla-mode" style="display:none;font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
 <span style="display:flex;border:1px solid #2c3342;border-radius:6px;overflow:hidden" title="分拣区视图: 3D = machine-skill kit 数字孪生 (真实尺寸); 俯视 SVG = 光门/推杆平面示意 (打印/导出)">
 <button id="viewBtn3d" onclick="switchView('3d')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#0c2a36;color:#67e8f9">🎬 3D</button>
 <button id="viewBtnSv" onclick="switchView('svg')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#1e2430;color:#8a91a0">📐 俯视 SVG</button>
@@ -616,7 +616,6 @@ PAGE = """<!doctype html>
 <option value="device">真实（物理设备）</option>
 </select></span>
 <a id="btn3d" onclick="open3d()" style="font-size:12px;color:#67e8f9;border:1px solid #164e63;border-radius:6px;padding:3px 9px;cursor:pointer;text-decoration:none;background:#0c2a36" title="machine-skill kit 的 3D 数字孪生页 (three.js · 真实尺寸建模 · 影片/爆炸/剖切/故障演示)">🎬 3D 数字孪生</a>
-<span style="font-size:11.5px;color:#5b6270">指令自动下发到所选数据源, 动画演示对应操作; 自适应轮询 /twin (有运动 70ms / 待机 500ms, 点击即时刷新)</span>
 </div>
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
   <span style="font-size:11.5px;color:#8a91a0">手动控制 <span style="color:#5b6270">（真实源 · 点即真机动作 · 网页同步）:</span></span>
