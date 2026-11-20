@@ -622,31 +622,25 @@ PAGE = """<!doctype html>
 <div class="main"><div id="colL">
 <div class="sec" style="margin-top:4px">📐 分拣线光门运行示意（俯视 · 3 路时序光门装在各推杆前侧/上游 · 数字孪生同步 · 常开）</div>
 <div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
-<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px">
-<span style="display:flex;align-items:center;gap:8px">
-<span id="gla-mode" style="display:none;font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
-<span style="display:flex;border:1px solid #2c3342;border-radius:6px;overflow:hidden" title="分拣区视图: 3D = machine-skill kit 数字孪生 (真实尺寸); 俯视 SVG = 光门/推杆平面示意 (打印/导出)">
-<button id="viewBtn3d" onclick="switchView('3d')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#0c2a36;color:#67e8f9">🎬 3D</button>
-<button id="viewBtnSv" onclick="switchView('svg')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#1e2430;color:#8a91a0">📐 俯视 SVG</button>
-</span>
-</span>
-<span style="font-size:12px;color:#8a91a0;display:flex;align-items:center;gap:5px">数据源
-<select id="gla-src" style="background:#1e2430;color:#e6e6e6;border:1px solid #2c3342;border-radius:6px;padding:3px 6px;font-size:12px" title="动画跟随哪条运动时间线: 模拟=本地孪生模拟器执行; 真实=物理设备 (未接传感器/执行器时选模拟)">
-<option value="sim">模拟（本地孪生）</option>
-<option value="device">真实（物理设备）</option>
-</select></span>
-<a id="btn3d" onclick="open3d()" style="font-size:12px;color:#67e8f9;border:1px solid #164e63;border-radius:6px;padding:3px 9px;cursor:pointer;text-decoration:none;background:#0c2a36" title="machine-skill kit 的 3D 数字孪生页 (three.js · 真实尺寸建模 · 影片/爆炸/剖切/故障演示)">🎬 3D 数字孪生</a>
-</div>
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
   <button id="btnBelt" onclick="beltToggle()" title="传送带 起/停 (真机 + 网页同步)" style="min-width:104px">⏯ 传送带</button>
   <button class="pushbtn" data-n="1" onclick="pushBin(1)" title="1 号推杆 手动推出">🔧 推杆 1</button>
   <button class="pushbtn" data-n="2" onclick="pushBin(2)" title="2 号推杆 手动推出">🔧 推杆 2</button>
   <button class="pushbtn" data-n="3" onclick="pushBin(3)" title="3 号推杆 手动推出">🔧 推杆 3</button>
   <button id="btnFaultClear" onclick="clearFault()" title="清故障锁存 (顺带固件 reset 清队列); 清后起带/推杆恢复" style="display:none;min-width:112px;background:#7f1d1d;border-color:#b91c1c;color:#fecaca;font-weight:600">⚠️ 清故障</button>
+  <!-- 视图切换 + 3D 页入口 (2026-11-20 用户要求: 从顶部栏挪到传送带控制行; 数据源选择器已删, 页面固定真实源) -->
+  <span style="display:flex;align-items:center;gap:8px;margin-left:auto">
+  <span id="gla-mode" style="display:none;font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
+  <span style="display:flex;border:1px solid #2c3342;border-radius:6px;overflow:hidden" title="分拣区视图: 3D = machine-skill kit 数字孪生 (真实尺寸); 俯视 SVG = 光门/推杆平面示意 (打印/导出)">
+  <button id="viewBtn3d" onclick="switchView('3d')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#0c2a36;color:#67e8f9">🎬 3D</button>
+  <button id="viewBtnSv" onclick="switchView('svg')" style="font-size:12px;padding:3px 10px;border:0;cursor:pointer;background:#1e2430;color:#8a91a0">📐 俯视 SVG</button>
+  </span>
+  <a id="btn3d" onclick="open3d()" style="font-size:12px;color:#67e8f9;border:1px solid #164e63;border-radius:6px;padding:3px 9px;cursor:pointer;text-decoration:none;background:#0c2a36" title="machine-skill kit 的 3D 数字孪生页 (three.js · 真实尺寸建模 · 影片/爆炸/剖切/故障演示)">🎬 3D 数字孪生</a>
+  </span>
 </div>
 <!-- 3D 数字孪生 (machine-skill kit): 同源 iframe → 父页 BC 'laya3d' 批次/数据源转发自动生效; 默认视图 -->
 <div id="threeView" style="border:1px solid #262b36;border-radius:8px;overflow:hidden;background:#0d0e10">
-<iframe id="iframe3d" src="/sortline3d" title="3D 数字孪生" style="display:block;width:100%;height:100%;border:0"></iframe>
+<iframe id="iframe3d" src="/sortline3d?src=device" title="3D 数字孪生" style="display:block;width:100%;height:100%;border:0"></iframe>
 </div>
 <!-- 俯视 SVG 示意 (打印/导出): 由视图切换按钮显隐, 摄像头画面仅在此视图定位 -->
 <div id="svgView" style="display:none">
@@ -709,6 +703,8 @@ PAGE = """<!doctype html>
 </div><!-- /main -->
 <script>
 const $=id=>document.getElementById(id);
+// 数据源固定为真实物理设备 (2026-11-20 用户要求: 去掉页面数据源切换器; 模拟源仍由测试/3D页自带)
+const SRC='device';
 window.addEventListener('error',e=>{const m=$('micstate');
  if(m)m.textContent='JS错误: '+(e.message||'unknown')+' @'+(e.lineno||'?');
  console.error('PAGE JS ERROR',e.message,e.stack)});
@@ -734,7 +730,6 @@ function updateCtlButtons(src, sorters, fault){
  });
 }
 async function clearFault(){
- if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
  const b=document.getElementById('btnFaultClear');if(b)b.disabled=true;
  try{
   const r=await fetch('/api/fault/clear',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
@@ -746,7 +741,6 @@ async function clearFault(){
  scheduleTwin(0); // 立即轮询: 隐藏清故障按钮 + 恢复起带/推杆可用
 }
 async function beltToggle(){
- if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
  const action=(lastConveyor==='running')?'stop':'start';
  const b=document.getElementById('btnBelt');if(b)b.disabled=true;
  try{
@@ -758,7 +752,6 @@ async function beltToggle(){
  scheduleTwin(0); // 立即轮询一次: 按钮文案(启动/停止) + 带态即时更新
 }
 async function pushBin(n){
- if(!($('gla-src')&&$('gla-src').value==='device')){alert('请先切到「真实（物理设备）」数据源');return;}
  try{
   const r=await fetch('/api/push',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sorter:n})});
   const j=await r.json().catch(()=>({}));
@@ -979,8 +972,7 @@ function updateDispatchList(d){
 }
 async function refreshTwin(){
  const chip=$('gla-mode');
- const srcSel=$('gla-src');
- const src=srcSel?srcSel.value:'sim'; // 数据源: sim=本地孪生模拟器 / device=物理设备
+ const src=SRC; // 数据源固定真实 (2026-11-20: 页面数据源切换器已删)
  camStream(src); // 摄像头实时画面: 仅真实数据源 (独立于孪生在线状态)
  let d=null;
  try{d=await (await fetch('/twin')).json();}catch(e){}
@@ -1346,22 +1338,11 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 })();
 refreshState();
 refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
-(function(){ // 数据源选项: 模拟/真实, 记忆偏好, 切换立即重采 + 同步 3D 页 (双向联动, 见下方 bc3d.onmessage)
- const sel=$('gla-src');
- if(!sel)return;
- const sv=localStorage.getItem('glaSrc');
- if(sv==='device'||sv==='sim')sel.value=sv;
- // 数据源应用: 设 select 值 + 记忆 + 刷孪生; fromBc=true (来自 3D 页反向控制) 时不回发 BC → 防环
- window.applyGlaSrc=function(v,fromBc){ v=(v==='device')?'device':'sim'; sel.value=v;
-  try{localStorage.setItem('glaSrc',v)}catch(e){} twinSig='';refreshTwin();
-  if(!fromBc&&bc3d)bc3d.postMessage({type:'src',src:v}); };
- sel.addEventListener('change',()=>window.applyGlaSrc(sel.value,false));
- })();
- // 3D 数字孪生页 (machine-skill kit · /sortline3d): 同源 BroadcastChannel 转发新批次 (job) + 数据源双向同步
- let bc3d=('BroadcastChannel' in window)?new BroadcastChannel('laya3d'):null;
- // 反向控制: 3D 页点 pill → 回发 {type:'src'} → 同步父页 #gla-src (applyGlaSrc fromBc=true 不回发, 防环)
- if(bc3d)bc3d.onmessage=function(e){ const m=e.data||{}; if(m.type==='src')window.applyGlaSrc(m.src,true); };
- function open3d(){const s=$('gla-src');window.open('/sortline3d?src='+((s&&s.value==='device')?'device':'sim'),'laya3d');}
+// 3D 数字孪生页 (machine-skill kit · /sortline3d): 同源 BroadcastChannel 转发新批次 (job).
+// 数据源切换器已删 (2026-11-20): 页面固定真实源, 3D 页经 ?src=device 打开;
+// 3D 页自己的 src pill 不再反向控制父页 (无源可切).
+let bc3d=('BroadcastChannel' in window)?new BroadcastChannel('laya3d'):null;
+function open3d(){window.open('/sortline3d?src=device','laya3d');}
 // ---- 分拣区视图切换: 3D 数字孪生 (iframe /sortline3d) / 俯视 SVG 示意 ----
 function switchView(v){ // v: '3d'|'svg'
  try{localStorage.setItem('laya3dview',v)}catch(e){}
@@ -1371,7 +1352,7 @@ function switchView(v){ // v: '3d'|'svg'
  if(v!=='svg'){ // 3D 视图: 摄像头画面按 SVG CTM 定位, 此处隐藏
   if(img)img.style.display='none'; if(off)off.style.display='none';
  }else{
-  camStream($('gla-src')?$('gla-src').value:'sim'); // 回俯视 SVG: 按数据源重放摄像头帧定位
+  camStream(SRC); // 回俯视 SVG: 按数据源重放摄像头帧定位
  }
  const b3=$('viewBtn3d'),bs=$('viewBtnSv');
  if(b3&&bs){const a3=(v==='3d');
