@@ -634,7 +634,7 @@ PAGE = """<!doctype html>
   <button class="pushbtn" data-n="1" onclick="pushBin(1)" title="1 号推杆 手动推出">🔧 推杆 1</button>
   <button class="pushbtn" data-n="2" onclick="pushBin(2)" title="2 号推杆 手动推出">🔧 推杆 2</button>
   <button class="pushbtn" data-n="3" onclick="pushBin(3)" title="3 号推杆 手动推出">🔧 推杆 3</button>
-  <button id="btnFaultClear" onclick="clearFault()" title="清故障锁存 (顺带固件 reset 清队列); 清后起带/推杆恢复" style="display:none;min-width:112px;background:#7f1d1d;border-color:#b91c1c;color:#fecaca;font-weight:600">⚠️ 清故障</button>
+  <button id="btnFaultClear" onclick="clearFault()" title="清故障锁存 (顺带固件 reset 清队列); 清后起带/推杆恢复" style="display:none;background:#7f1d1d;border-color:#b91c1c;color:#fecaca;font-weight:600;font-size:12px;padding:4px 9px">⚠️ 清故障</button>
   <!-- 视图切换 + 3D 页入口 (2026-11-20 用户要求: 从顶部栏挪到传送带控制行; 数据源选择器已删, 页面固定真实源) -->
   <span style="display:flex;align-items:center;gap:8px;margin-left:auto">
   <span id="gla-mode" style="display:none;font-size:12px;color:#8a91a0">数字孪生离线 · 循环演示</span>
