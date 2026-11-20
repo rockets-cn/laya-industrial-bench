@@ -109,3 +109,6 @@ voxtype_bench.toml
 # sort gateway runtime stats (ledger + summaries)
 stats/
 data/
+
+# rust-anything 分析产物 (本地生成, 不入库)
+ra-analyze.json
