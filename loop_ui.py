@@ -1305,18 +1305,21 @@ $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')runText()});
 })();
 refreshState();
 refreshStock(); // 常驻库存条: 页面加载即显示 (不用点台账面板)
-(function(){ // 数据源选项: 模拟/真实, 记忆偏好, 切换立即重采 (仅本页 2D 孪生; 不再下发 3D 页)
+(function(){ // 数据源选项: 模拟/真实, 记忆偏好, 切换立即重采 + 同步 3D 页 (双向联动, 见下方 bc3d.onmessage)
  const sel=$('gla-src');
  if(!sel)return;
  const sv=localStorage.getItem('glaSrc');
  if(sv==='device'||sv==='sim')sel.value=sv;
- // 数据源应用: 设 select 值 + 记忆 + 刷孪生 (仅 2D 孪生); 不再下发 3D 页 (不反向控制网页)
- window.applyGlaSrc=function(v){ v=(v==='device')?'device':'sim'; sel.value=v;
-  try{localStorage.setItem('glaSrc',v)}catch(e){} twinSig='';refreshTwin(); };
- sel.addEventListener('change',()=>window.applyGlaSrc(sel.value));
+ // 数据源应用: 设 select 值 + 记忆 + 刷孪生; fromBc=true (来自 3D 页反向控制) 时不回发 BC → 防环
+ window.applyGlaSrc=function(v,fromBc){ v=(v==='device')?'device':'sim'; sel.value=v;
+  try{localStorage.setItem('glaSrc',v)}catch(e){} twinSig='';refreshTwin();
+  if(!fromBc&&bc3d)bc3d.postMessage({type:'src',src:v}); };
+ sel.addEventListener('change',()=>window.applyGlaSrc(sel.value,false));
  })();
- // 3D 数字孪生页 (machine-skill kit · /sortline3d): 同源 BroadcastChannel 仅转发新批次 (job); 数据源不双向同步
+ // 3D 数字孪生页 (machine-skill kit · /sortline3d): 同源 BroadcastChannel 转发新批次 (job) + 数据源双向同步
  let bc3d=('BroadcastChannel' in window)?new BroadcastChannel('laya3d'):null;
+ // 反向控制: 3D 页点 pill → 回发 {type:'src'} → 同步父页 #gla-src (applyGlaSrc fromBc=true 不回发, 防环)
+ if(bc3d)bc3d.onmessage=function(e){ const m=e.data||{}; if(m.type==='src')window.applyGlaSrc(m.src,true); };
  function open3d(){const s=$('gla-src');window.open('/sortline3d?src='+((s&&s.value==='device')?'device':'sim'),'laya3d');}
 // ---- 分拣区视图切换: 3D 数字孪生 (iframe /sortline3d) / 俯视 SVG 示意 ----
 function switchView(v){ // v: '3d'|'svg'
