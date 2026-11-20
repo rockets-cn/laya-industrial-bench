@@ -573,6 +573,11 @@ PAGE = """<!doctype html>
  .tabpanes{flex:1;min-height:0;overflow-y:auto;border:1px solid #262b36;
   border-radius:0 8px 8px 8px;padding:6px 10px}
  .pane{display:none}.pane.on{display:block}
+ /* 常驻库存条四格平铺 (2026-11-20 用户): 3 仓+总库存一排放下, 给下方 tab 区让出高度 */
+ #stockcards{flex-wrap:nowrap}
+ #stockcards .card{min-width:0;padding:7px 9px}
+ #stockcards .card .v{font-size:15px;margin-top:2px}
+ #stockcards .yd{font-size:11px;line-height:1.5}
  @media (max-width:1100px){body{overflow:auto}.wrap{height:auto}
   .main{flex-direction:column}#colR{width:100%}#threeView{flex:none;height:420px}}
  .cards{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
@@ -619,6 +624,7 @@ PAGE = """<!doctype html>
  #flow .edge{stroke:#3a4152}
 </style></head><body><div class="wrap">
 <h1>🏭 仓库分拣线 · 数字孪生<span class="ver">光门/推杆/带态 实时还原 + 语音·文本决策回路 · 模拟/真实数据源 · 失败降级 暂停+人工</span></h1>
+<div id="flowbox"></div>
 <div class="main"><div id="colL">
 <div id="gate" style="position:relative;background:#12141a;border:1px solid #262b36;border-radius:10px;padding:10px 12px;margin:0 0 8px;overflow-x:auto">
 <div id="ctlRow" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
@@ -686,7 +692,6 @@ PAGE = """<!doctype html>
  <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a91a0;cursor:pointer"><input type="checkbox" id="wakesw" onchange="wakeToggle()" disabled> 唤醒词「优优」</label>
  <div style="flex:1;min-width:160px"><div id="micstate" class="muted"></div><div class="bar"><i id="lv"></i></div></div>
 </div>
-<div id="flowbox"></div>
 <div id="stockcards" class="cards" style="margin:4px 0 2px"></div>
 <div class="tabbar">
  <button class="tab on" data-tab="res" onclick="switchTab('res')">📋 结果</button>
@@ -794,17 +799,13 @@ function toggleLedger(){switchTab(ledOpen?'res':'ledger');}
 async function refreshLedger(){
  try{
   const d=await (await fetch('/ledger')).json();
-  let yc='';[1,2,3].forEach(y=>{
-   const it=d.yards[y].items,tot=d.yards[y].total;
-   const rows=Object.entries(it).map(([m,v])=>
-    `<div class="yd">${v<0?'<span style="color:#f87171">':' '}${LEDGER_MAT[m]||m} × ${v}</div>`).join('')||'<div class="yd">—</div>';
-   yc+=`<div class="card"><div class="k">${y}号仓库 库存</div><div class="v ${tot?'':'muted'}">${tot>0?tot+' 件':(tot<0?'负 '+Math.abs(tot):'空')}</div>${rows}</div>`;
-  });
-  let h='<div class="cards">'+yc+'</div>'
-   +sec('📜 最近流水 <span class="chip">'+d.moves+' 笔 · 入=分拣下发自动记 出=API</span>')
+  // 库存卡已删 (2026-11-20 用户: 与常驻库存条重复) — 台账 tab 只留流水 + 清空;
+  // 清空按钮靠前 (用户: 放靠前位置) — 与流水标题同行, 不用翻到底
+  let h='<div style="display:flex;align-items:center;gap:8px">'
+   +'<div style="flex:1">'+sec('📜 最近流水 <span class="chip">'+d.moves+' 笔 · 入=分拣下发自动记 出=API</span>')+'</div>'
+   +'<button onclick="ledgerReset()" style="color:#f87171;flex:none" title="DELETE 全部流水, 库存归零 (服务无需停止)">🗑 清空台账</button></div>'
    +'<pre style="font-size:12px">'+(d.recent.length?d.recent.map(r=>
-    `${r.ts.slice(5)} ${r.direction==='in'?'入':'<span style="color:#fb923c">出</span>'} ${r.yard}号 ${LEDGER_MAT[r.material]||r.material} ×${r.qty} (${r.path})`).join(String.fromCharCode(10)):'暂无流水 — 跑一条分拣指令试试')+'</pre>'
-   +'<div class="row"><button onclick="ledgerReset()" style="margin-left:auto;color:#f87171" title="DELETE 全部流水, 库存归零 (服务无需停止)">🗑 清空台账</button></div>';
+    `${r.ts.slice(5)} ${r.direction==='in'?'入':'<span style="color:#fb923c">出</span>'} ${r.yard}号 ${LEDGER_MAT[r.material]||r.material} ×${r.qty} (${r.path})`).join(String.fromCharCode(10)):'暂无流水 — 跑一条分拣指令试试')+'</pre>';
   $('ledger').innerHTML=h;refreshStock();
  }catch(e){$('ledger').innerHTML=`<pre style="color:#f87171">${e}</pre>`}
 }
